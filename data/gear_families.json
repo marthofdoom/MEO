@@ -1,0 +1,2691 @@
+{
+ "generic": {
+  "EnchFortifyBlockConstantSelf": {
+   "members": [
+    "EnchArmorFortifyBlock01",
+    "EnchArmorFortifyBlock02",
+    "EnchArmorFortifyBlock03",
+    "EnchArmorFortifyBlock04",
+    "EnchArmorFortifyBlock05",
+    "EnchArmorFortifyBlock06",
+    "EnchReligiousStendarr"
+   ],
+   "weap": 0,
+   "armo": 64,
+   "items": [
+    "EnchArmorElvenShieldBlock04",
+    "EnchNecklaceBlock04",
+    "EnchArmorElvenShieldBlock03",
+    "EnchNecklaceBlock03",
+    "EnchArmorElvenShieldBlock02",
+    "EnchNecklaceBlock02",
+    "EnchNecklaceBlock06",
+    "EnchRingBlock06",
+    "EnchNecklaceBlock05",
+    "EnchRingBlock05",
+    "EnchNecklaceBlock01",
+    "EnchRingBlock01",
+    "ReligiousStendarrMercy"
+   ],
+   "staff": false
+  },
+  "EnchResistMagicConstantSelf": {
+   "members": [
+    "EnchArmorResistMagic01",
+    "EnchArmorResistMagic02",
+    "EnchArmorResistMagic03",
+    "EnchArmorResistMagic04",
+    "EnchArmorResistMagic05",
+    "EnchArmorResistMagic06"
+   ],
+   "weap": 0,
+   "armo": 66,
+   "items": [
+    "EnchRingResistMagic06",
+    "EnchArmorDragonscaleShieldResistMagic06",
+    "EnchRingResistMagic05",
+    "EnchArmorOrcishShieldResistMagic05",
+    "EnchRingResistMagic04",
+    "EnchArmorOrcishShieldResistMagic04",
+    "EnchRingResistMagic03",
+    "EnchArmorSteelShieldResistMagic03",
+    "EnchRingResistMagic02",
+    "EnchArmorSteelShieldResistMagic02",
+    "EnchRingResistMagic01",
+    "EnchArmorSteelShieldResistMagic01"
+   ],
+   "staff": false
+  },
+  "EnchFortifyStaminaConstantSelf": {
+   "members": [
+    "EnchArmorFortifyStamina01",
+    "EnchArmorFortifyStamina02",
+    "EnchArmorFortifyStamina03",
+    "EnchArmorFortifyStamina04",
+    "EnchArmorFortifyStamina05",
+    "EnchArmorFortifyStamina06",
+    "EnchReligiousKynareth",
+    "TGLinweCuirassEnchant",
+    "dunEnchGauldurAmuletFragmentGeirmundFortifyStamina"
+   ],
+   "weap": 0,
+   "armo": 75,
+   "items": [
+    "EnchArmorSteelPlateBootsStamina04",
+    "EnchArmorScaledBootsStamina04",
+    "EnchArmorSteelPlateBootsStamina03",
+    "EnchArmorSteelBootsStamina03",
+    "EnchArmorSteelPlateBootsStamina02",
+    "EnchArmorSteelBootsStamina02",
+    "EnchArmorSteelBootsStamina01",
+    "EnchArmorLeatherBootsStamina01",
+    "EnchArmorOrcishBootsStamina05",
+    "EnchArmorGlassBootsStamina05",
+    "EnchArmorDragonscaleBootsStamina06",
+    "EnchArmorDragonplateBootsStamina06",
+    "ArmorLinweCuirass",
+    "dunGauldurAmuletFragmentGeirmund",
+    "ReligiousKynarethAir"
+   ],
+   "staff": false
+  },
+  "EnchFortifySneakConstantSelf": {
+   "members": [
+    "EnchArmorFortifySneak01",
+    "EnchArmorFortifySneak02",
+    "EnchArmorFortifySneak03",
+    "EnchArmorFortifySneak04",
+    "EnchArmorFortifySneak05",
+    "EnchArmorFortifySneak06",
+    "TGLinweBootsEnchant"
+   ],
+   "weap": 0,
+   "armo": 54,
+   "items": [
+    "EnchArmorGlassBootsSneak05",
+    "EnchNecklaceSneak05",
+    "EnchArmorGlassBootsSneak04",
+    "EnchNecklaceSneak04",
+    "EnchArmorGlassBootsSneak03",
+    "EnchNecklaceSneak03",
+    "EnchNecklaceSneak06",
+    "EnchRingSneak06",
+    "EnchNecklaceSneak02",
+    "EnchRingSneak02",
+    "EnchNecklaceSneak01",
+    "EnchRingSneak01",
+    "ArmorLinweBoots"
+   ],
+   "staff": false
+  },
+  "EnchFortifyLockpickingConstantSelf": {
+   "members": [
+    "DLC2TGArmorFortifyLockpickingBlackguard",
+    "EnchArmorFortifyLockpicking01",
+    "EnchArmorFortifyLockpicking02",
+    "EnchArmorFortifyLockpicking03",
+    "EnchArmorFortifyLockpicking04",
+    "EnchArmorFortifyLockpicking05",
+    "EnchArmorFortifyLockpicking06",
+    "TGArmorFortifyLockpicking",
+    "TGArmorFortifyLockpickingImproved",
+    "TGArmorFortifyLockpickingMaster"
+   ],
+   "weap": 0,
+   "armo": 50,
+   "items": [
+    "EnchArmorDragonscaleGauntletsLockpicking06",
+    "EnchNecklaceLockpicking06",
+    "EnchArmorDragonscaleGauntletsLockpicking05",
+    "EnchNecklaceLockpicking05",
+    "EnchArmorDragonscaleGauntletsLockpicking04",
+    "EnchNecklaceLockpicking04",
+    "EnchNecklaceLockpicking03",
+    "EnchRingLockpicking03",
+    "EnchNecklaceLockpicking02",
+    "EnchRingLockpicking02",
+    "EnchNecklaceLockpicking01",
+    "EnchRingLockpicking01",
+    "ArmorThievesGuildGauntletsPlayerImproved",
+    "ArmorThievesGuildGauntletsPlayerImproved",
+    "ArmorThievesGuildGauntletsPlayer",
+    "ArmorThievesGuildGauntletsPlayer",
+    "ArmorThievesGuildLeaderGauntlets",
+    "ArmorThievesGuildLeaderGauntlets",
+    "DLC2TGArmorVariantGloves"
+   ],
+   "staff": false
+  },
+  "EnchFortifyPickpocketConstantSelf": {
+   "members": [
+    "DLC2TGArmorFortifyPickpocketBlackguard",
+    "EnchArmorFortifyPickpocket01",
+    "EnchArmorFortifyPickpocket02",
+    "EnchArmorFortifyPickpocket03",
+    "EnchArmorFortifyPickpocket04",
+    "EnchArmorFortifyPickpocket05",
+    "EnchArmorFortifyPickpocket06",
+    "TGArmorFortifyPickpocket",
+    "TGArmorFortifyPickpocketImproved",
+    "TGArmorFortifyPickpocketMaster"
+   ],
+   "weap": 0,
+   "armo": 49,
+   "items": [
+    "EnchArmorDragonscaleGauntletsPickpocket06",
+    "EnchNecklacePickpocket06",
+    "EnchArmorDragonscaleGauntletsPickpocket05",
+    "EnchNecklacePickpocket05",
+    "EnchArmorDragonscaleGauntletsPickpocket04",
+    "EnchNecklacePickpocket04",
+    "EnchNecklacePickpocket03",
+    "EnchRingPickpocket03",
+    "EnchNecklacePickpocket02",
+    "EnchRingPickpocket02",
+    "EnchNecklacePickpocket01",
+    "EnchRingPickpocket01",
+    "ArmorThievesGuildBootsPlayerImproved",
+    "ArmorThievesGuildBootsPlayerImproved",
+    "ArmorThievesGuildBootsPlayer",
+    "ArmorThievesGuildBootsPlayer",
+    "ArmorThievesGuildLeaderBoots",
+    "ArmorThievesGuildLeaderBoots",
+    "DLC2TGArmorVariantBoots"
+   ],
+   "staff": false
+  },
+  "EnchFortifyOneHandedConstantSelf": {
+   "members": [
+    "EnchArmorFortifyOneHanded01",
+    "EnchArmorFortifyOneHanded02",
+    "EnchArmorFortifyOneHanded03",
+    "EnchArmorFortifyOneHanded04",
+    "EnchArmorFortifyOneHanded05",
+    "EnchArmorFortifyOneHanded06",
+    "TGLinweGauntletsEnchant"
+   ],
+   "weap": 0,
+   "armo": 79,
+   "items": [
+    "EnchNecklaceOneHanded06",
+    "EnchRingOneHanded06",
+    "EnchNecklaceOneHanded05",
+    "EnchRingOneHanded05",
+    "EnchNecklaceOneHanded04",
+    "EnchRingOneHanded04",
+    "EnchNecklaceOneHanded03",
+    "EnchRingOneHanded03",
+    "EnchNecklaceOneHanded02",
+    "EnchRingOneHanded02",
+    "EnchNecklaceOneHanded01",
+    "EnchRingOneHanded01",
+    "ArmorLinweGauntlets"
+   ],
+   "staff": false
+  },
+  "EnchFortifyStaminaRateConstantSelf": {
+   "members": [
+    "EnchArmorFortifyStaminaRate03",
+    "EnchArmorFortifyStaminaRate04",
+    "EnchArmorFortifyStaminaRate05",
+    "EnchArmorFortifyStaminaRate06"
+   ],
+   "weap": 0,
+   "armo": 32,
+   "items": [
+    "EnchNecklaceStaminaRate06",
+    "EnchRingStaminaRate06",
+    "EnchNecklaceStaminaRate05",
+    "EnchRingStaminaRate05",
+    "EnchNecklaceStaminaRate04",
+    "EnchRingStaminaRate04",
+    "EnchNecklaceStaminaRate03",
+    "EnchRingStaminaRate03"
+   ],
+   "staff": false
+  },
+  "EnchFortifyHealRateConstantSelf": {
+   "members": [
+    "EnchArmorFortifyHealRate03",
+    "EnchArmorFortifyHealRate04",
+    "EnchArmorFortifyHealRate05",
+    "EnchArmorFortifyHealRate06"
+   ],
+   "weap": 0,
+   "armo": 32,
+   "items": [
+    "EnchNecklaceHealRate06",
+    "EnchRingHealRate06",
+    "EnchNecklaceHealRate05",
+    "EnchRingHealRate05",
+    "EnchNecklaceHealRate04",
+    "EnchRingHealRate04",
+    "EnchNecklaceHealRate03",
+    "EnchRingHealRate03"
+   ],
+   "staff": false
+  },
+  "EnchFortifyMagickaConstantSelf": {
+   "members": [
+    "EnchArmorFortifyMagicka01",
+    "EnchArmorFortifyMagicka02",
+    "EnchArmorFortifyMagicka03",
+    "EnchArmorFortifyMagicka04",
+    "EnchArmorFortifyMagicka05",
+    "EnchArmorFortifyMagicka06",
+    "EnchReligiousJulianos",
+    "dunEnchGauldurAmuletFragmentSaarthalFortifyMagicka"
+   ],
+   "weap": 0,
+   "armo": 106,
+   "items": [
+    "EnchNecklaceMagicka06",
+    "EnchRingMagicka06",
+    "EnchNecklaceMagicka05",
+    "EnchRingMagicka05",
+    "EnchNecklaceMagicka04",
+    "EnchClothesRobesMageHoodAdept",
+    "EnchNecklaceMagicka03",
+    "EnchClothesRobesMageHoodApprentice",
+    "EnchNecklaceMagicka02",
+    "EnchClothesRobesMageHoodNovice",
+    "EnchNecklaceMagicka01",
+    "EnchRingMagicka01",
+    "dunGauldurAmuletFragmentSaarthal",
+    "ReligiousJulianosMagic"
+   ],
+   "staff": false
+  },
+  "EnchFortifySpeechcraftConstantSelf": {
+   "members": [
+    "DLC2TGArmorFortifySpeechcraftBlackguard",
+    "EnchArmorFortifySpeechcraft01",
+    "EnchArmorFortifySpeechcraft02",
+    "EnchArmorFortifySpeechcraft03",
+    "EnchArmorFortifySpeechcraft04",
+    "EnchArmorFortifySpeechcraft05",
+    "EnchArmorFortifySpeechcraft06",
+    "EnchReligiousZenithar",
+    "TGArmorFortifySpeechcraft",
+    "TGArmorFortifySpeechcraftImproved",
+    "TGArmorFortifySpeechcraftMaster"
+   ],
+   "weap": 0,
+   "armo": 15,
+   "items": [
+    "EnchNecklaceSpeechcraft06",
+    "EnchNecklaceSpeechcraft05",
+    "EnchNecklaceSpeechcraft04",
+    "EnchNecklaceSpeechcraft03",
+    "EnchNecklaceSpeechcraft02",
+    "EnchNecklaceSpeechcraft01",
+    "ArmorThievesGuildHelmetPlayerImproved",
+    "ArmorThievesGuildHelmetPlayerImproved",
+    "ArmorThievesGuildHelmetPlayer",
+    "ArmorThievesGuildHelmetPlayer",
+    "FavorShahveeSymbol",
+    "ReligiousZenitharCommerce",
+    "ArmorThievesGuildLeaderHelmet",
+    "ArmorThievesGuildLeaderHelmet",
+    "DLC2TGArmorVariantHood"
+   ],
+   "staff": false
+  },
+  "EnchFortifyAlchemyConstantSelf": {
+   "members": [
+    "EnchArmorFortifyAlchemy01",
+    "EnchArmorFortifyAlchemy02",
+    "EnchArmorFortifyAlchemy03",
+    "EnchArmorFortifyAlchemy04",
+    "EnchArmorFortifyAlchemy05",
+    "EnchArmorFortifyAlchemy06"
+   ],
+   "weap": 0,
+   "armo": 146,
+   "items": [
+    "EnchNecklaceAlchemy06",
+    "EnchCircletAlchemy06",
+    "EnchNecklaceAlchemy05",
+    "EnchCircletAlchemy05",
+    "EnchNecklaceAlchemy04",
+    "EnchCircletAlchemy04",
+    "EnchNecklaceAlchemy03",
+    "EnchCircletAlchemy03",
+    "EnchNecklaceAlchemy02",
+    "EnchCircletAlchemy02",
+    "EnchNecklaceAlchemy01",
+    "EnchCircletAlchemy01"
+   ],
+   "staff": false
+  },
+  "EnchFortifyLightArmorConstantSelf": {
+   "members": [
+    "EnchArmorFortifyLightArmor01",
+    "EnchArmorFortifyLightArmor02",
+    "EnchArmorFortifyLightArmor03",
+    "EnchArmorFortifyLightArmor04",
+    "EnchArmorFortifyLightArmor05",
+    "EnchArmorFortifyLightArmor06"
+   ],
+   "weap": 0,
+   "armo": 51,
+   "items": [
+    "EnchNecklaceLightArmor06",
+    "EnchRingLightArmor06",
+    "EnchNecklaceLightArmor05",
+    "EnchRingLightArmor05",
+    "EnchNecklaceLightArmor04",
+    "EnchRingLightArmor04",
+    "EnchNecklaceLightArmor03",
+    "EnchRingLightArmor03",
+    "EnchNecklaceLightArmor02",
+    "EnchRingLightArmor02",
+    "EnchNecklaceLightArmor01",
+    "EnchRingLightArmor01"
+   ],
+   "staff": false
+  },
+  "EnchFortifyHeavyArmorConstantSelf": {
+   "members": [
+    "EnchArmorFortifyHeavyArmor01",
+    "EnchArmorFortifyHeavyArmor02",
+    "EnchArmorFortifyHeavyArmor03",
+    "EnchArmorFortifyHeavyArmor04",
+    "EnchArmorFortifyHeavyArmor05",
+    "EnchArmorFortifyHeavyArmor06"
+   ],
+   "weap": 0,
+   "armo": 51,
+   "items": [
+    "EnchNecklaceHeavyArmor06",
+    "EnchRingHeavyArmor06",
+    "EnchNecklaceHeavyArmor05",
+    "EnchRingHeavyArmor05",
+    "EnchNecklaceHeavyArmor04",
+    "EnchRingHeavyArmor04",
+    "EnchNecklaceHeavyArmor03",
+    "EnchRingHeavyArmor03",
+    "EnchNecklaceHeavyArmor02",
+    "EnchRingHeavyArmor02",
+    "EnchNecklaceHeavyArmor01",
+    "EnchRingHeavyArmor01"
+   ],
+   "staff": false
+  },
+  "EnchFortifySmithingConstantSelf": {
+   "members": [
+    "EnchArmorFortifySmithing01",
+    "EnchArmorFortifySmithing02",
+    "EnchArmorFortifySmithing03",
+    "EnchArmorFortifySmithing04",
+    "EnchArmorFortifySmithing05",
+    "EnchArmorFortifySmithing06"
+   ],
+   "weap": 0,
+   "armo": 80,
+   "items": [
+    "EnchNecklaceSmithing06",
+    "EnchRingSmithing06",
+    "EnchNecklaceSmithing05",
+    "EnchRingSmithing05",
+    "EnchNecklaceSmithing04",
+    "EnchRingSmithing04",
+    "EnchNecklaceSmithing03",
+    "EnchRingSmithing03",
+    "EnchNecklaceSmithing02",
+    "EnchRingSmithing02",
+    "EnchNecklaceSmithing01",
+    "EnchRingSmithing01"
+   ],
+   "staff": false
+  },
+  "EnchFortifyTwoHandedConstantSelf": {
+   "members": [
+    "EnchArmorFortifyTwoHanded01",
+    "EnchArmorFortifyTwoHanded02",
+    "EnchArmorFortifyTwoHanded03",
+    "EnchArmorFortifyTwoHanded04",
+    "EnchArmorFortifyTwoHanded05",
+    "EnchArmorFortifyTwoHanded06"
+   ],
+   "weap": 0,
+   "armo": 80,
+   "items": [
+    "EnchNecklaceTwoHanded06",
+    "EnchRingTwoHanded06",
+    "EnchNecklaceTwoHanded05",
+    "EnchRingTwoHanded05",
+    "EnchNecklaceTwoHanded04",
+    "EnchRingTwoHanded04",
+    "EnchNecklaceTwoHanded03",
+    "EnchRingTwoHanded03",
+    "EnchNecklaceTwoHanded02",
+    "EnchRingTwoHanded02",
+    "EnchNecklaceTwoHanded01",
+    "EnchRingTwoHanded01"
+   ],
+   "staff": false
+  },
+  "EnchFortifyRestorationConstantSelf": {
+   "members": [
+    "EnchArmorFortifyRestoration01",
+    "EnchArmorFortifyRestoration02",
+    "EnchArmorFortifyRestoration03",
+    "EnchArmorFortifyRestoration04",
+    "EnchArmorFortifyRestoration05",
+    "EnchArmorFortifyRestoration06",
+    "EnchReligiousMara"
+   ],
+   "weap": 0,
+   "armo": 138,
+   "items": [
+    "EnchArmorSteelPlateCuirassRestoration04",
+    "EnchArmorScaledCuirassRestoration04",
+    "EnchArmorSteelPlateCuirassRestoration03",
+    "EnchArmorSteelCuirassRestoration03",
+    "EnchArmorSteelPlateCuirassRestoration02",
+    "EnchArmorSteelCuirassRestoration02",
+    "EnchArmorSteelCuirassRestoration01",
+    "EnchArmorLeatherCuirassRestoration01",
+    "EnchArmorOrcishCuirassRestoration05",
+    "EnchArmorGlassCuirassRestoration05",
+    "EnchArmorDragonscaleCuirassRestoration06",
+    "EnchArmorDragonplateCuirassRestoration06",
+    "ReligiousMaraLove",
+    "MarriageBondofMatrimony"
+   ],
+   "staff": false
+  },
+  "EnchFortifyIllusionConstantSelf": {
+   "members": [
+    "EnchArmorFortifyIllusion01",
+    "EnchArmorFortifyIllusion02",
+    "EnchArmorFortifyIllusion03",
+    "EnchArmorFortifyIllusion04",
+    "EnchArmorFortifyIllusion05",
+    "EnchArmorFortifyIllusion06",
+    "TGNightingaleArmorHelmet01",
+    "TGNightingaleArmorHelmet02",
+    "TGNightingaleArmorHelmet03"
+   ],
+   "weap": 0,
+   "armo": 144,
+   "items": [
+    "EnchArmorSteelPlateCuirassIllusion04",
+    "EnchArmorScaledCuirassIllusion04",
+    "EnchArmorSteelPlateCuirassIllusion03",
+    "EnchArmorSteelCuirassIllusion03",
+    "EnchArmorSteelPlateCuirassIllusion02",
+    "EnchArmorSteelCuirassIllusion02",
+    "EnchArmorSteelCuirassIllusion01",
+    "EnchArmorLeatherCuirassIllusion01",
+    "EnchArmorOrcishCuirassIllusion05",
+    "EnchArmorGlassCuirassIllusion05",
+    "EnchArmorDragonscaleCuirassIllusion06",
+    "EnchArmorDragonplateCuirassIllusion06",
+    "ArmorNightingaleHelmetPlayer02",
+    "ArmorNightingaleHelmetPlayer02",
+    "ArmorNightingaleHelmetPlayer03",
+    "ArmorNightingaleHelmetPlayer03",
+    "ArmorNightingaleHelmetPlayer01",
+    "ArmorNightingaleHelmetPlayer01"
+   ],
+   "staff": false
+  },
+  "EnchFortifyDestructionConstantSelf": {
+   "members": [
+    "DBEnchantShroudedRobes",
+    "EnchArmorFortifyDestruction01",
+    "EnchArmorFortifyDestruction02",
+    "EnchArmorFortifyDestruction03",
+    "EnchArmorFortifyDestruction04",
+    "EnchArmorFortifyDestruction05",
+    "EnchArmorFortifyDestruction06"
+   ],
+   "weap": 0,
+   "armo": 158,
+   "items": [
+    "EnchArmorSteelPlateCuirassDestruction04",
+    "EnchArmorScaledCuirassDestruction04",
+    "EnchArmorSteelPlateCuirassDestruction03",
+    "EnchArmorSteelCuirassDestruction03",
+    "EnchArmorSteelPlateCuirassDestruction02",
+    "EnchArmorSteelCuirassDestruction02",
+    "EnchArmorSteelCuirassDestruction01",
+    "EnchArmorLeatherCuirassDestruction01",
+    "EnchArmorOrcishCuirassDestruction05",
+    "EnchArmorGlassCuirassDestruction05",
+    "EnchArmorDragonscaleCuirassDestruction06",
+    "EnchArmorDragonplateCuirassDestruction06",
+    "DBClothesRobes"
+   ],
+   "staff": false
+  },
+  "EnchFortifyConjurationConstantSelf": {
+   "members": [
+    "EnchArmorFortifyConjuration01",
+    "EnchArmorFortifyConjuration02",
+    "EnchArmorFortifyConjuration03",
+    "EnchArmorFortifyConjuration04",
+    "EnchArmorFortifyConjuration05",
+    "EnchArmorFortifyConjuration06"
+   ],
+   "weap": 0,
+   "armo": 150,
+   "items": [
+    "EnchArmorSteelPlateCuirassConjuration04",
+    "EnchArmorScaledCuirassConjuration04",
+    "EnchArmorSteelPlateCuirassConjuration03",
+    "EnchArmorSteelCuirassConjuration03",
+    "EnchArmorSteelPlateCuirassConjuration02",
+    "EnchArmorSteelCuirassConjuration02",
+    "EnchArmorSteelCuirassConjuration01",
+    "EnchArmorLeatherCuirassConjuration01",
+    "EnchArmorOrcishCuirassConjuration05",
+    "EnchArmorGlassCuirassConjuration05",
+    "EnchArmorDragonscaleCuirassConjuration06",
+    "EnchArmorDragonplateCuirassConjuration06"
+   ],
+   "staff": false
+  },
+  "EnchFortifyAlterationConstantSelf": {
+   "members": [
+    "EnchArmorFortifyAlteration01",
+    "EnchArmorFortifyAlteration02",
+    "EnchArmorFortifyAlteration03",
+    "EnchArmorFortifyAlteration04",
+    "EnchArmorFortifyAlteration05",
+    "EnchArmorFortifyAlteration06"
+   ],
+   "weap": 0,
+   "armo": 152,
+   "items": [
+    "EnchArmorSteelPlateCuirassAlteration04",
+    "EnchArmorScaledCuirassAlteration04",
+    "EnchArmorSteelPlateCuirassAlteration03",
+    "EnchArmorSteelCuirassAlteration03",
+    "EnchArmorSteelPlateCuirassAlteration02",
+    "EnchArmorSteelCuirassAlteration02",
+    "EnchArmorSteelCuirassAlteration01",
+    "EnchArmorLeatherCuirassAlteration01",
+    "EnchArmorOrcishCuirassAlteration05",
+    "EnchArmorGlassCuirassAlteration05",
+    "EnchArmorDragonscaleCuirassAlteration06",
+    "EnchArmorDragonplateCuirassAlteration06"
+   ],
+   "staff": false
+  },
+  "EnchRobesFortifyMagickaRateConstantSelf+EnchRobesFortifyRestorationConstantSelf": {
+   "members": [
+    "EnchRobesCollegeRestoration01",
+    "EnchRobesCollegeRestoration02",
+    "EnchRobesCollegeRestoration03",
+    "EnchRobesCollegeRestoration04",
+    "EnchRobesCollegeRestoration05",
+    "EnchRobesFortifyRestoration01",
+    "EnchRobesFortifyRestoration02",
+    "EnchRobesFortifyRestoration03",
+    "EnchRobesFortifyRestoration04",
+    "EnchRobesFortifyRestoration05",
+    "EnchRobesFortifyRestoration06"
+   ],
+   "weap": 0,
+   "armo": 29,
+   "items": [
+    "EnchClothesRobesMageRestoration05",
+    "EnchClothesRobesMageRestoration04",
+    "EnchClothesRobesMageRestoration03",
+    "EnchClothesRobesMageRestoration02",
+    "EnchClothesRobesMageRestoration01",
+    "EnchClothesWarlockRobesHoodedRestoration01",
+    "EnchClothesNecroRobesHoodedRestoration01",
+    "EnchClothesWarlockRobesHoodedRestoration02",
+    "EnchClothesNecroRobesHoodedRestoration02",
+    "EnchClothesWarlockRobesHoodedRestoration03",
+    "EnchClothesNecroRobesHoodedRestoration03",
+    "EnchClothesWarlockRobesHoodedRestoration04",
+    "EnchClothesNecroRobesHoodedRestoration04",
+    "EnchClothesWarlockRobesHoodedRestoration05",
+    "EnchClothesNecroRobesHoodedRestoration05",
+    "EnchClothesWarlockRobesHoodedRestoration06",
+    "EnchClothesNecroRobesHoodedRestoration06"
+   ],
+   "staff": false
+  },
+  "EnchFortifyMagickaRateConstantSelf": {
+   "members": [
+    "EnchArmorFortifyMagickaRate03",
+    "EnchArmorFortifyMagickaRate04",
+    "EnchArmorFortifyMagickaRate05",
+    "EnchArmorFortifyMagickaRate06",
+    "EnchReligiousAkatosh",
+    "EnchRobesCollegeMagickaRate01",
+    "EnchRobesCollegeMagickaRate02",
+    "EnchRobesCollegeMagickaRate03",
+    "EnchRobesCollegeMagickaRate04",
+    "EnchRobesCollegeMagickaRate05",
+    "EnchRobesFortifyMagickaRate02",
+    "EnchRobesFortifyMagickaRate03",
+    "EnchRobesFortifyMagickaRate04",
+    "EnchRobesFortifyMagickaRate05"
+   ],
+   "weap": 0,
+   "armo": 77,
+   "items": [
+    "EnchClothesRobesMageRegen05",
+    "EnchClothesRobesMageRegen04",
+    "DLC1ArmorVampireArmorValerica",
+    "EnchClothesRobesMageRegen03",
+    "EnchClothesRobesMageRegen02",
+    "DLC2ClothesCultistRobes",
+    "EnchClothesRobesMageRegen01",
+    "EnchClothesMageRobesAppMagickaRate01",
+    "ClothesMythicDawnRobesNoHood",
+    "EnchClothesWarlockRobesHoodedMagickaRate02",
+    "EnchClothesWarlockRobesHoodedMagickaRate03",
+    "EnchClothesNecroRobesHoodedMagickaRate03",
+    "EnchClothesWarlockRobesHoodedMagickaRate04",
+    "EnchClothesNecroRobesHoodedMagickaRate04",
+    "EnchClothesWarlockRobesHoodedMagickaRate05",
+    "EnchClothesNecroRobesHoodedMagickaRate05",
+    "EnchRingMagickaRate06",
+    "EnchArmorDaedricHelmetMagickaRate06",
+    "EnchRingMagickaRate05",
+    "EnchArmorDaedricHelmetMagickaRate05",
+    "EnchRingMagickaRate04",
+    "EnchArmorDaedricHelmetMagickaRate04",
+    "EnchRingMagickaRate03",
+    "EnchArmorEbonyHelmetMagickaRate03",
+    "ReligiousAkatoshTime"
+   ],
+   "staff": false
+  },
+  "EnchRobesFortifyIllusionConstantSelf+EnchRobesFortifyMagickaRateConstantSelf": {
+   "members": [
+    "EnchRobesCollegeIllusion01",
+    "EnchRobesCollegeIllusion02",
+    "EnchRobesCollegeIllusion03",
+    "EnchRobesCollegeIllusion04",
+    "EnchRobesCollegeIllusion05",
+    "EnchRobesFortifyIllusion01",
+    "EnchRobesFortifyIllusion02",
+    "EnchRobesFortifyIllusion03",
+    "EnchRobesFortifyIllusion04",
+    "EnchRobesFortifyIllusion05",
+    "EnchRobesFortifyIllusion06"
+   ],
+   "weap": 0,
+   "armo": 29,
+   "items": [
+    "EnchClothesRobesMageIllusion05",
+    "EnchClothesRobesMageIllusion04",
+    "EnchClothesRobesMageIllusion03",
+    "EnchClothesRobesMageIllusion02",
+    "EnchClothesRobesMageIllusion01",
+    "EnchClothesWarlockRobesHoodedIllusion01",
+    "EnchClothesNecroRobesHoodedIllusion01",
+    "EnchClothesWarlockRobesHoodedIllusion02",
+    "EnchClothesNecroRobesHoodedIllusion02",
+    "EnchClothesWarlockRobesHoodedIllusion03",
+    "EnchClothesNecroRobesHoodedIllusion03",
+    "EnchClothesWarlockRobesHoodedIllusion04",
+    "EnchClothesNecroRobesHoodedIllusion04",
+    "EnchClothesWarlockRobesHoodedIllusion05",
+    "EnchClothesNecroRobesHoodedIllusion05",
+    "EnchClothesWarlockRobesHoodedIllusion06",
+    "EnchClothesNecroRobesHoodedIllusion06"
+   ],
+   "staff": false
+  },
+  "EnchRobesFortifyDestructionConstantSelf+EnchRobesFortifyMagickaRateConstantSelf": {
+   "members": [
+    "EnchRobesCollegeDestruction01",
+    "EnchRobesCollegeDestruction02",
+    "EnchRobesCollegeDestruction03",
+    "EnchRobesCollegeDestruction04",
+    "EnchRobesCollegeDestruction05",
+    "EnchRobesFortifyDestruction01",
+    "EnchRobesFortifyDestruction02",
+    "EnchRobesFortifyDestruction03",
+    "EnchRobesFortifyDestruction04",
+    "EnchRobesFortifyDestruction05",
+    "EnchRobesFortifyDestruction06"
+   ],
+   "weap": 0,
+   "armo": 36,
+   "items": [
+    "EnchClothesRobesMageDestruction05",
+    "EnchClothesRobesMageDestruction04",
+    "EnchClothesRobesMageDestruction03",
+    "EnchClothesRobesMageDestruction02",
+    "DLC1_WESC09TaronsRobes",
+    "EnchClothesRobesMageDestruction01",
+    "EnchClothesWarlockRobesHoodedDestruction06",
+    "EnchClothesNecroRobesHoodedDestruction06",
+    "EnchClothesWarlockRobesHoodedDestruction05",
+    "EnchClothesNecroRobesHoodedDestruction05",
+    "EnchClothesWarlockRobesHoodedDestruction04",
+    "EnchClothesNecroRobesHoodedDestruction04",
+    "EnchClothesWarlockRobesHoodedDestruction03",
+    "EnchClothesNecroRobesHoodedDestruction03",
+    "EnchClothesWarlockRobesHoodedDestruction02",
+    "EnchClothesNecroRobesHoodedDestruction02",
+    "EnchClothesWarlockRobesHoodedDestruction01",
+    "EnchClothesNecroRobesHoodedDestruction01"
+   ],
+   "staff": false
+  },
+  "EnchRobesFortifyConjurationConstantSelf+EnchRobesFortifyMagickaRateConstantSelf": {
+   "members": [
+    "EnchRobesCollegeConjuration01",
+    "EnchRobesCollegeConjuration02",
+    "EnchRobesCollegeConjuration03",
+    "EnchRobesCollegeConjuration04",
+    "EnchRobesCollegeConjuration05",
+    "EnchRobesFortifyConjuration01",
+    "EnchRobesFortifyConjuration02",
+    "EnchRobesFortifyConjuration03",
+    "EnchRobesFortifyConjuration04",
+    "EnchRobesFortifyConjuration05",
+    "EnchRobesFortifyConjuration06"
+   ],
+   "weap": 0,
+   "armo": 35,
+   "items": [
+    "EnchClothesRobesMageConjuration05",
+    "EnchClothesRobesMageConjuration04",
+    "EnchClothesRobesMageConjuration03",
+    "EnchClothesRobesMageConjuration02",
+    "EnchClothesRobesMageConjuration01",
+    "EnchClothesWarlockRobesHoodedConjuration06",
+    "EnchClothesNecroRobesHoodedConjuration06",
+    "EnchClothesWarlockRobesHoodedConjuration05",
+    "EnchClothesNecroRobesHoodedConjuration05",
+    "EnchClothesWarlockRobesHoodedConjuration04",
+    "EnchClothesNecroRobesHoodedConjuration04",
+    "EnchClothesWarlockRobesHoodedConjuration03",
+    "EnchClothesNecroRobesHoodedConjuration03",
+    "EnchClothesWarlockRobesHoodedConjuration02",
+    "EnchClothesNecroRobesHoodedConjuration02",
+    "EnchClothesWarlockRobesHoodedConjuration01",
+    "EnchClothesNecroRobesHoodedConjuration01"
+   ],
+   "staff": false
+  },
+  "EnchRobesFortifyAlterationConstantSelf+EnchRobesFortifyMagickaRateConstantSelf": {
+   "members": [
+    "EnchRobesCollegeAlteration01",
+    "EnchRobesCollegeAlteration02",
+    "EnchRobesCollegeAlteration03",
+    "EnchRobesCollegeAlteration04",
+    "EnchRobesCollegeAlteration05",
+    "EnchRobesFortifyAlteration01",
+    "EnchRobesFortifyAlteration02",
+    "EnchRobesFortifyAlteration03",
+    "EnchRobesFortifyAlteration04",
+    "EnchRobesFortifyAlteration05",
+    "EnchRobesFortifyAlteration06"
+   ],
+   "weap": 0,
+   "armo": 29,
+   "items": [
+    "EnchClothesRobesMageAlteration05",
+    "EnchClothesRobesMageAlteration04",
+    "EnchClothesRobesMageAlteration03",
+    "EnchClothesRobesMageAlteration02",
+    "EnchClothesRobesMageAlteration01",
+    "EnchClothesWarlockRobesHoodedAlteration06",
+    "EnchClothesNecroRobesHoodedAlteration06",
+    "EnchClothesWarlockRobesHoodedAlteration05",
+    "EnchClothesNecroRobesHoodedAlteration05",
+    "EnchClothesWarlockRobesHoodedAlteration04",
+    "EnchClothesNecroRobesHoodedAlteration04",
+    "EnchClothesWarlockRobesHoodedAlteration03",
+    "EnchClothesNecroRobesHoodedAlteration03",
+    "EnchClothesWarlockRobesHoodedAlteration02",
+    "EnchClothesNecroRobesHoodedAlteration02",
+    "EnchClothesWarlockRobesHoodedAlteration01",
+    "EnchClothesNecroRobesHoodedAlteration01"
+   ],
+   "staff": false
+  },
+  "AbFortifyUnarmedDamage": {
+   "members": [
+    "EnchArmorFortifyUnarmed01"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "dunRatwayBrawlerGloves"
+   ],
+   "staff": false
+  },
+  "EnchFortifyArcheryConstantSelf": {
+   "members": [
+    "EnchArmorFortifyMarksman01",
+    "EnchArmorFortifyMarksman02",
+    "EnchArmorFortifyMarksman03",
+    "EnchArmorFortifyMarksman04",
+    "EnchArmorFortifyMarksman05",
+    "EnchArmorFortifyMarksman06",
+    "TGLinweHelmetEnchant"
+   ],
+   "weap": 0,
+   "armo": 144,
+   "items": [
+    "ArmorLinweHelmet",
+    "EnchRingMarksman06",
+    "EnchCircletMarksman06",
+    "EnchRingMarksman05",
+    "EnchCircletMarksman05",
+    "EnchRingMarksman04",
+    "EnchCircletMarksman04",
+    "EnchRingMarksman03",
+    "EnchCircletMarksman03",
+    "EnchRingMarksman02",
+    "EnchCircletMarksman02",
+    "EnchRingMarksman01",
+    "EnchCircletMarksman01"
+   ],
+   "staff": false
+  },
+  "EnchResistDiseaseConstantSelf": {
+   "members": [
+    "EnchArmorResistDisease01",
+    "EnchArmorResistDisease02"
+   ],
+   "weap": 0,
+   "armo": 2,
+   "items": [
+    "EnchNecklaceResistDisease02",
+    "EnchNecklaceResistDisease01"
+   ],
+   "staff": false
+  },
+  "EnchResistPoisonConstantSelf": {
+   "members": [
+    "DBEnchantShrouded",
+    "DBEnchantShroudedSP",
+    "EnchArmorResistPoison01",
+    "EnchArmorResistPoison02"
+   ],
+   "weap": 0,
+   "armo": 5,
+   "items": [
+    "EnchNecklaceResistPoison02",
+    "EnchNecklaceResistPoison01",
+    "DBArmorShortSleeve",
+    "DBArmor",
+    "DBArmorSP"
+   ],
+   "staff": false
+  },
+  "EnchFortifyHealthConstantSelf": {
+   "members": [
+    "EnchArmorFortifyHealth01",
+    "EnchArmorFortifyHealth02",
+    "EnchArmorFortifyHealth03",
+    "EnchArmorFortifyHealth04",
+    "EnchArmorFortifyHealth05",
+    "EnchArmorFortifyHealth06",
+    "EnchReligiousArkay",
+    "dunEnchGauldurAmuletFragmentFolgunthurFortifyHealth"
+   ],
+   "weap": 0,
+   "armo": 94,
+   "items": [
+    "EnchRingHealth06",
+    "EnchNecklaceHealth06",
+    "EnchRingHealth05",
+    "EnchNecklaceHealth05",
+    "EnchRingHealth04",
+    "EnchNecklaceHealth04",
+    "EnchRingHealth03",
+    "EnchNecklaceHealth03",
+    "EnchRingHealth02",
+    "EnchNecklaceHealth02",
+    "EnchRingHealth01",
+    "EnchNecklaceHealth01",
+    "dunGauldurAmuletFragmentFolgunthur",
+    "ReligiousArkayLifeDeath",
+    "WhiterunArkayAmulet"
+   ],
+   "staff": false
+  },
+  "EnchMuffleConstantSelf": {
+   "members": [
+    "EnchArmorMuffle",
+    "TGNightingaleArmorBoots01",
+    "TGNightingaleArmorBoots02",
+    "TGNightingaleArmorBoots03"
+   ],
+   "weap": 0,
+   "armo": 23,
+   "items": [
+    "ArmorNightingaleBootsPlayer03",
+    "ArmorNightingaleBootsPlayer03",
+    "ArmorNightingaleBootsPlayer01",
+    "ArmorNightingaleBootsPlayer01",
+    "DBClothesJesterBootsCicero",
+    "DBArmorBootsSP",
+    "ArmorNightingaleBootsPlayer02",
+    "ArmorNightingaleBootsPlayer02"
+   ],
+   "staff": false
+  },
+  "EnchWaterbreathingConstantSelf": {
+   "members": [
+    "DLC2dunHaknirEnchHelm",
+    "EnchArmorWaterbreathing"
+   ],
+   "weap": 0,
+   "armo": 18,
+   "items": [
+    "EnchNecklaceWaterbreathing",
+    "EnchCircletWaterbreathing",
+    "DLC2dunHaknirArmorHelmNP",
+    "DLC2dunHaknirArmorHelm"
+   ],
+   "staff": false
+  },
+  "EnchResistShocktConstantSelf": {
+   "members": [
+    "EnchArmorResistShock01",
+    "EnchArmorResistShock02",
+    "EnchArmorResistShock03",
+    "EnchArmorResistShock04",
+    "EnchArmorResistShock05",
+    "EnchArmorResistShock06"
+   ],
+   "weap": 0,
+   "armo": 126,
+   "items": [
+    "EnchNecklaceResistShock06",
+    "EnchArmorDaedricShieldResistShock06",
+    "EnchNecklaceResistShock05",
+    "EnchArmorDaedricShieldResistShock05",
+    "EnchNecklaceResistShock04",
+    "EnchArmorDaedricShieldResistShock04",
+    "EnchNecklaceResistShock03",
+    "EnchArmorScaledBootsResistShock03",
+    "EnchNecklaceResistShock02",
+    "EnchArmorScaledBootsResistShock02",
+    "EnchNecklaceResistShock01",
+    "EnchArmorImperialLightBootsResistShock01"
+   ],
+   "staff": false
+  },
+  "EnchResistFrostConstantSelf": {
+   "members": [
+    "EnchArmorResistFrost01",
+    "EnchArmorResistFrost02",
+    "EnchArmorResistFrost03",
+    "EnchArmorResistFrost04",
+    "EnchArmorResistFrost05",
+    "EnchArmorResistFrost06"
+   ],
+   "weap": 0,
+   "armo": 126,
+   "items": [
+    "EnchNecklaceResistFrost06",
+    "EnchArmorDaedricShieldResistFrost06",
+    "EnchNecklaceResistFrost05",
+    "EnchArmorDaedricShieldResistFrost05",
+    "EnchNecklaceResistFrost04",
+    "dunRRHerebanesFortress",
+    "EnchNecklaceResistFrost03",
+    "EnchArmorScaledBootsResistFrost03",
+    "EnchNecklaceResistFrost02",
+    "EnchArmorScaledBootsResistFrost02",
+    "EnchNecklaceResistFrost01",
+    "EnchArmorImperialLightBootsResistFrost01"
+   ],
+   "staff": false
+  },
+  "EnchResistFireConstantSelf": {
+   "members": [
+    "EnchArmorResistFire01",
+    "EnchArmorResistFire02",
+    "EnchArmorResistFire03",
+    "EnchArmorResistFire04",
+    "EnchArmorResistFire05",
+    "EnchArmorResistFire06"
+   ],
+   "weap": 0,
+   "armo": 124,
+   "items": [
+    "EnchNecklaceResistFire06",
+    "EnchArmorDaedricShieldResistFire06",
+    "EnchNecklaceResistFire05",
+    "EnchArmorDaedricShieldResistFire05",
+    "EnchNecklaceResistFire04",
+    "EnchArmorDaedricShieldResistFire04",
+    "EnchNecklaceResistFire03",
+    "EnchArmorDraugrHelmetResistFire03",
+    "EnchNecklaceResistFire02",
+    "EnchArmorScaledBootsResistFire02",
+    "EnchNecklaceResistFire01",
+    "EnchArmorImperialLightBootsResistFire01"
+   ],
+   "staff": false
+  },
+  "EnchFortifyAlterationConstantSelf+EnchFortifyConjurationConstantSelf+EnchFortifyDestructionConstantSelf+EnchFortifyIllusionConstantSelf+EnchFortifyRestorationConstantSelf": {
+   "members": [
+    "EnchAllMagicSchoolsMinor"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "dunLabyrinthianMazeCircletReward"
+   ],
+   "staff": false
+  },
+  "EnchFortifyArticulation": {
+   "members": [
+    "EnchArmorArticulation01",
+    "EnchArmorArticulation02",
+    "EnchArmorArticulation03",
+    "EnchArmorArticulation04",
+    "EnchArmorArticulation05",
+    "EnchArmorArticulation06",
+    "EnchArmorArticulation07"
+   ],
+   "weap": 0,
+   "armo": 7,
+   "items": [
+    "TGAmuletofArticulation07",
+    "TGAmuletofArticulation06",
+    "TGAmuletofArticulation05",
+    "TGAmuletofArticulation04",
+    "TGAmuletofArticulation03",
+    "TGAmuletofArticulation02",
+    "TGAmuletofArticulation01"
+   ],
+   "staff": false
+  },
+  "EnchFortifyShoutTimerConstantSelf": {
+   "members": [
+    "EnchReligiousTalos"
+   ],
+   "weap": 0,
+   "armo": 3,
+   "items": [
+    "CWMission07EvidenceMarkarth",
+    "MarkarthFreeformTalosAmulet"
+   ],
+   "staff": false
+  },
+  "EnchFortifyCarryConstantSelf": {
+   "members": [
+    "DLC2TGArmorFortifyCarryBlackguard",
+    "EnchArmorFortifyCarry01",
+    "EnchArmorFortifyCarry02",
+    "EnchArmorFortifyCarry03",
+    "EnchArmorFortifyCarry04",
+    "EnchArmorFortifyCarry05",
+    "EnchArmorFortifyCarry06",
+    "TGArmorFortifyCarry",
+    "TGArmorFortifyCarryImproved",
+    "TGArmorFortifyCarryMaster"
+   ],
+   "weap": 0,
+   "armo": 74,
+   "items": [
+    "ArmorThievesGuildCuirassPlayerImproved",
+    "ArmorThievesGuildCuirassPlayerImproved",
+    "ArmorThievesGuildCuirassPlayer",
+    "ArmorThievesGuildCuirassPlayer",
+    "WERJ06JewelryNecklaceGold",
+    "EnchArmorImperialLightBootsCarry01",
+    "ArmorThievesGuildLeaderCuirass",
+    "ArmorThievesGuildLeaderCuirass",
+    "EnchArmorDaedricBootsCarry06",
+    "EnchArmorDragonplateBootsCarry06",
+    "EnchArmorDaedricBootsCarry05",
+    "EnchArmorDragonplateBootsCarry05",
+    "EnchArmorDaedricBootsCarry04",
+    "EnchArmorDragonplateBootsCarry04",
+    "EnchArmorScaledBootsCarry03",
+    "EnchArmorGlassBootsCarry03",
+    "EnchArmorScaledBootsCarry02",
+    "EnchArmorDwarvenBootsCarry02",
+    "DLC2TGArmorVariantCuirass"
+   ],
+   "staff": false
+  },
+  "EnchDragonPriestUltraMaskEffect": {
+   "members": [
+    "EnchDragonPriestMaskUltra"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "ArmorDragonPriestMaskUltraHelmet"
+   ],
+   "staff": false
+  },
+  "EnchDragonPriestWoodMaskEffect": {
+   "members": [
+    "EnchDragonPriestMaskWood"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "ArmorDragonPriestMaskWoodHelmet"
+   ],
+   "staff": false
+  },
+  "EnchFortifyAlterationConstantSelf+EnchFortifyConjurationConstantSelf+EnchFortifyIllusionConstantSelf": {
+   "members": [
+    "EnchDragonPriestMaskSteel"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "ArmorDragonPriestMaskSteelHelmet"
+   ],
+   "staff": false
+  },
+  "EnchResistFireConstantSelf+EnchResistFrostConstantSelf+EnchResistShocktConstantSelf": {
+   "members": [
+    "EnchDragonPriestMaskMarble"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "ArmorDragonPriestMaskMarbleHelmet"
+   ],
+   "staff": false
+  },
+  "EnchResistDiseaseConstantSelf+EnchResistPoisonConstantSelf": {
+   "members": [
+    "EnchDragonPriestIron"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "ArmorDragonPriestMaskIronHelmet"
+   ],
+   "staff": false
+  },
+  "EnchFortifyAlchemyConstantSelf+EnchFortifyArcheryConstantSelf+EnchFortifyLockpickingConstantSelf": {
+   "members": [
+    "EnchDragonPriestMaskBronze"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "ArmorDragonPriestMaskBronzeHelmet"
+   ],
+   "staff": false
+  },
+  "EnchFortifyCarryConstantSelf+EnchFortifySpeechcraftConstantSelf+EnchWaterbreathingConstantSelf": {
+   "members": [
+    "EnchDragonPriestMaskCorundrum"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "ArmorDragonPriestMaskCorondrumHelmet"
+   ],
+   "staff": false
+  },
+  "EnchFortifyDestructionConstantSelf+EnchFortifyMagickaConstantSelf+EnchFortifyRestorationConstantSelf": {
+   "members": [
+    "EnchDragonPriestMaskEbony"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "ArmorDragonPriestMaskEbonyHelmet"
+   ],
+   "staff": false
+  },
+  "EnchFortifyHealthConstantSelf+EnchResistMagicConstantSelf": {
+   "members": [
+    "EnchYsgramorShield"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "ArmorShieldofYsgramor"
+   ],
+   "staff": false
+  },
+  "EnchFortifyPersuasionConstantSelf": {
+   "members": [
+    "EnchReligiousDibella"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "ReligiousDibellaBeauty"
+   ],
+   "staff": false
+  },
+  "EnchFireDamageFFContact": {
+   "members": [
+    "EnchWeaponFireDamage01",
+    "EnchWeaponFireDamage02",
+    "EnchWeaponFireDamage03",
+    "EnchWeaponFireDamage04",
+    "EnchWeaponFireDamage05",
+    "EnchWeaponFireDamage06"
+   ],
+   "weap": 235,
+   "armo": 0,
+   "items": [
+    "DA14DremoraGreatswordFire03",
+    "EnchDraugrGreatswordHonedFire03",
+    "EnchDaedricGreatswordDremoraFire06",
+    "SummonedDaedricMaceFire06",
+    "crDwarvenSphereCrossbow02",
+    "EnchImperialSwordFire1",
+    "EnchDraugrGreatswordHonedFire02",
+    "EnchImperialSwordFire2",
+    "dunRRHerebanesCourage",
+    "EnchDaedricWarhammerFire05",
+    "EnchDaedricWarhammerFire04",
+    "EnchDaedricWarAxeFire04"
+   ],
+   "staff": false
+  },
+  "ChillrendEnchFrostDamageFFContact+ChillrendParalysisFFContact": {
+   "members": [
+    "EnchWeaponChillrend001",
+    "EnchWeaponChillrend002",
+    "EnchWeaponChillrend003",
+    "EnchWeaponChillrend004",
+    "EnchWeaponChillrend005",
+    "EnchWeaponChillrend006"
+   ],
+   "weap": 6,
+   "armo": 0,
+   "items": [
+    "TG07Chillrend006",
+    "TG07Chillrend005",
+    "TG07Chillrend004",
+    "TG07Chillrend003",
+    "TG07Chillrend002",
+    "TG07Chillrend001"
+   ],
+   "staff": false
+  },
+  "DraugrMagicBowStreak": {
+   "members": [
+    "EnchWeaponDraugrMagicBow"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "MG07DraugrMagicBow"
+   ],
+   "staff": false
+  },
+  "DraugrMagicAxeStreak": {
+   "members": [
+    "EnchWeaponDraugrMagicAxe"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "MG07DraugrMagicAxe"
+   ],
+   "staff": false
+  },
+  "DraugrMagicSwordStreak": {
+   "members": [
+    "EnchWeaponDraugrMagicSword"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "MG07DraugrMagicSword"
+   ],
+   "staff": false
+  },
+  "EnchFrostDamageFFContact+EnchShockDamageFFContact+FrostSlowFFContact": {
+   "members": [
+    "EnchWeaponNightingaleBow01",
+    "EnchWeaponNightingaleBow02",
+    "EnchWeaponNightingaleBow03",
+    "EnchWeaponNightingaleBow04",
+    "EnchWeaponNightingaleBow05"
+   ],
+   "weap": 5,
+   "armo": 0,
+   "items": [
+    "NightingaleBow05",
+    "NightingaleBow04",
+    "NightingaleBow03",
+    "NightingaleBow02",
+    "NightingaleBow01"
+   ],
+   "staff": false
+  },
+  "EnchAbsorbHealthFFContact+EnchAbsorbStaminaFFContact": {
+   "members": [
+    "EnchWeaponNightingaleSword01",
+    "EnchWeaponNightingaleSword02",
+    "EnchWeaponNightingaleSword03",
+    "EnchWeaponNightingaleSword04",
+    "EnchWeaponNightingaleSword05"
+   ],
+   "weap": 5,
+   "armo": 0,
+   "items": [
+    "NightingaleBlade05",
+    "NightingaleBlade04",
+    "NightingaleBlade03",
+    "NightingaleBlade02",
+    "NightingaleBlade01"
+   ],
+   "staff": false
+  },
+  "EnchAbsorbMagickaFFContact": {
+   "members": [
+    "EnchWeaponAbsorbMagicka02",
+    "EnchWeaponAbsorbMagicka03",
+    "EnchWeaponAbsorbMagicka04",
+    "EnchWeaponAbsorbMagicka05",
+    "EnchWeaponAbsorbMagicka06"
+   ],
+   "weap": 173,
+   "armo": 0,
+   "items": [
+    "dunGeirmundSigdisBow06",
+    "EnchDaedricWarhammerAbsorbM06",
+    "dunGeirmundSigdisBow05",
+    "EnchDaedricWarhammerAbsorbM05",
+    "dunGeirmundSigdisBow04",
+    "EnchDaedricWarhammerAbsorbM04",
+    "dunGeirmundSigdisBow03",
+    "EnchGlassWarhammerAbsorbM03",
+    "EnchDwarvenWarhammerAbsorbM02",
+    "EnchDwarvenWarAxeAbsorbM02"
+   ],
+   "staff": false
+  },
+  "EnchAbsorbHealthFFContact": {
+   "members": [
+    "EnchWeaponAbsorbHealth02",
+    "EnchWeaponAbsorbHealth03",
+    "EnchWeaponAbsorbHealth04",
+    "EnchWeaponAbsorbHealth05",
+    "EnchWeaponAbsorbHealth06"
+   ],
+   "weap": 175,
+   "armo": 0,
+   "items": [
+    "dunFolgunthurMikrulSword06",
+    "EnchDaedricWarhammerAbsorbH06",
+    "dunFolgunthurMikrulSword05",
+    "EnchDaedricWarhammerAbsorbH05",
+    "dunFolgunthurMikrulSword04",
+    "EnchDaedricWarhammerAbsorbH04",
+    "dunFolgunthurMikrulSword03",
+    "EnchGlassWarhammerAbsorbH03",
+    "EnchDwarvenWarhammerAbsorbH02",
+    "EnchDwarvenWarAxeAbsorbH02"
+   ],
+   "staff": false
+  },
+  "EnchFrostDamageFFContact+FrostSlowFFContact": {
+   "members": [
+    "EnchWeaponFrostDamage01",
+    "EnchWeaponFrostDamage02",
+    "EnchWeaponFrostDamage03",
+    "EnchWeaponFrostDamage04",
+    "EnchWeaponFrostDamage05",
+    "EnchWeaponFrostDamage06"
+   ],
+   "weap": 290,
+   "armo": 0,
+   "items": [
+    "DBAlainAegisbane",
+    "EnchDraugrWarAxeHonedFrost01",
+    "DB05ElvenBow",
+    "EnchDaedricWarhammerFrost04",
+    "EnchDraugrWarAxeHonedFrost03",
+    "EnchDraugrSwordHonedFrost03",
+    "EnchDraugrWarAxeHonedFrost02",
+    "EnchDraugrSwordHonedFrost02",
+    "EnchDaedricWarhammerFrost06",
+    "EnchDaedricWarAxeFrost06",
+    "EnchDaedricWarhammerFrost05",
+    "EnchDaedricWarAxeFrost05"
+   ],
+   "staff": false
+  },
+  "EnchInfluenceConfDownFFContactMed+EnchStaminaDamageFFContact": {
+   "members": [
+    "EnchBloatedMan"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "dunBloatedMansKatana"
+   ],
+   "staff": false
+  },
+  "EnchStaminaDamageFFContact": {
+   "members": [
+    "EnchWeaponStaminaDamage01",
+    "EnchWeaponStaminaDamage02",
+    "EnchWeaponStaminaDamage03",
+    "EnchWeaponStaminaDamage04",
+    "EnchWeaponStaminaDamage05",
+    "EnchWeaponStaminaDamage06"
+   ],
+   "weap": 245,
+   "armo": 0,
+   "items": [
+    "dunHuntersBow",
+    "EnchImperialSwordStamina2",
+    "EnchImperialSwordStamina3",
+    "EnchGlassWarhammerStamina03",
+    "EnchImperialSwordStamina1",
+    "EnchImperialBowStamina01",
+    "EnchDaedricWarhammerStamina06",
+    "EnchDaedricWarAxeStamina06",
+    "EnchDaedricWarhammerStamina05",
+    "EnchDaedricWarAxeStamina05",
+    "EnchDaedricWarhammerStamina04",
+    "EnchDaedricWarAxeStamina04"
+   ],
+   "staff": false
+  },
+  "StaggerAttackFFContact": {
+   "members": [
+    "EnchStagger"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "dunKatariahScimitar"
+   ],
+   "staff": false
+  },
+  "EnchSoulTrapFFContact": {
+   "members": [
+    "EnchWeaponSoulTrap01",
+    "EnchWeaponSoulTrap02",
+    "EnchWeaponSoulTrap03",
+    "EnchWeaponSoulTrap04",
+    "EnchWeaponSoulTrap05",
+    "EnchWeaponSoulTrap06"
+   ],
+   "weap": 249,
+   "armo": 0,
+   "items": [
+    "EnchGlassWarhammerSoulTrap05",
+    "EnchDaedricWarhammerSoulTrap05",
+    "EnchGlassWarhammerSoulTrap04",
+    "EnchDaedricWarhammerSoulTrap04",
+    "EnchGlassWarhammerSoulTrap03",
+    "EnchImperialSwordSoulTrap3",
+    "EnchImperialSwordSoulTrap2",
+    "EnchDwarvenWarhammerSoulTrap02",
+    "EnchImperialSwordSoulTrap1",
+    "EnchImperialBowSoulTrap01",
+    "EnchDaedricWarhammerSoulTrap06",
+    "EnchDaedricWarAxeSoulTrap06"
+   ],
+   "staff": false
+  },
+  "EnchInfluenceConfDownFFContactLow": {
+   "members": [
+    "EnchWeaponFear01",
+    "EnchWeaponFear02",
+    "EnchWeaponFear03",
+    "EnchWeaponFear04",
+    "EnchWeaponFear05",
+    "EnchWeaponFear06"
+   ],
+   "weap": 243,
+   "armo": 0,
+   "items": [
+    "EnchImperialSwordFear1",
+    "EnchImperialBowFear1",
+    "EnchImperialSwordFear2",
+    "EnchDwarvenWarhammerFear02",
+    "EnchImperialSwordFear3",
+    "EnchGlassWarhammerFear03",
+    "EnchDaedricWarhammerFear06",
+    "EnchDaedricWarAxeFear06",
+    "EnchDaedricWarhammerFear05",
+    "EnchDaedricWarAxeFear05",
+    "EnchDaedricWarhammerFear04",
+    "EnchDaedricWarAxeFear04"
+   ],
+   "staff": false
+  },
+  "EnchMagickaDamageFFContact": {
+   "members": [
+    "EnchWeaponMagickaDamage01",
+    "EnchWeaponMagickaDamage02",
+    "EnchWeaponMagickaDamage03",
+    "EnchWeaponMagickaDamage04",
+    "EnchWeaponMagickaDamage05",
+    "EnchWeaponMagickaDamage06"
+   ],
+   "weap": 246,
+   "armo": 0,
+   "items": [
+    "EnchImperialSwordMagicka1",
+    "EnchImperialBowMagicka01",
+    "EnchImperialSwordMagicka2",
+    "EnchDwarvenWarhammerMagicka02",
+    "EnchImperialSwordMagicka3",
+    "EnchGlassDaggerMagicka03",
+    "EnchDaedricWarhammerMagicka06",
+    "EnchDaedricWarAxeMagicka06",
+    "EnchDaedricWarhammerMagicka05",
+    "EnchDaedricWarAxeMagicka05",
+    "EnchDaedricWarhammerMagicka04",
+    "EnchDaedricWarAxeMagicka04"
+   ],
+   "staff": false
+  },
+  "EnchShockDamageFFContact": {
+   "members": [
+    "EnchWeaponShockDamage01",
+    "EnchWeaponShockDamage02",
+    "EnchWeaponShockDamage03",
+    "EnchWeaponShockDamage04",
+    "EnchWeaponShockDamage05",
+    "EnchWeaponShockDamage06"
+   ],
+   "weap": 250,
+   "armo": 0,
+   "items": [
+    "EnchImperialSwordShock1",
+    "EnchImperialBowShock01",
+    "EnchImperialSwordShock2",
+    "EnchDwarvenWarhammerShock02",
+    "EnchImperialSwordShock3",
+    "EnchGlassWarhammerShock03",
+    "EnchDaedricWarhammerShock06",
+    "EnchDaedricWarAxeShock06",
+    "EnchDaedricWarhammerShock05",
+    "EnchDaedricWarAxeShock05",
+    "EnchDaedricWarhammerShock04",
+    "EnchDaedricWarAxeShock04"
+   ],
+   "staff": false
+  },
+  "EnchTurnUndeadFFContact": {
+   "members": [
+    "EnchWeaponTurnUndead01",
+    "EnchWeaponTurnUndead02",
+    "EnchWeaponTurnUndead03",
+    "EnchWeaponTurnUndead04",
+    "EnchWeaponTurnUndead05",
+    "EnchWeaponTurnUndead06"
+   ],
+   "weap": 249,
+   "armo": 0,
+   "items": [
+    "EnchImperialSwordTurn2",
+    "EnchDwarvenWarhammerTurn02",
+    "EnchImperialSwordTurn1",
+    "EnchImperialBowTurn01",
+    "EnchImperialSwordTurn3",
+    "EnchGlassWarhammerTurn03",
+    "EnchDaedricWarhammerTurn06",
+    "EnchDaedricWarAxeTurn06",
+    "EnchDaedricWarhammerTurn05",
+    "EnchDaedricWarAxeTurn05",
+    "EnchDaedricWarhammerTurn04",
+    "EnchDaedricWarAxeTurn04"
+   ],
+   "staff": false
+  },
+  "EnchAbsorbStaminaFFContact": {
+   "members": [
+    "DA06VolendrungEnchantment",
+    "EnchWeaponAbsorbStamina02",
+    "EnchWeaponAbsorbStamina03",
+    "EnchWeaponAbsorbStamina04",
+    "EnchWeaponAbsorbStamina05",
+    "EnchWeaponAbsorbStamina06"
+   ],
+   "weap": 170,
+   "armo": 0,
+   "items": [
+    "DA06GiantClub",
+    "EnchGlassWarhammerAbsorbS03",
+    "EnchDaedricWarhammerAbsorbS06",
+    "EnchDaedricWarAxeAbsorbS06",
+    "EnchDaedricWarhammerAbsorbS05",
+    "EnchDaedricWarAxeAbsorbS05",
+    "EnchDaedricWarhammerAbsorbS04",
+    "EnchDaedricWarAxeAbsorbS04",
+    "EnchDwarvenWarhammerAbsorbS02",
+    "EnchDwarvenWarAxeAbsorbS02",
+    "DA06Volendrung"
+   ],
+   "staff": false
+  },
+  "EnchParalysisFFContact": {
+   "members": [
+    "EnchWeaponParalysis04",
+    "EnchWeaponParalysis05",
+    "EnchWeaponParalysis06"
+   ],
+   "weap": 122,
+   "armo": 0,
+   "items": [
+    "EnchDaedricWarhammerParalyze06",
+    "EnchDaedricWarAxeParalyze06",
+    "EnchDaedricWarhammerParalyze05",
+    "EnchDaedricWarAxeParalyze05",
+    "EnchDaedricWarhammerParalyze04",
+    "EnchDaedricWarAxeParalyze04"
+   ],
+   "staff": false
+  },
+  "EnchBanishFFContact": {
+   "members": [
+    "EnchWeaponBanish04",
+    "EnchWeaponBanish05",
+    "EnchWeaponBanish06"
+   ],
+   "weap": 120,
+   "armo": 0,
+   "items": [
+    "EnchDaedricWarhammerBanish06",
+    "EnchDaedricWarAxeBanish06",
+    "EnchDaedricWarhammerBanish05",
+    "EnchDaedricWarAxeBanish05",
+    "EnchDaedricWarhammerBanish04",
+    "EnchDaedricWarAxeBanish04"
+   ],
+   "staff": false
+  },
+  "dunRedEagleFireDamageFFContact+dunRedEagleTurnUndeadFFContact": {
+   "members": [
+    "EnchRedEagle"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "dunRedEagleSwordUpgraded"
+   ],
+   "staff": false
+  },
+  "EnchFireDamageFFContact+EnchSoulTrapFFContact": {
+   "members": [
+    "EnchFierySouls"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "EnchSteelBattleaxeFierySouls"
+   ],
+   "staff": false
+  },
+  "DLC2EnchDragonAbsorbFake": {
+   "members": [
+    "DLC2EnchArmorDragonAbsorbBoost"
+   ],
+   "weap": 0,
+   "armo": 2,
+   "items": [
+    "DLC2ClothesMiraakBoots",
+    "DLC2ClothesMiraakGloves"
+   ],
+   "staff": false
+  },
+  "DLC2EnchDragonAbsorb+DLC2EnchDragonAbsorbBoost+DLC2EnchDragonAbsorbBoost": {
+   "members": [
+    "DLC2EnchArmorDragonAbsorb"
+   ],
+   "weap": 0,
+   "armo": 3,
+   "items": [
+    "DLC2MKMiraakRobes3",
+    "DLC2MKMiraakRobes2"
+   ],
+   "staff": false
+  },
+  "DLC2dunAcolyteMaskFrostBoostEnchEffect+EnchResistFrostConstantSelf": {
+   "members": [
+    "DLC2EnchAcolyteMaskFrost"
+   ],
+   "weap": 0,
+   "armo": 2,
+   "items": [
+    "DLC2MiraakMaskNew",
+    "DLC2ArmorAcolyteMaskFrost"
+   ],
+   "staff": false
+  },
+  "DLC2dunAcolyteMaskFireBoostEnchEffect+EnchResistFireConstantSelf": {
+   "members": [
+    "DLC2EnchAcolyteMaskFire"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DLC2ArmorAcolyteMaskFire"
+   ],
+   "staff": false
+  },
+  "DLC2dunAcolyteMaskShockBoostEnchEffect+EnchResistShocktConstantSelf": {
+   "members": [
+    "DLC2EnchAcolyteMaskShock"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DLC2ArmorAcolyteMaskShock"
+   ],
+   "staff": false
+  },
+  "DLC2StaggerBallistaFFContact50": {
+   "members": [
+    "DLC2EnchBallistaStagger50"
+   ],
+   "weap": 3,
+   "armo": 0,
+   "items": [
+    "DLC2crDwarvenBallistaBow03",
+    "DLC2crDwarvenBallistaBow01"
+   ],
+   "staff": false
+  },
+  "DLC2EnchFireDamageFFContact50+DLC2EnchFrostDamageFFContact50+DLC2EnchShockDamageFFContact50": {
+   "members": [
+    "DLC2EnchWeaponChaosDamage03",
+    "DLC2EnchWeaponChaosDamage04",
+    "DLC2EnchWeaponChaosDamage05",
+    "DLC2EnchWeaponChaosDamage06"
+   ],
+   "weap": 49,
+   "armo": 0,
+   "items": [
+    "DLC2EnchNordicWarhammerChaos05",
+    "DLC2EnchNordicWarAxeChaos05",
+    "DLC2EnchNordicWarhammerChaos04",
+    "DLC2EnchNordicWarAxeChaos04",
+    "DLC2EnchNordicWarhammerChaos03",
+    "DLC2EnchNordicWarAxeChaos03",
+    "DLC2EnchStalhrimBattleaxeChaos06",
+    "DLC2EnchStalhrimBowChaos06"
+   ],
+   "staff": false
+  },
+  "DLC2EnchAbsorbHealthFFContact50+DLC2EnchAbsorbMagickaFFContact50+DLC2EnchAbsorbStaminaFFContact50": {
+   "members": [
+    "DLC2EnchWeaponKagrumezFateBow"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "DLC2KagrumezFateBow01"
+   ],
+   "staff": false
+  },
+  "DLC2BloodskalEnchGlowEffect": {
+   "members": [
+    "DLC2EnchBloodskalWeaponGlow"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "DLC2BloodskalBlade"
+   ],
+   "staff": false
+  }
+ },
+ "unique": {
+  "EnchFortifyAlterationConstantSelf+EnchFortifyConjurationConstantSelf+EnchFortifyDestructionConstantSelf+EnchFortifyIllusionConstantSelf+EnchFortifyMagickaConstantSelf+EnchFortifyMagickaRateConstantSelf+EnchFortifyRestorationConstantSelf": {
+   "members": [
+    "MGArchMageRobeHoodedEnchant"
+   ],
+   "weap": 0,
+   "armo": 2,
+   "items": [
+    "ClothesMGRobesArchmage1Hooded",
+    "ClothesMGRobesArchmage1Hooded"
+   ],
+   "staff": false
+  },
+  "EnchFortifyBlockConstantSelf+EnchResistMagicConstantSelf": {
+   "members": [
+    "MS06EnchShieldL12",
+    "MS06EnchShieldL18",
+    "MS06EnchShieldL25",
+    "MS06EnchShieldL40"
+   ],
+   "weap": 0,
+   "armo": 5,
+   "items": [
+    "MS06ShieldL40",
+    "MS06ShieldL25",
+    "MS06ShieldL32",
+    "MS06ShieldL18",
+    "MS06ShieldL12"
+   ],
+   "staff": false
+  },
+  "EnchFortifyArcheryConstantSelf+dunHunterQSTAmuletEffect": {
+   "members": [
+    "dunHunterQstEnchAmulet"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "dunHunterRewardAmulet"
+   ],
+   "staff": false
+  },
+  "EnchFortifyLockpickingConstantSelf+EnchFortifyOneHandedConstantSelf": {
+   "members": [
+    "TGNightingaleArmorGloves01",
+    "TGNightingaleArmorGloves02",
+    "TGNightingaleArmorGloves03"
+   ],
+   "weap": 0,
+   "armo": 6,
+   "items": [
+    "ArmorNightingaleGauntletsPlayer03",
+    "ArmorNightingaleGauntletsPlayer03",
+    "ArmorNightingaleGauntletsPlayer02",
+    "ArmorNightingaleGauntletsPlayer02",
+    "ArmorNightingaleGauntletsPlayer01",
+    "ArmorNightingaleGauntletsPlayer01"
+   ],
+   "staff": false
+  },
+  "EnchFortifyStaminaConstantSelf+EnchResistFrostConstantSelf": {
+   "members": [
+    "TGNightingaleArmorChest01",
+    "TGNightingaleArmorChest02",
+    "TGNightingaleArmorChest03"
+   ],
+   "weap": 0,
+   "armo": 6,
+   "items": [
+    "ArmorNightingaleCuirassPlayer03",
+    "ArmorNightingaleCuirassPlayer03",
+    "ArmorNightingaleCuirassPlayer02",
+    "ArmorNightingaleCuirassPlayer02",
+    "ArmorNightingaleCuirassPlayer01",
+    "ArmorNightingaleCuirassPlayer01"
+   ],
+   "staff": false
+  },
+  "DBEnchBackstab": {
+   "members": [
+    "DBEnchantGloves"
+   ],
+   "weap": 0,
+   "armo": 5,
+   "items": [
+    "DBClothesJesterGlovesCicero",
+    "DBArmorGlovesSP"
+   ],
+   "staff": false
+  },
+  "EnchFortifyOneHandedConstantSelf+EnchFortifySpeechcraftConstantSelf": {
+   "members": [
+    "DBEnchantJester",
+    "DBEnchantJesterCicero"
+   ],
+   "weap": 0,
+   "armo": 2,
+   "items": [
+    "DBClothesJesterCicero",
+    "DBClothesJester"
+   ],
+   "staff": false
+  },
+  "EnchFortifyHealthConstantSelf+EnchFortifyMagickaConstantSelf+EnchFortifyStaminaConstantSelf": {
+   "members": [
+    "dunEnchGauldurAmuletFortifyStats"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "dunGauldurAmulet"
+   ],
+   "staff": false
+  },
+  "EnchFortifyMagickaRateConstantSelf+EnchFortifyPersuasionConstantSelf+EnchFortifySpeechcraftConstantSelf": {
+   "members": [
+    "DA03ClavicusMaskEnch"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "ClavicusVileMask"
+   ],
+   "staff": false
+  },
+  "AbDamageHealRateVisible+AbDamageStaminaRateVisible+EnchFortifyConjurationConstantSelf+EnchFortifyMagickaConstantSelf": {
+   "members": [
+    "MS11NecromancersAmuletEnchantment"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "MS11NecromancerAmulet"
+   ],
+   "staff": false
+  },
+  "EnchFortifyStaminaRateConstantSelf+EnchMuffleConstantSelf": {
+   "members": [
+    "dunEnchDeepwoodMuffle"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "dunDeepwoodBoots"
+   ],
+   "staff": false
+  },
+  "EnchFortifyAlterationConstantSelf+EnchFortifyConjurationConstantSelf+EnchFortifyDestructionConstantSelf+EnchFortifyIllusionConstantSelf+EnchFortifyMagickaRateConstantSelf+EnchFortifyRestorationConstantSelf": {
+   "members": [
+    "MGArchMageRobeEnchant",
+    "dlc2MKEncMiraakRobe01"
+   ],
+   "weap": 0,
+   "armo": 10,
+   "items": [
+    "ClothesMGRobesArchmage",
+    "ClothesMGRobesArchmage",
+    "DLC2MKMiraakFightRobes6",
+    "DLC2MKMiraakFightRobes5"
+   ],
+   "staff": false
+  },
+  "EnchFortifyDestructionConstantSelf+EnchFortifySneakConstantSelf": {
+   "members": [
+    "DBEnchantNightWeaveBand"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DBNightweaversBand"
+   ],
+   "staff": false
+  },
+  "DA02ArmorPoisonCloak+DA02MuffleConstantSelf": {
+   "members": [
+    "DA02EnchPoisonCloak"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DA02Armor"
+   ],
+   "staff": false
+  },
+  "DA13SpellbreakerwardEffect": {
+   "members": [
+    "DA13SpellBreakerEnch"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DA13Spellbreaker"
+   ],
+   "staff": false
+  },
+  "DA11NamiraBlessingEffect": {
+   "members": [
+    "DA11RingofNamiraEnchantment"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DA11RingofNamira"
+   ],
+   "staff": false
+  },
+  "EnchResistPoisonConstantSelf+EnchRobesResistMagicConstantSelf": {
+   "members": [
+    "DA05SaviorsHideEnchantment"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DA05SaviorsHide"
+   ],
+   "staff": false
+  },
+  "DA05HircinesRingMagicEffect": {
+   "members": [
+    "DA05HircinesRingEnchantment"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DA05HircinesRing"
+   ],
+   "staff": false
+  },
+  "MG02FortifyAlteration+MG02FortifyConjuration+MG02FortifyDestruction+MG02FortifyIllusion+MG02FortifyRestoration": {
+   "members": [
+    "MG02AmuletEnchant"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "MG02Amulet"
+   ],
+   "staff": false
+  },
+  "TrapPoisonFFContactEffect": {
+   "members": [
+    "TrapDartPoisonWeapEnch01",
+    "TrapDartPoisonWeapEnch02",
+    "TrapDartPoisonWeapEnch03",
+    "TrapDartPoisonWeapEnch04",
+    "TrapDartPoisonWeapEnch05",
+    "TrapDartPoisonWeapEnch06",
+    "TrapDartPoisonWeapEnchDwe01",
+    "TrapDartPoisonWeapEnchDwe02",
+    "TrapDartPoisonWeapEnchDwe03",
+    "TrapDartPoisonWeapEnchDwe04",
+    "TrapDartPoisonWeapEnchDwe05",
+    "TrapDartPoisonWeapEnchDwe06"
+   ],
+   "weap": 12,
+   "armo": 0,
+   "items": [
+    "TrapDartWeaponDwe06",
+    "TrapDartWeaponDwe05",
+    "TrapDartWeaponDwe04",
+    "TrapDartWeaponDwe03",
+    "TrapDartWeaponDwe02",
+    "TrapDartWeaponDwe01",
+    "TrapDartWeapon06",
+    "TrapDartWeapon05",
+    "TrapDartWeapon04",
+    "TrapDartWeapon03",
+    "TrapDartWeapon02",
+    "TrapDartWeapon01"
+   ],
+   "staff": false
+  },
+  "dunVolunruudPickaxeEffect": {
+   "members": [
+    "dunVolunruudPickaxeEnch"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "dunVolunruudPickaxe"
+   ],
+   "staff": false
+  },
+  "MQ203DragonDamageFFContact+MQ203ExtraDamageFFContact": {
+   "members": [
+    "MQ203WeaponDragonDamage1",
+    "MQ203WeaponDragonDamage2",
+    "MQ203WeaponDragonDamage4",
+    "MQ203WeaponDragonDamage5"
+   ],
+   "weap": 5,
+   "armo": 0,
+   "items": [
+    "MQ203AkaviriKatana5",
+    "MQ203AkaviriKatana4",
+    "MQ203AkaviriKatana3",
+    "MQ203AkaviriKatana1",
+    "MQ203AkaviriKatana2"
+   ],
+   "staff": false
+  },
+  "EnchFrostDamageFFContact+EnchInfluenceConfDownFFContactLow": {
+   "members": [
+    "dunEnchWeaponFrostmere01",
+    "dunEnchWeaponFrostmere02",
+    "dunEnchWeaponFrostmere03",
+    "dunEnchWeaponFrostmere04",
+    "dunEnchWeaponFrostmere05"
+   ],
+   "weap": 5,
+   "armo": 0,
+   "items": [
+    "dunFrostmereCryptPaleBlade05",
+    "dunFrostmereCryptPaleBlade04",
+    "dunFrostmereCryptPaleBlade03",
+    "dunFrostmereCryptPaleBlade02",
+    "dunFrostmereCryptPaleBlade01"
+   ],
+   "staff": false
+  },
+  "DA08EbonyBladeMagicEffect+DA08FactionSwap": {
+   "members": [
+    "DA08EbonyBladeEnchantment"
+   ],
+   "weap": 2,
+   "armo": 0,
+   "items": [
+    "DA08RealEbonyBlade",
+    "DA08RealEbonyBlade"
+   ],
+   "staff": false
+  },
+  "EnchBoundSwordFX+PerkOblivionBindingFFContact+PerkSoulStealerFFContact+PerkTurnUndeadFFContact": {
+   "members": [
+    "BoundSwordEnchantment"
+   ],
+   "weap": 3,
+   "armo": 0,
+   "items": [
+    "BoundWeaponSwordRightHand",
+    "BoundWeaponSwordMystic"
+   ],
+   "staff": false
+  },
+  "EnchTrollsbaneFireDamageFFContact": {
+   "members": [
+    "dunEnchTrollsBaneFireDamage"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "dunPOITrollsbane"
+   ],
+   "staff": false
+  },
+  "dunHagsEndEnchAbsorbHealthFFContact+dunHagsEndSoulTrapFFContact": {
+   "members": [
+    "dunEnchHagsEnd"
+   ],
+   "weap": 2,
+   "armo": 0,
+   "items": [
+    "dunHagsEndDagger",
+    "dunHagsEndDagger"
+   ],
+   "staff": false
+  },
+  "dunLostValleyDamageFFContact": {
+   "members": [
+    "dunLostValleyRedoubtAxeENCH"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "dunLostValleyRedoubtAxe"
+   ],
+   "staff": false
+  },
+  "dunHaltedStreamDamageFFContact": {
+   "members": [
+    "dunHaltedStreamtAxeENCH"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "dunHaltedStreamPoachersAxe"
+   ],
+   "staff": false
+  },
+  "dunClearspringTarnDmgFFContact": {
+   "members": [
+    "dunClearspringTarnEnchDmg"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "dunClearspringTarnBowOfHunt"
+   ],
+   "staff": false
+  },
+  "dunAnsilvundDamageFFContact": {
+   "members": [
+    "dunAnsilvundGhostbladeENCH"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "dunAnsilvundGhostblade"
+   ],
+   "staff": false
+  },
+  "EnchAbsorbHealthFFContact+EnchAbsorbMagickaFFContact+EnchAbsorbStaminaFFContact": {
+   "members": [
+    "DLC1HarkonsSwordAbsorbHMS",
+    "MGRKeeningEnchantment"
+   ],
+   "weap": 2,
+   "armo": 0,
+   "items": [
+    "MGRKeening",
+    "DLC1HarkonsSword"
+   ],
+   "staff": false
+  },
+  "EnchBoundBowFX+PerkOblivionBindingFFContact+PerkSoulStealerFFContact+PerkTurnUndeadFFContact": {
+   "members": [
+    "BoundBowEnchantment"
+   ],
+   "weap": 2,
+   "armo": 0,
+   "items": [
+    "BoundWeaponBowMystic",
+    "BoundWeaponBow"
+   ],
+   "staff": false
+  },
+  "EnchBoundBattleaxeFX+PerkOblivionBindingFFContact+PerkSoulStealerFFContact+PerkTurnUndeadFFContact": {
+   "members": [
+    "BoundBattleaxeEnchantment"
+   ],
+   "weap": 2,
+   "armo": 0,
+   "items": [
+    "BoundWeaponBattleaxeMystic",
+    "BoundWeaponBattleaxe"
+   ],
+   "staff": false
+  },
+  "dunSilentMoonsEnchFFContact": {
+   "members": [
+    "dunSilentMoonsEnchWeapon01",
+    "dunSilentMoonsEnchWeapon02",
+    "dunSilentMoonsEnchWeapon03"
+   ],
+   "weap": 18,
+   "armo": 0,
+   "items": [
+    "dunSilentMoonsEnchIronWarAxe03",
+    "dunSilentMoonsEnchIronSword03",
+    "dunSilentMoonsEnchIronWarAxe02",
+    "dunSilentMoonsEnchIronSword02",
+    "dunSilentMoonsEnchIronWarAxe01",
+    "dunSilentMoonsEnchIronSword01"
+   ],
+   "staff": false
+  },
+  "DA09EncDawnbreakeScriptEffect+DA09EnchDawnbreakerEnchFireDamageFFContact": {
+   "members": [
+    "DA09EncDawnbreaker"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "DA09Dawnbreaker"
+   ],
+   "staff": false
+  },
+  "DA08EnchAbsorbHealthFFContact+DA08EnchAbsorbHealthFFContact+DA08EnchAbsorbHealthFFContact+DA08EnchAbsorbHealthFFContact+DA08EnchAbsorbHealthFFContact": {
+   "members": [
+    "DA08EbonyBladeTraditionalEnchantment"
+   ],
+   "weap": 2,
+   "armo": 0,
+   "items": [
+    "DA08EbonyBlade",
+    "DA08EbonyBlade"
+   ],
+   "staff": false
+  },
+  "DA07MehrunesRazorMagicEffect": {
+   "members": [
+    "DA07MehrunesRazorEnchantment"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "DA07MehrunesRazor"
+   ],
+   "staff": false
+  },
+  "EnchMagickaDamageFFContact+EnchSoulTrapFFContact+EnchStaminaDamageFFContact": {
+   "members": [
+    "DA10MaceofMolagBalEnchantment"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "DA10MaceofMolagBal"
+   ],
+   "staff": false
+  },
+  "CCHorseArmorEnchFortifyHealthConstantSelf": {
+   "members": [
+    "CCHorseArmorEnchFortifyHealth"
+   ],
+   "weap": 0,
+   "armo": 4,
+   "items": [
+    "CCHorseArmorSteelUnicorn",
+    "CCHorseArmorElvenUnicorn"
+   ],
+   "staff": false
+  },
+  "AbFortifyMagickaHighElf+AbFortifyMagickaRate": {
+   "members": [
+    "DLC1nVampireBloodMagicRingEruditeEnch"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DLC1nVampireBloodMagicRingErudite"
+   ],
+   "staff": false
+  },
+  "AbFortifyHealth+RaceKhajiitUnarmedDamage": {
+   "members": [
+    "DLC1nVampireBloodMagicRingBeastEnch"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DLC1nVampireBloodMagicRingBeast"
+   ],
+   "staff": false
+  },
+  "shieldChargeCloakEffect": {
+   "members": [
+    "DLC1VampBatsAmulet"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DLC1nVampireNightPowerNecklaceBats"
+   ],
+   "staff": false
+  },
+  "EnchFortifyCarryConstantSelf+EnchFortifyStaminaConstantSelf": {
+   "members": [
+    "DLC1EnchArmorJiubNecklace"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DLC1JiubNecklace"
+   ],
+   "staff": false
+  },
+  "DLC1LD_EnchAetherialArmorNullEffect": {
+   "members": [
+    "DLC1LD_EnchAetherialArmorNull"
+   ],
+   "weap": 0,
+   "armo": 2,
+   "items": [
+    "DLC1LD_AetherialCrown",
+    "DLC1LD_AetherialShield"
+   ],
+   "staff": false
+  },
+  "DLC1AbFXReflectingShield": {
+   "members": [
+    "DLC1EnchArmorReflectingShield"
+   ],
+   "weap": 0,
+   "armo": 2,
+   "items": [
+    "DLC1ReflectingShield",
+    "DLC1ArmorAurielsShield"
+   ],
+   "staff": false
+  },
+  "DLC1DawnguardRuneAxeDamageEffect+DLC1DawnguardRuneAxeDamageEffect+DLC1DawnguardRuneAxeDamageEffect+DLC1DawnguardRuneAxeDamageEffect+DLC1DawnguardRuneAxeDamageEffect+DLC1DawnguardRuneAxeDamageEffect+DLC1DawnguardRuneAxeDamageEffect+DLC1DawnguardRuneAxeDamageEffect+DLC1DawnguardRuneAxeDamageEffect+DLC1DawnguardRuneAxeDamageEffect+DLC1DawnguardRuneAxeIncrementKills": {
+   "members": [
+    "DLC1DawnguardRuneAxeExtraDamage"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "DLC1DawnguardRuneAxe"
+   ],
+   "staff": false
+  },
+  "DLC1RuneHammerVisualEffect": {
+   "members": [
+    "DLC1DawnguardRuneHammerEnchant"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "DLC1DawnguardRuneHammer"
+   ],
+   "staff": false
+  },
+  "DLC1LD_EnchKatriaBowEffect": {
+   "members": [
+    "DLC1LD_EnchKatriaBow"
+   ],
+   "weap": 2,
+   "armo": 0,
+   "items": [
+    "DLC1LD_KatriaBow",
+    "DLC1LD_KatriaBowNP"
+   ],
+   "staff": false
+  },
+  "DLC1EnchSunDamage+DLC1EnchSunDamageUndead": {
+   "members": [
+    "DLCEnchAurielsBow"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "DLC1AurielsBow"
+   ],
+   "staff": false
+  },
+  "EnchFortifyOneHandedConstantSelf+EnchFortifyOneHandedConstantSelf+EnchFortifyOneHandedConstantSelf+EnchFortifyOneHandedConstantSelf": {
+   "members": [
+    "DLC2dunHaknirEnchGauntlets"
+   ],
+   "weap": 0,
+   "armo": 2,
+   "items": [
+    "DLC2dunHaknirArmorGauntletsNP",
+    "DLC2dunHaknirArmorGauntlets"
+   ],
+   "staff": false
+  },
+  "EnchFortifyStaminaConstantSelf+EnchFortifyStaminaConstantSelf+EnchFortifyStaminaConstantSelf+EnchFortifyStaminaConstantSelf": {
+   "members": [
+    "DLC2dunHaknirEnchCuirass"
+   ],
+   "weap": 0,
+   "armo": 2,
+   "items": [
+    "DLC2dunHaknirArmorCuirassNP",
+    "DLC2dunHaknirArmorCuirass"
+   ],
+   "staff": false
+  },
+  "EnchFortifyCarryConstantSelf+EnchFortifyCarryConstantSelf+EnchFortifyCarryConstantSelf+EnchFortifyCarryConstantSelf": {
+   "members": [
+    "DLC2dunHaknirEnchBoots"
+   ],
+   "weap": 0,
+   "armo": 2,
+   "items": [
+    "DLC2dunHaknirArmorBootsNP",
+    "DLC2dunHaknirArmorBoots"
+   ],
+   "staff": false
+  },
+  "DLC2dunFrostmoonRingHuntRegenEnchEffect": {
+   "members": [
+    "DLC2dunFrostmoonRingHuntRegenEnch"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DLC2dunFrostmoonRingHunt"
+   ],
+   "staff": false
+  },
+  "DLC2dunFrostmoonRingMoonMagnifyHowlsEffect": {
+   "members": [
+    "DLC2dunFrostmoonRingMoonMagnifyHowlsEnch"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DLC2dunFrostmoonRingMoon"
+   ],
+   "staff": false
+  },
+  "DLC2dunFrostmoonRingInstinctSlowTimeEnchEffect": {
+   "members": [
+    "DLC2dunFrostmoonRingInstinctSlowTimeEnch"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DLC2dunFrostmoonRingInstinct"
+   ],
+   "staff": false
+  },
+  "DLC2dunFrostmoonRingBloodlustEnchEffect": {
+   "members": [
+    "DLC2dunFrostmoonRingBloodlustEnch"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DLC2dunFrostmoonRingBloodlust"
+   ],
+   "staff": false
+  },
+  "DLC2dunKolbjorn_EnchBlankEffect": {
+   "members": [
+    "DLC2dunKolbjorn_EnchBlank"
+   ],
+   "weap": 0,
+   "armo": 3,
+   "items": [
+    "DLC2dunKolbjornRingArcana",
+    "DLC2dunKolbjornRingNecromancy"
+   ],
+   "staff": false
+  },
+  "DLC2dunKolbjornGauntletsEnchEffect": {
+   "members": [
+    "DLC2dunKolbjornGauntletsEnch"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DLC2dunKolbjornGauntlets"
+   ],
+   "staff": false
+  },
+  "DLC2dunKolbjornHelmEnchEffect": {
+   "members": [
+    "DLC2dunKolbjornHelmEnch"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DLC2dunKolbjornHelm"
+   ],
+   "staff": false
+  },
+  "AbWaterwalking+DLC2dunKolbjorn_EnchBlankEffect": {
+   "members": [
+    "DLC2dunKolbjornBootsWaterwalking"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DLC2dunKolbjornBoots"
+   ],
+   "staff": false
+  },
+  "DLC2DetectAshSourceScriptEffect": {
+   "members": [
+    "DLC2DetectAshSource"
+   ],
+   "weap": 0,
+   "armo": 1,
+   "items": [
+    "DLC2TT2EnchNelothsRing"
+   ],
+   "staff": false
+  },
+  "DLC2MiraakSwordTentacles": {
+   "members": [
+    "DLC2MKEnchMiraakSword1",
+    "DLC2MKEnchMiraakSword2",
+    "DLC2MKEnchMiraakSword3"
+   ],
+   "weap": 9,
+   "armo": 0,
+   "items": [
+    "DLC2MKMiraakFightSword6",
+    "DLC2MKMiraakFightSword5",
+    "DLC2MKMiraakSword3",
+    "DLC2MKMiraakSword2"
+   ],
+   "staff": false
+  },
+  "DLC2dunHaknirScimitarDispelMagic+EnchAbsorbMagickaFFContact": {
+   "members": [
+    "DLC2dunHaknirEnchScimitar02",
+    "DLC2dunHaknirEnchScimitar02NP"
+   ],
+   "weap": 2,
+   "armo": 0,
+   "items": [
+    "DLC2dunHaknirScimitar02NP",
+    "DLC2dunHaknirScimitar02"
+   ],
+   "staff": false
+  },
+  "DLC2dunHaknirScimitarDamageArmor+EnchAbsorbHealthFFContact": {
+   "members": [
+    "DLC2dunHaknirEnchScimitar01",
+    "DLC2dunHaknirEnchScimitar01NP"
+   ],
+   "weap": 2,
+   "armo": 0,
+   "items": [
+    "DLC2dunHaknirScimitar01NP",
+    "DLC2dunHaknirScimitar01"
+   ],
+   "staff": false
+  },
+  "EnchBoundDaggerFX+PerkOblivionBindingFFContact+PerkSoulStealerFFContact+PerkTurnUndeadFFContact": {
+   "members": [
+    "BoundDaggerEnchantment"
+   ],
+   "weap": 2,
+   "armo": 0,
+   "items": [
+    "DLC2BoundWeaponDaggerMystic",
+    "DLC2BoundWeaponDagger"
+   ],
+   "staff": false
+  },
+  "dlc2MerchBowOfTheStagPrinceIncEffect": {
+   "members": [
+    "dlc2MerchEnchWeapBowOfTheStagPrince"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "dlc2MerchBowOfTheStagPrince"
+   ],
+   "staff": false
+  },
+  "DLC2dunKolbjornRalisPickaxeParalyze+EnchFrostDamageFFContact+FrostSlowFFContact": {
+   "members": [
+    "DLC2dunKolbjornRalisPickaxeEnch"
+   ],
+   "weap": 1,
+   "armo": 0,
+   "items": [
+    "DLC2dunKolbjornRalisPickaxe"
+   ],
+   "staff": false
+  }
+ }
+}

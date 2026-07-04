@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init *)",
+      "Bash(mkdir -p releases)",
+      "Bash(git add *)",
+      "Bash(git commit -q -m 'Initial design: catalog data, ESM parser, design doc *)"
+    ]
+  }
+}
