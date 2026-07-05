@@ -258,6 +258,18 @@ NOTHING magnitude-related is baked into MGEF/ENCH records.
   [Fire II • Soul Trap I]") purely as UI sugar.
 - NPCs never interact with sockets.
 
+### Stacking cap — no more than 2 of the same effect (DECIDED)
+
+At most **2 gems of the same effect** contribute across all worn gear; the
+3rd+ copy of that effect is inert (or heavily diminished — see open decision).
+This is the primary balance guard: it caps any single stat at `2 × V` (× perks
+× mastery) regardless of total socket count, so a generous socket layout adds
+build *breadth*, not single-stat runaway. It also keeps resists sane — 2×
+elemental-resist V (30%) = 60%, under the ~85% cap. Enforced at socket/rebuild
+time: when assembling worn effects, keep only the two highest-level instances
+of each effect. (Socket layout / total budget: still under discussion — the
+table above is provisional.)
+
 ## 5. Support gems (dual-slot linked only)
 
 Support gems are inert alone; when sharing a dual-slot item with a normal gem
