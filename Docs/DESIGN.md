@@ -239,12 +239,30 @@ NOTHING magnitude-related is baked into MGEF/ENCH records.
 
 ## 4. Sockets and the Gem Pouch
 
-| Gear | Sockets |
-|---|---|
-| Cuirass / chest (slot 32) | **2 (linked)** |
-| Helmet, gloves, boots, shield, ring, amulet, weapons | 1 |
-| Gloves + boots with **Twinned Fitting** perk | 2 (linked) |
-| Weapons + rings + amulets with **Master Jeweler** perk | 2 (linked) |
+Socket layout (Marth, DECIDED — supersedes the earlier "cuirass dual by
+default" sketch):
+
+| Gear | Unperked | Perked |
+|---|---|---|
+| Head | 1 | 1 |
+| Chest | 1 | **2 (linked)** |
+| Gloves | 1 | **2 (linked)** |
+| Ring | 1 | 1 |
+| Amulet | 1 | 1 |
+| Main-hand weapon | 1 | **2 (linked)** |
+| Off-hand (2nd weapon or shield) | 1 | 1 |
+| Boots | 0 | 0 |
+
+- **Totals: 6 unperked** (7 dual-wielding or with a shield) → **9 perked** (10
+  dual-wielding). Jewelry is socketed by default (thematically it must be);
+  boots have no sockets.
+- Two socket perks each add a 2nd, **linked** socket: the penultimate unlocks
+  chest + gloves, the final unlocks the main-hand weapon (see §6).
+- **Consequence — support gems are perk-gated.** Support gems (All / Added
+  Effect / Elemental) only work in a *linked* dual-socket item, and nothing is
+  dual-socket until perked. So support materia — which any strong build wants —
+  is an endgame payoff unlocked alongside the socket perks. (Intended per
+  Marth: good builds run All/support, and those arrive late.)
 
 - The **Gem Pouch** — a lesser power granted at startup
   (plus an MCM-bindable hotkey) — opens the socket menu anywhere: pick a worn
@@ -288,7 +306,7 @@ Roster (FFVII support/independent materia, adapted):
 | Gem | In a weapon (linked gem) | In armor (linked gem) |
 |---|---|---|
 | **All** | On-hit effect gains an area — AoE proc around the target | Constant effect is shared with current followers (PO3 `GetPlayerFollowers`, refreshed on heartbeat) |
-| **Added Effect** | An ARMOR gem rides the weapon: its stat becomes an on-hit debuff (Fortify Health gem → hits damage max health) | A WEAPON gem rides the armor as protection: **immunity/strong resist to that effect** (Paralyze gem → paralysis immunity; Fire gem → fire resist) — faithful FFVII semantics |
+| **Added Effect** | An ARMOR gem rides the weapon: its stat becomes an on-hit debuff (Fortify Health gem → hits damage max health) | A WEAPON gem rides the armor as protection: **immunity/strong resist to that effect** (Fire gem → fire resist; Stagger gem → stagger/knockdown resist) — faithful FFVII semantics |
 | **Elemental** | Linked Fire/Frost/Shock/Chaos gem +50% magnitude and hits sunder the target's matching resistance | Linked elemental gem grants resistance equal to 2× its damage magnitude |
 | **Counter** | Linked gem's proc also fires on targets who hit you in melee while the weapon is drawn | Linked armor gem's magnitude doubles for 10 s whenever you're struck (stacking refresh) |
 | **Absorption** (HP/MP Absorb merged) | Linked gem's on-hit proc also heals you (health if the gem damages health/stamina, magicka if it damages/absorbs magicka) for 25% of magnitude | Linked constant gem also grants slow regen of the matching attribute |
@@ -312,8 +330,8 @@ now levels from socketing, feeding, and gem level-ups.
 | Frost Enchanter (40) | Froststone Affinity | Frost/Chaos gems +25% |
 | Storm Enchanter (50) | Stormstone Affinity | Shock/Chaos gems +25% |
 | Insightful Enchanter (50) | Facet Insight | Skill & attribute armor gems +25% |
-| Corpus Enchanter (70) | **Twinned Fitting** (penultimate) | Gloves and boots gain a second, linked socket |
-| Extra Effect (100) | **Master Jeweler** (final) | Weapons, rings, and amulets gain a second, linked socket |
+| Corpus Enchanter (70) | **Twinned Fitting** (penultimate) | Chest and gloves gain a second, linked socket (enables support gems there) |
+| Extra Effect (100) | **Master Jeweler** (final) | Main-hand weapon gains a second, linked socket |
 
 Weapon charge / recharging is obsolete: gem procs are free, balanced by
 magnitude; soul gems' economy role is Soul Feeder fuel.
