@@ -147,21 +147,28 @@ in a later version.
 - **XP accrues only while socketed in player-worn gear.** Fungibility is by
   type+level; partial XP toward the next level is banked per type+level pool
   in the tracker quest, so unsocketing never loses progress.
-- XP sources:
-  - Player kills: the tracker polls `Game.QueryStat` kill stats on the
-    heartbeat (30 s) plus on menu-close/`OnPlayerLoadGame`; every kill awards
-    AP to every socketed gem (FFVII: AP per battle to all equipped materia).
-  - **Soul feeding**:at a bench consume a filled soul gem
-    from the Gem Pouch menu to grant XP to one gem in inventory — petty 5,
-    lesser 12, common 25, greater 60, grand/black 200 (MCM-tunable).
-    By default, id likje one Grand soul gem to encompass the XP from Lvel I to II
-    thats the total extractable amount by destroying a gem of any level when a
-    gem is destroyed you can only reclaim 1/10th of the ap into a soul gem.
-     (Soul Feeder perk, skill 40): Causes Soul Gems(petty through grand to contain(from both feeding and extracting) 
-     to conatain twice the amount of AP.
-- Default level thresholds (MCM-tunable globals): cumulative 400 / 1200 / 3600 /
-  100000 AP to reach II/III/IV/V(dependent on rarity and power), then +150000 to Master → **birth**: a new
-  level-1 gem of the same type appears in inventory with a notification.
+- XP sources (AP):
+  - **Kills** — every kill awards AP to *every* socketed gem in parallel
+    (FFVII: AP per battle to all equipped materia): **1 AP per standard enemy,
+    10 AP per boss**. Tracked via `Game.QueryStat` on the heartbeat + menu-close.
+  - **Soul feeding** — at a bench, consume a filled soul gem to grant AP to one
+    gem: petty 5, lesser 12, common 25, greater 60, grand/black 200
+    (MCM-tunable). With the **Soul Feeder** perk, soul gems hold **2× AP** (both
+    when fed and when reclaimed), so a Grand ≈ 400 AP ≈ one full Level I→II.
+  - **Gem destruction** — destroying a gem reclaims **1/10 of its AP** into a
+    soul gem (the only sink that recovers investment).
+
+- **Level thresholds (default A-tier, MCM-tunable): cumulative 400 / 1,200 /
+  3,600 / 10,000 AP to reach II / III / IV / V.** Reaching **10,000 = Level V =
+  Master**, and at Master the gem **births** one fresh Level-1 copy (a
+  notification fires); a mastered gem is capped and stops accruing AP (FFVII
+  model). Birthing is the only way to replicate a gem.
+- **Per-gem XP scales by power tier** ("dependent on rarity and power"): the
+  threshold is `base × xp_mult`, with **S ×1.5** (build-defining, e.g. Chaos,
+  Stagger, attributes, Magicka Rate, crafting skills), **A ×1.0** (most gems),
+  **B ×0.6** (situational: control gems, trivial skills), **U** utilities don't
+  level. So an S-tier gem masters at 15,000, a B-tier at 6,000. Each gem's tier
+  lives in `data/gem_catalog.json` (see §3 scaling model / BALANCE.md).
 
 ### Magnitude scaling model (the balance spine)
 

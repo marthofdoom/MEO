@@ -140,7 +140,7 @@ json.dump(catalog, open('data/gem_catalog.json','w'), indent=1)
 from collections import defaultdict
 byt = defaultdict(list)
 for gid,g in catalog.items(): byt[g['power_tier']].append((gid,g))
-BASE = [400,1200,3600,100000]
+BASE = [400,1200,3600,10000]  # to II-V; V=Master=births
 print(f"CANONICAL GEMS: {len(catalog)}  (weapon {sum(1 for g in catalog.values() if g['domain']=='weapon')}, armor {sum(1 for g in catalog.values() if g['domain']=='armor')})")
 for t,label in [('S','build-defining x1.5'),('A','strong x1.0'),('B','situational x0.6'),('U','utility no-XP')]:
     rows = sorted(byt.get(t,[]))
@@ -149,4 +149,4 @@ for t,label in [('S','build-defining x1.5'),('A','strong x1.0'),('B','situationa
     for gid,g in rows:
         cv = g['curve'] if isinstance(g['curve'],str) else str(g['curve'])
         print(f"  {g['name']:20s} [{g['domain'][:3]}] {g['class']:8s} curve={cv}")
-print(f"\nBase XP to II/III/IV/V = {BASE}; per-gem = base x xp_mult. Wrote data/gem_catalog.json")
+print(f"\nBase XP II-V = {BASE} (V=Master, births); per-gem = base x xp_mult. Wrote data/gem_catalog.json")
