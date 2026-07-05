@@ -10,6 +10,27 @@ a FOMOD option. Built with the toolchain in `MANUAL_MOD_CREATION_GUIDE.md`
 
 Some of this document will need rewriting as a DLL implementation will be used.
 
+### Why native (the two reasons that drive it)
+1. **Conformance.** A CommonLibSSE-NG SKSE plugin is the strictest, most
+   stable modern standard — Address-Library-based, engine-version-resilient,
+   the ecosystem norm reviewers and modlist authors trust. Papyrus-only
+   socket/hit logic would be the fragile, non-conforming path.
+2. **No save bloat via native indexing.** The socket index (which gem, which
+   level, which XP, per item instance) lives in the DLL and serializes to the
+   **SKSE co-save** (`.skse`), NOT the Papyrus VM in the `.ess`. Per-instance
+   script bookkeeping in Papyrus is exactly what bloats and orphans saves;
+   owning the index natively sidesteps that class of problem entirely.
+
+Relationship to the §7 marker mechanism: the marker-in-enchantment trick is
+the **Papyrus-era** way to be stateless (no side table to bloat). The native
+endgame supersedes it — the DLL's co-save index becomes the source of truth
+and reapplies real effects on load, so markers may be dropped once native
+lands. Both designs need the SAME underlying guarantee: that applying a
+runtime enchantment to an item is reliable across save/load, re-equip, and
+rebuild. **P0 validates exactly that guarantee in Papyrus**, which is why P0
+is worth doing before committing to either the marker path or the native
+index.
+
 ### Native/DLL plan — reuse MRO's proven toolchain, don't re-derive
 The sibling project MRO has a working CommonLibSSE-NG pipeline built entirely
 from Linux; copy it rather than reinventing. Load-bearing facts (full detail

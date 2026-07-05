@@ -1,0 +1,1 @@
+P0 prototype: Fire gem I-V socket/level/remove via Gem Pouch power; validates WornObject runtime-enchant persistence (item-is-the-database).
