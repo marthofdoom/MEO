@@ -30,6 +30,10 @@ once.
    catalog from the load order's ENCH records, so this rule bites here.
    (NOTE: this file still carries stale MRO examples — vendor gold — pending a
    pass to replace them with MEO's own catalog-generation cases.)
+7. **NATIVE_REWRITE_PLAN.md** (when starting the DLL, phases after P1) — MEO's
+   own native plan: co-save socket/XP index, per-item-instance identity, hit/
+   kill hooks; toolchain + safety discipline reused from MRO. Rewritten for MEO
+   (MRO's DR/absorb/vendor/mastery hooks do not apply here).
 
 ## Sibling project
 
