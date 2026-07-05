@@ -86,8 +86,8 @@
    32
   ],
   "single_level": false,
-  "power_tier": "A",
-  "xp_mult": 1.0
+  "power_tier": "B",
+  "xp_mult": 0.6
  },
  "fortifypickpocket": {
   "name": "Fortify Pickpocket",
@@ -104,8 +104,8 @@
    32
   ],
   "single_level": false,
-  "power_tier": "A",
-  "xp_mult": 1.0
+  "power_tier": "B",
+  "xp_mult": 0.6
  },
  "fortifyonehanded": {
   "name": "Fortify One Handed",
@@ -194,8 +194,8 @@
    32
   ],
   "single_level": false,
-  "power_tier": "A",
-  "xp_mult": 1.0
+  "power_tier": "B",
+  "xp_mult": 0.6
  },
  "fortifyalchemy": {
   "name": "Fortify Alchemy",
@@ -212,8 +212,8 @@
    32
   ],
   "single_level": false,
-  "power_tier": "A",
-  "xp_mult": 1.0
+  "power_tier": "S",
+  "xp_mult": 1.5
  },
  "fortifylightarmor": {
   "name": "Fortify Light Armor",
@@ -266,8 +266,8 @@
    32
   ],
   "single_level": false,
-  "power_tier": "A",
-  "xp_mult": 1.0
+  "power_tier": "S",
+  "xp_mult": 1.5
  },
  "fortifytwohanded": {
   "name": "Fortify Two Handed",
@@ -392,8 +392,8 @@
    88
   ],
   "single_level": false,
-  "power_tier": "A",
-  "xp_mult": 1.0
+  "power_tier": "S",
+  "xp_mult": 1.5
  },
  "unarmeddamage": {
   "name": "Unarmed (Pugilist)",
@@ -578,8 +578,8 @@
    32
   ],
   "single_level": false,
-  "power_tier": "A",
-  "xp_mult": 1.0
+  "power_tier": "B",
+  "xp_mult": 0.6
  },
  "fortifyshouttimer": {
   "name": "Fortify Shout",
@@ -606,16 +606,10 @@
   ],
   "domain": "armor",
   "class": "LINEAR",
-  "curve": [
-   20,
-   32,
-   45,
-   58,
-   70
-  ],
-  "single_level": false,
-  "power_tier": "A",
-  "xp_mult": 1.0
+  "curve": "Level 1 only",
+  "single_level": true,
+  "power_tier": "U",
+  "xp_mult": 0.0
  },
  "fortifypersuasion": {
   "name": "Fortify Persuasion",
@@ -632,8 +626,8 @@
    32
   ],
   "single_level": false,
-  "power_tier": "A",
-  "xp_mult": 1.0
+  "power_tier": "B",
+  "xp_mult": 0.6
  },
  "firedamage": {
   "name": "Fire Damage",
@@ -714,16 +708,10 @@
   ],
   "domain": "weapon",
   "class": "SOULTRAP",
-  "curve": [
-   3,
-   4,
-   5,
-   6,
-   8
-  ],
-  "single_level": false,
-  "power_tier": "B",
-  "xp_mult": 0.6
+  "curve": "Level 1 only",
+  "single_level": true,
+  "power_tier": "U",
+  "xp_mult": 0.0
  },
  "influenceconfdownlow": {
   "name": "Fear",
@@ -830,8 +818,8 @@
    1.0
   ],
   "single_level": false,
-  "power_tier": "A",
-  "xp_mult": 1.0
+  "power_tier": "S",
+  "xp_mult": 1.5
  },
  "banish": {
   "name": "Banish",
@@ -867,8 +855,8 @@
    35
   ],
   "single_level": false,
-  "power_tier": "S",
-  "xp_mult": 1.5
+  "power_tier": "A",
+  "xp_mult": 1.0
  },
  "chaos": {
   "name": "Chaos",
@@ -880,14 +868,15 @@
   "domain": "weapon",
   "class": "LINEAR",
   "curve": [
-   15,
-   24,
-   34,
-   43,
-   52
+   6,
+   10,
+   14,
+   17,
+   21
   ],
   "single_level": false,
   "power_tier": "S",
-  "xp_mult": 1.5
+  "xp_mult": 1.5,
+  "note": "per-element ~40% of single-element; edge is coverage vs mixed resist"
  }
 }

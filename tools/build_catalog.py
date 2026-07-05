@@ -39,13 +39,21 @@ CURATED_MULTI = {
               'class':'LINEAR','domain':'weapon','base_mgef':'DLC2EnchFireDamageFFContact50'},
 }
 
-# ---- power tier assignment (DRAFT, for XP curve) ----
-# S = build-defining (slowest XP), A = strong (normal), B = situational (fast),
-# U = utility single-level (no XP curve).
-S_GEMS = {'fire','frost','shock','chaos','absorbhealth',
-          'fortifyhealth','fortifymagicka','fortifystamina'}
-B_CLASSES = {'CONTROL','SOULTRAP'}
+# ---- power tier assignment (DECIDED, Marth) ----
+# S build-defining (slowest), A strong (normal), B minor (fast), U utility (no XP).
 XP_MULT = {'S':1.5,'A':1.0,'B':0.6,'U':0.0}
+# S = genuinely build-defining (slowest XP). Single-element damage (Fire/Frost/
+# Shock) is the everyday weapon gem -> A, not S, so early game isn't a slog.
+S_GEMS = {'chaos','absorbHealth'.lower(),
+          'fortifyHealth'.lower(),'fortifyMagicka'.lower(),'fortifyStamina'.lower(),
+          'fortifyMagickaRate'.lower(),                          # caster-defining regen
+          'fortifySmithing'.lower(),'fortifyAlchemy'.lower()}    # crafting loops
+B_GEMS = {'fortifyLockpicking'.lower(),'fortifyPickpocket'.lower(),
+          'fortifyPersuasion'.lower(),'fortifySpeechcraft'.lower(),
+          'fortifyArticulation'.lower()}                          # trivial skills
+U_GEMS = {'muffle','waterbreathing','waterwalking','soulTrap'.lower(),
+          'fortifyCarry'.lower()}                                 # utilities: no XP
+STAGGER_S = True   # Stagger (ex-paralyze) -> S (strong CC)
 
 def slug(mgef):
     s = mgef
@@ -68,9 +76,10 @@ def nice(mgef):
     return re.sub(r'(?<!^)(?=[A-Z])',' ', s).title()
 
 def tier_of(gid, cls, domain):
-    if cls == 'BINARY': return 'U'
+    if cls == 'BINARY' or gid in U_GEMS: return 'U'
+    if cls == 'STAGGER' and STAGGER_S: return 'S'
     if gid in S_GEMS: return 'S'
-    if cls in B_CLASSES: return 'B'
+    if gid in B_GEMS or cls == 'CONTROL': return 'B'
     return 'A'
 
 # build magnitude lookup from base masters (portable) for curated multi gems
@@ -102,21 +111,28 @@ for mgef, e in bal.items():
     # Fortify Shout is a % cooldown reduction, not skill points -> manual curve
     if mgef == 'EnchFortifyShoutTimerConstantSelf':
         e = dict(e); e['curve'] = [10, 15, 20, 25, 30]; e['note'] = 'shout cooldown -%'
+    single = e.get('single_level', cls == 'BINARY') or tier == 'U'
     catalog[gid] = {
         'name': nice(mgef), 'mgefs':[mgef], 'domain':e['domain'], 'class':cls,
-        'curve': e.get('curve') or e.get('curve_dur') or e.get('curve_level')
-                 or e.get('curve_stagger') or 'single-level',
-        'single_level': e.get('single_level', cls=='BINARY'),
+        'curve': 'Level 1 only' if single else (e.get('curve') or e.get('curve_dur')
+                 or e.get('curve_level') or e.get('curve_stagger')),
+        'single_level': single,
         'power_tier': tier, 'xp_mult': XP_MULT[tier],
     }
 # 2) curated multi-effect single gems (Frost, Chaos)
 for gid, c in CURATED_MULTI.items():
     tier = tier_of(gid, c['class'], c['domain'])
+    curve = linear_from_base(c['base_mgef'])
+    note = None
+    if gid == 'chaos':                                   # DECIDED: nerf each element to ~40%
+        curve = [round(x * 0.4) for x in curve]
+        note = 'per-element ~40% of single-element; edge is coverage vs mixed resist'
     catalog[gid] = {
         'name': c['name'], 'mgefs': c['mgefs'], 'domain': c['domain'], 'class': c['class'],
-        'curve': linear_from_base(c['base_mgef']), 'single_level': False,
+        'curve': curve, 'single_level': False,
         'power_tier': tier, 'xp_mult': XP_MULT[tier],
     }
+    if note: catalog[gid]['note'] = note
 
 json.dump(catalog, open('data/gem_catalog.json','w'), indent=1)
 
