@@ -279,6 +279,20 @@ default" sketch):
   [Fire II • Soul Trap I]") purely as UI sugar.
 - NPCs never interact with sockets.
 
+### Onboarding — note + contextual hint (DECIDED)
+
+Low-intrusion, no forced quest:
+- Startup grants the Gem Pouch power AND adds a readable primer to the player's
+  inventory ("A Jeweler's Primer") covering: the Gem Pouch power, that found
+  enchantments extract as gems, gloves being the dual/link slot, and gems
+  leveling through use.
+- A **one-time contextual hint** fires the first time the player acquires an
+  enchanted item ("Its enchantment can be extracted as a gem — open the Gem
+  Pouch"). Latched via a GLOB so it never repeats. Fail-open if the flag is
+  missing.
+- Nothing is forced: no intro quest, no pre-socketed items. The primer + hint
+  point at the Gem Pouch and the player explores from there.
+
 ### Stacking cap — no more than 2 of the same effect (DECIDED)
 
 At most **2 gems of the same effect** contribute across all worn gear; the
