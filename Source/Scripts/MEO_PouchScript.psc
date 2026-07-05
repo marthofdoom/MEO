@@ -17,7 +17,9 @@ Form[]      Property GemForms   Auto   ; MEO_GemFire1..5 (wired, unused in P0)
 Int   Property GemTypeFire = 1 Auto    ; marker code = GemTypeFire*8 + level
 Float Property MaxCharge  = 5000.0 Auto
 
-; Vanilla fire tier magnitudes seed the level curve (index = level).
+; P0 PLACEHOLDER magnitudes (index = level). The real curve anchors Level I to
+; the Requiem base and Level V to the Requiem max per effect (DESIGN §3); these
+; 5/10/15/20/25 values only exist to make the validation harness legible.
 Float[] Function FireMags()
     Float[] m = new Float[6]
     m[0] = 0.0

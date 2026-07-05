@@ -87,9 +87,12 @@ Generated from ENCH/MGEF/ARMO/WEAP records of the five masters — see
 (151 enchantment families that actually appear on obtainable gear).
 
 Collapse rules ("smart dedup"):
-- Group ENCH records by their **set of MGEFs** → one family per set.
-- Vanilla magnitude tiers (`...01`–`...06`) collapse into **gem levels I–V**
-  (tier 6 folds into V). Vanilla's own tier magnitudes seed the level curve.
+- Group ENCH records by their **set of MGEFs** → one family per set. The
+  vanilla magnitude tiers (`...01`–`...06`) are NOT the gem's I–V curve — they
+  are only used to identify the family. The I–V magnitudes come from the
+  scaling model in §3 (I = Requiem base, V = Requiem max), which we anchor per
+  effect. Deriving each effect's base/max programmatically (from the enchant
+  formula or a calibrated table) is a P1 data task — see §3.
 - Multi-effect generic combos (mage robes = Fortify School + Magicka Regen,
   Chillrend = Frost + Paralyze, ...) are NOT separate gems — they decompose
   into their component gems, one per socket. Robes' double effect is
@@ -160,8 +163,57 @@ in a later version.
   100000 AP to reach II/III/IV/V(dependent on rarity and power), then +150000 to Master → **birth**: a new
   level-1 gem of the same type appears in inventory with a notification.
 
+### Magnitude scaling model (the balance spine)
 
-## 4. Sockets and the Gem Pouch
+A gem's I→V curve is anchored to the **Requiem** enchanting range for that
+effect, NOT to vanilla loot tiers: **Level I = Requiem base** (what a fresh,
+skill-0, no-perk, Grand-soul enchant gives) and **Level V (unperked) = Requiem
+max** (skill 100 + max perks + Grand soul — the Requiem ceiling). Gem
+investment then pushes MEO *past* that ceiling, which is the whole power
+fantasy: a maxed, perked, mastered gem is ~2.1× anything Requiem can craft.
+
+Worked anchors (two example gems):
+
+| Stage | Fire (weapon) | Fortify Health (armor) | Source of the number |
+|---|---|---|---|
+| Requiem base | 10 | 20 | skill 0, Grand soul, no perks |
+| Requiem max | 35 | 70 | skill 100, max perks, Grand soul (the ceiling) |
+| **MEO Gem I** | **12** | **20** | universal early-game drop baseline (≈ Requiem base) |
+| **MEO Gem V** (unperked) | **35** | **70** | pure gem mastery = Requiem ceiling |
+| MEO Gem V + Attunement perks | 49 | 98 | × **1.40** (rewritten tree, +8%/rank ×5) |
+| MEO Gem V + perks + full CSF mastery | 73 | 147 | × **1.50** more (MRO/CSF over-cap) |
+
+- Multipliers **stack multiplicatively** on the unperked Level V value:
+  `V × 1.40 (perks) × 1.50 (mastery) = V × 2.10`. (35×2.1≈73, 70×2.1=147.)
+- The **+40% Attunement** tier is MEO's own perk tree (§6) — available on
+  vanilla-core.
+- The **+50% mastery** tier is an OPTIONAL top layer gated on a CSF enchanting
+  mastery (shared with / modeled on the sibling MRO). Without CSF present, the
+  ceiling is the perked Level V (49 / 98). Keep MEO standalone-playable; the
+  mastery tier is synergy, not a hard dependency.
+- **Levels II–IV** interpolate between I and V. Default: linear (Fire
+  12/17.75/23.5/29.25/35; Fortify Health 20/32.5/45/57.5/70), a per-gem curve
+  shape is MCM/data-tunable. Each of the ~45 gem families needs its own
+  [base, max] pair; sourcing those is the P1 data task flagged in §2.
+
+### NPC / enemy participation and level caps
+
+Only the **player** levels gems (core principle). Enemy enchanted gear is
+capped low so player investment always outscales it:
+
+- **Normal enemies ≤ Level II** (and Level II only rarely); **bosses ≤ Level
+  III**. Against a maxed player Fire V (49–73) an enemy's Fire II (~18) is
+  meant to feel outclassed — that is the intended progression payoff.
+- Because Level V is pinned to the Requiem ceiling, most vanilla/Requiem enemy
+  enchantments **already** land at or below the Level II–III magnitude band, so
+  the cap is largely self-enforcing via existing loot distribution — we do not
+  need to touch NPC gear to hit it in the common case.
+- Aspiration ("would be nice"): make enemies literally *beholden to the system*
+  — their enchanted gear IS MEO gems at the capped level, so the whole world
+  runs one ruleset. This is a larger feature (runtime conversion/cap of NPC
+  gear, or record-level edits) deferred to P4+; the light-touch cap above is
+  the v1 behavior. Until then NPC gear keeps its vanilla ENCH (see §2
+  "Converting found loot") and simply reads as a low-level gem's worth of power.
 
 | Gear | Sockets |
 |---|---|
