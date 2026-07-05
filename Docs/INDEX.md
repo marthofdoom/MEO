@@ -17,8 +17,14 @@ once.
 3. **DEBUGGING.md** (when something misbehaves) — symptom → cause → fix for
    every failure class hit across both this project and its sibling MRO, plus
    the universal diff-against-vanilla method.
-4. **TESTING.md** (before claiming anything works) — console procedures.
-5. **DYNAMIC_OR_DROP.md** (before shipping) — the portability rule: anything
+4. **P0_TESTING.md** (current phase) — the 8-check in-game matrix that gates
+   P1. P0 (`releases/v0.0.1-p0/`, tag `v0.0.1-p0`) is built and pushed; it
+   validates whether `WornObject.CreateEnchantment` persistence holds up, which
+   is the load-bearing assumption under both the marker and native-index
+   designs. Run this before building anything on top.
+5. **TESTING.md** (before claiming anything works) — console procedures.
+   (NOTE: still MRO-specific; port to MEO systems as they land.)
+6. **DYNAMIC_OR_DROP.md** (before shipping) — the portability rule: anything
    whose behavior is baked from THIS machine's load order at generation time
    must become runtime-dynamic or be dropped before 1.0. MEO generates its gem
    catalog from the load order's ENCH records, so this rule bites here.
