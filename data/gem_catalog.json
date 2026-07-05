@@ -1,0 +1,893 @@
+{
+ "fortifyblock": {
+  "name": "Fortify Block",
+  "mgefs": [
+   "EnchFortifyBlockConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   13,
+   18,
+   22,
+   27,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "resistmagic": {
+  "name": "Resist Magic",
+  "mgefs": [
+   "EnchResistMagicConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "RESIST",
+  "curve": [
+   6,
+   9,
+   12,
+   16,
+   20
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifystamina": {
+  "name": "Fortify Stamina",
+  "mgefs": [
+   "EnchFortifyStaminaConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "LINEAR",
+  "curve": [
+   15,
+   24,
+   34,
+   43,
+   52
+  ],
+  "single_level": false,
+  "power_tier": "S",
+  "xp_mult": 1.5
+ },
+ "fortifysneak": {
+  "name": "Fortify Sneak",
+  "mgefs": [
+   "EnchFortifySneakConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   15,
+   19,
+   24,
+   28,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifylockpicking": {
+  "name": "Fortify Lockpicking",
+  "mgefs": [
+   "EnchFortifyLockpickingConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   15,
+   19,
+   24,
+   28,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifypickpocket": {
+  "name": "Fortify Pickpocket",
+  "mgefs": [
+   "EnchFortifyPickpocketConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   15,
+   19,
+   24,
+   28,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifyonehanded": {
+  "name": "Fortify One Handed",
+  "mgefs": [
+   "EnchFortifyOneHandedConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   15,
+   19,
+   24,
+   28,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifystaminarate": {
+  "name": "Fortify Stamina Rate",
+  "mgefs": [
+   "EnchFortifyStaminaRateConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "LINEAR",
+  "curve": [
+   20,
+   32,
+   45,
+   58,
+   70
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifyhealrate": {
+  "name": "Fortify Heal Rate",
+  "mgefs": [
+   "EnchFortifyHealRateConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "LINEAR",
+  "curve": [
+   20,
+   32,
+   45,
+   58,
+   70
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifymagicka": {
+  "name": "Fortify Magicka",
+  "mgefs": [
+   "EnchFortifyMagickaConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "LINEAR",
+  "curve": [
+   20,
+   32,
+   45,
+   58,
+   70
+  ],
+  "single_level": false,
+  "power_tier": "S",
+  "xp_mult": 1.5
+ },
+ "fortifyspeechcraft": {
+  "name": "Fortify Speechcraft",
+  "mgefs": [
+   "EnchFortifySpeechcraftConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   10,
+   16,
+   21,
+   26,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifyalchemy": {
+  "name": "Fortify Alchemy",
+  "mgefs": [
+   "EnchFortifyAlchemyConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   12,
+   17,
+   22,
+   27,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifylightarmor": {
+  "name": "Fortify Light Armor",
+  "mgefs": [
+   "EnchFortifyLightArmorConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   12,
+   17,
+   22,
+   27,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifyheavyarmor": {
+  "name": "Fortify Heavy Armor",
+  "mgefs": [
+   "EnchFortifyHeavyArmorConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   12,
+   17,
+   22,
+   27,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifysmithing": {
+  "name": "Fortify Smithing",
+  "mgefs": [
+   "EnchFortifySmithingConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   12,
+   17,
+   22,
+   27,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifytwohanded": {
+  "name": "Fortify Two Handed",
+  "mgefs": [
+   "EnchFortifyTwoHandedConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   15,
+   19,
+   24,
+   28,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifyrestoration": {
+  "name": "Fortify Restoration",
+  "mgefs": [
+   "EnchFortifyRestorationConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   10,
+   16,
+   21,
+   26,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifyillusion": {
+  "name": "Fortify Illusion",
+  "mgefs": [
+   "EnchFortifyIllusionConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   12,
+   17,
+   22,
+   27,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifydestruction": {
+  "name": "Fortify Destruction",
+  "mgefs": [
+   "EnchFortifyDestructionConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   12,
+   17,
+   22,
+   27,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifyconjuration": {
+  "name": "Fortify Conjuration",
+  "mgefs": [
+   "EnchFortifyConjurationConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   12,
+   17,
+   22,
+   27,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifyalteration": {
+  "name": "Fortify Alteration",
+  "mgefs": [
+   "EnchFortifyAlterationConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   12,
+   17,
+   22,
+   27,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifymagickarate": {
+  "name": "Fortify Magicka Rate",
+  "mgefs": [
+   "EnchFortifyMagickaRateConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "LINEAR",
+  "curve": [
+   25,
+   41,
+   56,
+   72,
+   88
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "unarmeddamage": {
+  "name": "Unarmed (Pugilist)",
+  "mgefs": [
+   "AbFortifyUnarmedDamage"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   10,
+   16,
+   21,
+   26,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifyarchery": {
+  "name": "Fortify Archery",
+  "mgefs": [
+   "EnchFortifyArcheryConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   15,
+   19,
+   24,
+   28,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "resistdisease": {
+  "name": "Resist Disease",
+  "mgefs": [
+   "EnchResistDiseaseConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "RESIST",
+  "curve": [
+   10,
+   15,
+   20,
+   25,
+   30
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "resistpoison": {
+  "name": "Resist Poison",
+  "mgefs": [
+   "EnchResistPoisonConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "RESIST",
+  "curve": [
+   10,
+   15,
+   20,
+   25,
+   30
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifyhealth": {
+  "name": "Fortify Health",
+  "mgefs": [
+   "EnchFortifyHealthConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "LINEAR",
+  "curve": [
+   20,
+   32,
+   45,
+   58,
+   70
+  ],
+  "single_level": false,
+  "power_tier": "S",
+  "xp_mult": 1.5
+ },
+ "muffle": {
+  "name": "Muffle",
+  "mgefs": [
+   "EnchMuffleConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "BINARY",
+  "curve": "Level 1 only",
+  "single_level": true,
+  "power_tier": "U",
+  "xp_mult": 0.0
+ },
+ "waterbreathing": {
+  "name": "Waterbreathing",
+  "mgefs": [
+   "EnchWaterbreathingConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "BINARY",
+  "curve": "Level 1 only",
+  "single_level": true,
+  "power_tier": "U",
+  "xp_mult": 0.0
+ },
+ "resistshockt": {
+  "name": "Resist Shock",
+  "mgefs": [
+   "EnchResistShocktConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "RESIST",
+  "curve": [
+   10,
+   15,
+   20,
+   25,
+   30
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "resistfrost": {
+  "name": "Resist Frost",
+  "mgefs": [
+   "EnchResistFrostConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "RESIST",
+  "curve": [
+   10,
+   15,
+   20,
+   25,
+   30
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "resistfire": {
+  "name": "Resist Fire",
+  "mgefs": [
+   "EnchResistFireConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "RESIST",
+  "curve": [
+   10,
+   15,
+   20,
+   25,
+   30
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifyarticulation": {
+  "name": "Fortify Articulation",
+  "mgefs": [
+   "EnchFortifyArticulation"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   10,
+   16,
+   21,
+   26,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifyshouttimer": {
+  "name": "Fortify Shout",
+  "mgefs": [
+   "EnchFortifyShoutTimerConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   10,
+   15,
+   20,
+   25,
+   30
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifycarry": {
+  "name": "Fortify Carry",
+  "mgefs": [
+   "EnchFortifyCarryConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "LINEAR",
+  "curve": [
+   20,
+   32,
+   45,
+   58,
+   70
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "fortifypersuasion": {
+  "name": "Fortify Persuasion",
+  "mgefs": [
+   "EnchFortifyPersuasionConstantSelf"
+  ],
+  "domain": "armor",
+  "class": "SKILL",
+  "curve": [
+   15,
+   19,
+   24,
+   28,
+   32
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "firedamage": {
+  "name": "Fire Damage",
+  "mgefs": [
+   "EnchFireDamageFFContact"
+  ],
+  "domain": "weapon",
+  "class": "LINEAR",
+  "curve": [
+   10,
+   16,
+   22,
+   29,
+   35
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "absorbmagicka": {
+  "name": "Absorb Magicka",
+  "mgefs": [
+   "EnchAbsorbMagickaFFContact"
+  ],
+  "domain": "weapon",
+  "class": "ABSORB",
+  "curve": [
+   15,
+   24,
+   34,
+   43,
+   52
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "absorbhealth": {
+  "name": "Absorb Health",
+  "mgefs": [
+   "EnchAbsorbHealthFFContact"
+  ],
+  "domain": "weapon",
+  "class": "ABSORB",
+  "curve": [
+   8,
+   13,
+   18,
+   23,
+   28
+  ],
+  "single_level": false,
+  "power_tier": "S",
+  "xp_mult": 1.5
+ },
+ "staminadamage": {
+  "name": "Stamina Damage",
+  "mgefs": [
+   "EnchStaminaDamageFFContact"
+  ],
+  "domain": "weapon",
+  "class": "LINEAR",
+  "curve": [
+   10,
+   16,
+   22,
+   29,
+   35
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "soultrap": {
+  "name": "Soul Trap",
+  "mgefs": [
+   "EnchSoulTrapFFContact"
+  ],
+  "domain": "weapon",
+  "class": "SOULTRAP",
+  "curve": [
+   3,
+   4,
+   5,
+   6,
+   8
+  ],
+  "single_level": false,
+  "power_tier": "B",
+  "xp_mult": 0.6
+ },
+ "influenceconfdownlow": {
+  "name": "Fear",
+  "mgefs": [
+   "EnchInfluenceConfDownFFContactLow"
+  ],
+  "domain": "weapon",
+  "class": "CONTROL",
+  "curve": [
+   6,
+   12,
+   18,
+   25,
+   40
+  ],
+  "single_level": false,
+  "power_tier": "B",
+  "xp_mult": 0.6
+ },
+ "magickadamage": {
+  "name": "Magicka Damage",
+  "mgefs": [
+   "EnchMagickaDamageFFContact"
+  ],
+  "domain": "weapon",
+  "class": "LINEAR",
+  "curve": [
+   15,
+   24,
+   34,
+   43,
+   52
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "shockdamage": {
+  "name": "Shock Damage",
+  "mgefs": [
+   "EnchShockDamageFFContact"
+  ],
+  "domain": "weapon",
+  "class": "LINEAR",
+  "curve": [
+   10,
+   16,
+   22,
+   29,
+   35
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "turnundead": {
+  "name": "Turn Undead",
+  "mgefs": [
+   "EnchTurnUndeadFFContact"
+  ],
+  "domain": "weapon",
+  "class": "CONTROL",
+  "curve": [
+   6,
+   12,
+   18,
+   25,
+   40
+  ],
+  "single_level": false,
+  "power_tier": "B",
+  "xp_mult": 0.6
+ },
+ "absorbstamina": {
+  "name": "Absorb Stamina",
+  "mgefs": [
+   "EnchAbsorbStaminaFFContact"
+  ],
+  "domain": "weapon",
+  "class": "ABSORB",
+  "curve": [
+   15,
+   24,
+   34,
+   43,
+   52
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "paralysis": {
+  "name": "Stagger",
+  "mgefs": [
+   "EnchParalysisFFContact"
+  ],
+  "domain": "weapon",
+  "class": "STAGGER",
+  "curve": [
+   0.5,
+   0.6,
+   0.75,
+   0.9,
+   1.0
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0
+ },
+ "banish": {
+  "name": "Banish",
+  "mgefs": [
+   "EnchBanishFFContact"
+  ],
+  "domain": "weapon",
+  "class": "CONTROL",
+  "curve": [
+   6,
+   12,
+   18,
+   25,
+   40
+  ],
+  "single_level": false,
+  "power_tier": "B",
+  "xp_mult": 0.6
+ },
+ "frost": {
+  "name": "Frost",
+  "mgefs": [
+   "EnchFrostDamageFFContact",
+   "FrostSlowFFContact"
+  ],
+  "domain": "weapon",
+  "class": "LINEAR",
+  "curve": [
+   10,
+   16,
+   22,
+   29,
+   35
+  ],
+  "single_level": false,
+  "power_tier": "S",
+  "xp_mult": 1.5
+ },
+ "chaos": {
+  "name": "Chaos",
+  "mgefs": [
+   "DLC2EnchFireDamageFFContact50",
+   "DLC2EnchFrostDamageFFContact50",
+   "DLC2EnchShockDamageFFContact50"
+  ],
+  "domain": "weapon",
+  "class": "LINEAR",
+  "curve": [
+   15,
+   24,
+   34,
+   43,
+   52
+  ],
+  "single_level": false,
+  "power_tier": "S",
+  "xp_mult": 1.5
+ }
+}

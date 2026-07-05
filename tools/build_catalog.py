@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Build the canonical MEO gem catalog -> data/gem_catalog.json.
+
+PORTABILITY (dynamic-or-drop): the gem SET and effects derive only from the five
+base masters (Skyrim/Update/Dawnguard/HearthFires/Dragonborn) via parse_ench,
+which every SE install has -> identical catalog on any load order. The MAGNITUDES
+come from data/gem_balance.json (the FOMOD-selectable 'Requiem' baseline) and are
+tunable at runtime, never a fixed bake. Load-order-specific enchantments
+(Summermyst etc.) are a future dynamic pass (see DYNAMIC_OR_DROP) -- not required
+for a portable v1.
+
+Curation layer (small, documented):
+  - include: single-effect generic 'Ench*' families + an allowlist
+  - merge:   Frost = Frost+Slow, Chaos = DLC2 tri-element (one gem each)
+  - exclude: artifact/creature/junk single-effects (non-Ench) + uniques
+Assigns each gem a draft POWER TIER -> XP multiplier for the per-gem curve
+(the point of this pass). Tiers are a proposal for Marth to adjust.
+"""
+import json, sys, os
+sys.path.insert(0, 'tools')
+from parse_ench import build_catalog
+
+bal = json.load(open('data/gem_balance.json'))
+
+ALLOW_NONENCH = {'AbFortifyUnarmedDamage'}           # Pugilist/unarmed is a real gem
+EXCLUDE = {                                          # junk that leaked into single-effect scan
+    'DraugrMagicAxeStreak','DraugrMagicBowStreak','DraugrMagicSwordStreak',
+    'EnchDragonPriestUltraMaskEffect','EnchDragonPriestWoodMaskEffect',
+    'DLC2BloodskalEnchGlowEffect','DLC2StaggerBallistaFFContact50',
+    'StaggerAttackFFContact','DLC2EnchDragonAbsorbFake',
+}
+
+# Curated multi-effect single gems: gem_id -> (component mgef set signature, class, domain)
+CURATED_MULTI = {
+    'frost': {'name':'Frost','mgefs':['EnchFrostDamageFFContact','FrostSlowFFContact'],
+              'class':'LINEAR','domain':'weapon','base_mgef':'EnchFrostDamageFFContact'},
+    'chaos': {'name':'Chaos','mgefs':['DLC2EnchFireDamageFFContact50',
+              'DLC2EnchFrostDamageFFContact50','DLC2EnchShockDamageFFContact50'],
+              'class':'LINEAR','domain':'weapon','base_mgef':'DLC2EnchFireDamageFFContact50'},
+}
+
+# ---- power tier assignment (DRAFT, for XP curve) ----
+# S = build-defining (slowest XP), A = strong (normal), B = situational (fast),
+# U = utility single-level (no XP curve).
+S_GEMS = {'fire','frost','shock','chaos','absorbhealth',
+          'fortifyhealth','fortifymagicka','fortifystamina'}
+B_CLASSES = {'CONTROL','SOULTRAP'}
+XP_MULT = {'S':1.5,'A':1.0,'B':0.6,'U':0.0}
+
+def slug(mgef):
+    s = mgef
+    for junk in ('EnchRobes','Ench','ConstantSelf','FFContact','Constant','Self','AbFortify'):
+        s = s.replace(junk,'')
+    return s[0].lower()+s[1:] if s else s
+
+NAME_OVERRIDE = {
+    'EnchParalysisFFContact': 'Stagger',                 # paralyze replaced by stagger
+    'EnchInfluenceConfDownFFContactLow': 'Fear',
+    'EnchResistShocktConstantSelf': 'Resist Shock',      # vanilla typo 'Shockt'
+    'EnchSoulTrapFFContact': 'Soul Trap',
+    'AbFortifyUnarmedDamage': 'Unarmed (Pugilist)',
+    'EnchFortifyShoutTimerConstantSelf': 'Fortify Shout',
+}
+def nice(mgef):
+    if mgef in NAME_OVERRIDE: return NAME_OVERRIDE[mgef]
+    s = slug(mgef)
+    import re
+    return re.sub(r'(?<!^)(?=[A-Z])',' ', s).title()
+
+def tier_of(gid, cls, domain):
+    if cls == 'BINARY': return 'U'
+    if gid in S_GEMS: return 'S'
+    if cls in B_CLASSES: return 'B'
+    return 'A'
+
+# build magnitude lookup from base masters (portable) for curated multi gems
+mgefs_data, enchs = build_catalog()
+def linear_from_base(base_mgef):
+    mags = set()
+    for e in enchs:
+        if e['origin']=='Skyrim.esm' and len(e['effects'])==1: pass
+    # find any ENCH whose single effect is base_mgef, collect tier mags
+    for e in enchs:
+        for ef in e['effects']:
+            mo, mfid = ef['mgef']
+            edid = mgefs_data.get((mo,mfid),{}).get('edid')
+            if edid == base_mgef:
+                mags.add(round(ef['mag'],3))
+    m = sorted(x for x in mags if x>0)
+    b = m[1] if len(m)>=2 else (m[0] if m else 5.0)
+    v = round(b*3.5)
+    return [round(b+(v-b)*i/4) for i in range(5)]
+
+catalog = {}
+# 1) single-effect gems from balance data
+for mgef, e in bal.items():
+    if mgef in EXCLUDE: continue
+    if not (mgef.startswith('Ench') or mgef in ALLOW_NONENCH): continue
+    gid = slug(mgef).lower()
+    cls = e['class']
+    tier = tier_of(gid, cls, e['domain'])
+    # Fortify Shout is a % cooldown reduction, not skill points -> manual curve
+    if mgef == 'EnchFortifyShoutTimerConstantSelf':
+        e = dict(e); e['curve'] = [10, 15, 20, 25, 30]; e['note'] = 'shout cooldown -%'
+    catalog[gid] = {
+        'name': nice(mgef), 'mgefs':[mgef], 'domain':e['domain'], 'class':cls,
+        'curve': e.get('curve') or e.get('curve_dur') or e.get('curve_level')
+                 or e.get('curve_stagger') or 'single-level',
+        'single_level': e.get('single_level', cls=='BINARY'),
+        'power_tier': tier, 'xp_mult': XP_MULT[tier],
+    }
+# 2) curated multi-effect single gems (Frost, Chaos)
+for gid, c in CURATED_MULTI.items():
+    tier = tier_of(gid, c['class'], c['domain'])
+    catalog[gid] = {
+        'name': c['name'], 'mgefs': c['mgefs'], 'domain': c['domain'], 'class': c['class'],
+        'curve': linear_from_base(c['base_mgef']), 'single_level': False,
+        'power_tier': tier, 'xp_mult': XP_MULT[tier],
+    }
+
+json.dump(catalog, open('data/gem_catalog.json','w'), indent=1)
+
+# summary by tier
+from collections import defaultdict
+byt = defaultdict(list)
+for gid,g in catalog.items(): byt[g['power_tier']].append((gid,g))
+BASE = [400,1200,3600,100000]
+print(f"CANONICAL GEMS: {len(catalog)}  (weapon {sum(1 for g in catalog.values() if g['domain']=='weapon')}, armor {sum(1 for g in catalog.values() if g['domain']=='armor')})")
+for t,label in [('S','build-defining x1.5'),('A','strong x1.0'),('B','situational x0.6'),('U','utility no-XP')]:
+    rows = sorted(byt.get(t,[]))
+    if not rows: continue
+    print(f"\n=== TIER {t} ({label}) : {len(rows)} ===")
+    for gid,g in rows:
+        cv = g['curve'] if isinstance(g['curve'],str) else str(g['curve'])
+        print(f"  {g['name']:20s} [{g['domain'][:3]}] {g['class']:8s} curve={cv}")
+print(f"\nBase XP to II/III/IV/V = {BASE}; per-gem = base x xp_mult. Wrote data/gem_catalog.json")
