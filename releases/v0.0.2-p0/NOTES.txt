@@ -1,0 +1,1 @@
+P0 fix: Gem Pouch is now a repeatable LESSER power (type 3) equipping to the shout/power slot via ETYP=Voice, not a hand. Records-only change; reload a clean save.

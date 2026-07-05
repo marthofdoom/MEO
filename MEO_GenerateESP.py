@@ -34,8 +34,9 @@ from io import BytesIO
 # ──────────────────────────────────────────────────────────────────────────────
 OWN = 0x01000000
 
-FREF_PLAYER   = 0x00000014  # Skyrim.esm PlayerRef
+FREF_PLAYER    = 0x00000014  # Skyrim.esm PlayerRef
 FREF_FIRE_MGEF = 0x0004605A  # Skyrim.esm EnchFireDamageFFContact (real fire effect)
+FREF_EQUP_VOICE = 0x00025BEE  # Skyrim.esm EQUP "Voice" — the shout/power equip slot
 
 FID_MARKER_MGEF   = OWN | 0x800
 FID_POUCH_MGEF    = OWN | 0x801
@@ -227,12 +228,15 @@ def make_miscs() -> bytes:
     return group('MISC', out.getvalue())
 
 # ──────────────────────────────────────────────────────────────────────────────
-# SPEL — Gem Pouch power (type 2 = Power; SPIT verified vs PowerNordBattleCry)
+# SPEL — Gem Pouch lesser power. Layout + ETYP copied from vanilla lesser powers
+# (PowerKhajiitNightEye / VampireHuntersSight): type 3 = Lesser Power (repeatable),
+# ETYP = Voice (0x25BEE) so it equips to the shout/power slot, not a hand.
+# Subrecord order: EDID, OBND, FULL, MDOB, ETYP, DESC, SPIT, EFID, EFIT.
 # ──────────────────────────────────────────────────────────────────────────────
-def spit_power() -> bytes:
+def spit_lesser_power() -> bytes:
     return (struct.pack('<f', 0.0)   # cost
             + struct.pack('<I', 0)    # flags
-            + struct.pack('<I', 2)    # type 2 = Power
+            + struct.pack('<I', 3)    # type 3 = Lesser Power (repeatable)
             + struct.pack('<f', 0.0)  # charge time
             + struct.pack('<I', 1)    # castType 1 = FireForget
             + struct.pack('<I', 0)    # delivery 0 = Self
@@ -242,8 +246,12 @@ def spit_power() -> bytes:
 
 def make_spels() -> bytes:
     body  = subrec('EDID', zstr("MEO_GemPouchPower"))
+    body += subrec('OBND', b'\x00' * 12)
     body += subrec('FULL', zstr("Gem Pouch"))
-    body += subrec('SPIT', spit_power())
+    body += subrec('MDOB', struct.pack('<I', 0))
+    body += subrec('ETYP', struct.pack('<I', FREF_EQUP_VOICE))
+    body += subrec('DESC', zstr("Open the Gem Pouch to socket, view, or remove gems."))
+    body += subrec('SPIT', spit_lesser_power())
     body += subrec('EFID', struct.pack('<I', FID_POUCH_MGEF))
     body += subrec('EFIT', struct.pack('<fII', 0.0, 0, 0))
     return group('SPEL', record('SPEL', FID_POUCH_SPELL, 0, body))
