@@ -11,7 +11,11 @@ native.
 1. Install `MEO-v0.0.1-p0.zip` via MO2 on a **clean baseline save** (one that
    has never loaded MEO — back it up read-only per DESIGN §9).
 2. Enable `MEO.esp`. Load the clean save.
-3. `help MEO_ 0` in console — MGEF/MISC/SPEL/FLST/QUST records resolve.
+3. Records loaded: `help "Gem Pouch" 0` finds the power and MGEF; `help "Fire
+   Gem" 0` finds the 5 MISC gems. NOTE: `help "MEO_" 0` (editor-ID search) is
+   empty on stock SSE unless po3's Tweaks keeps editor IDs — that is expected,
+   not a load failure. The real proof records loaded is that the power and
+   socket loop work.
 4. Powers menu now lists **Gem Pouch** (startup quest grants it on first load;
    wait a beat / reload if not). Equip a plain **Iron Sword in the right hand**.
 

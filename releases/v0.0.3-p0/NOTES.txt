@@ -1,0 +1,1 @@
+P0: force re-equip after each rebuild so leveling and rename take effect immediately (was stale until drop/pickup). Script-only change; can be tested on the same save.

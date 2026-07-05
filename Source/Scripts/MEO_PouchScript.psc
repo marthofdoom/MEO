@@ -89,11 +89,21 @@ Function RunStep()
         EndWhile
     EndIf
 
+    ; Rebuilding the enchantment under an already-equipped item does not
+    ; refresh the live weapon display, effect magnitude, or name until the item
+    ; is re-equipped. Force it so leveling/rename take effect immediately.
+    RefreshWeapon(wpn)
+
     Debug.MessageBox("MEO P0 -- " + action + "\n" + \
         "Weapon: " + wpn.GetName() + "\n" + \
         "Decoded gem: " + LabelOf(newLevel) + "\n" + \
         "Fire magnitude: " + fireMag + "\n" + \
         "Enchant effect count: " + effCount)
+EndFunction
+
+Function RefreshWeapon(Form wpn)
+    PlayerRef.UnequipItem(wpn, False, True)   ; abPreventEquip=False, abSilent=True
+    PlayerRef.EquipItem(wpn, False, True)     ; abPreventRemoval=False, abSilent=True
 EndFunction
 
 Function Apply(Int level)
