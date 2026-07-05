@@ -142,8 +142,8 @@ in a later version.
 
 ## 3. Levels, XP, birthing
 
-- Gems are MISC items, one form per type × level: `MEO_Gem<Type><1..5>`,
-  plus support gems (single form each — they don't level).
+- Gems are MISC items, one form per type × level: `MEO_Gem<Type><1..5>`.
+  Support gems level too, but in **3 tiers** (`MEO_Support<Type><1..3>`); see §5.
 - **XP accrues only while socketed in player-worn gear.** Fungibility is by
   type+level; partial XP toward the next level is banked per type+level pool
   in the tracker quest, so unsocketing never loses progress.
@@ -245,24 +245,27 @@ default" sketch):
 | Gear | Unperked | Perked |
 |---|---|---|
 | Head | 1 | 1 |
+| **Gloves** | **2 (linked)** | **2 (linked)** |
 | Chest | 1 | **2 (linked)** |
-| Gloves | 1 | **2 (linked)** |
 | Ring | 1 | 1 |
 | Amulet | 1 | 1 |
 | Main-hand weapon | 1 | **2 (linked)** |
 | Off-hand (2nd weapon or shield) | 1 | 1 |
 | Boots | 0 | 0 |
 
-- **Totals: 6 unperked** (7 dual-wielding or with a shield) → **9 perked** (10
+- **Gloves are the natural dual slot — dual-linked from the start.** This is how
+  the mechanic is introduced: the player's first real socketing is a linked
+  pair on gloves, teaching the dual/link concept early (two normal gems until a
+  support gem shows up).
+- **Totals: 7 unperked** (8 dual-wielding or with a shield) → **9 perked** (10
   dual-wielding). Jewelry is socketed by default (thematically it must be);
   boots have no sockets.
 - Two socket perks each add a 2nd, **linked** socket: the penultimate unlocks
-  chest + gloves, the final unlocks the main-hand weapon (see §6).
-- **Consequence — support gems are perk-gated.** Support gems (All / Added
-  Effect / Elemental) only work in a *linked* dual-socket item, and nothing is
-  dual-socket until perked. So support materia — which any strong build wants —
-  is an endgame payoff unlocked alongside the socket perks. (Intended per
-  Marth: good builds run All/support, and those arrive late.)
+  the chest, the final unlocks the main-hand weapon (see §6).
+- **Support gems can function early but are rarity-gated.** They work in any
+  linked slot (gloves from the start), but per §5 they are not found before
+  ~level 15, so early game the dual gloves just hold two normal gems. Support
+  materia is still an endgame payoff — by scarcity, not by perk lock.
 
 - The **Gem Pouch** — a lesser power granted at startup
   (plus an MCM-bindable hotkey) — opens the socket menu anywhere: pick a worn
@@ -279,27 +282,41 @@ default" sketch):
 ### Stacking cap — no more than 2 of the same effect (DECIDED)
 
 At most **2 gems of the same effect** contribute across all worn gear; the
-3rd+ copy of that effect is inert (or heavily diminished — see open decision).
-This is the primary balance guard: it caps any single stat at `2 × V` (× perks
-× mastery) regardless of total socket count, so a generous socket layout adds
-build *breadth*, not single-stat runaway. It also keeps resists sane — 2×
-elemental-resist V (30%) = 60%, under the ~85% cap. Enforced at socket/rebuild
-time: when assembling worn effects, keep only the two highest-level instances
-of each effect. (Socket layout / total budget: still under discussion — the
-table above is provisional.)
+3rd+ copy of that effect is **fully inert** (DECIDED — only the two
+highest-level instances count). This is the primary balance guard: it caps any
+single stat at `2 × V` (× perks × mastery) regardless of total socket count, so
+the socket layout adds build *breadth*, not single-stat runaway. It also keeps
+resists sane — 2× elemental-resist V (30%) = 60%, under the ~85% cap. Enforced
+at socket/rebuild time.
 
 ## 5. Support gems (dual-slot linked only)
 
 Support gems are inert alone; when sharing a dual-slot item with a normal gem
 they modify it. One support + one normal per item (two supports = both inert).
-They don't level and cannot be birthed — acquisition is the scarcity model:
 
+**Support gems level — 3 tiers, I–III (DECIDED).** The three tiers span the
+same power range as normal gems' I–V (support III ≈ normal V). They earn XP the
+same way — while socketed AND linked to a working normal gem (an inert, unlinked
+support gem earns nothing). They do **not** birth: scarcity is preserved by
+acquisition, not replication.
+
+- **How a tier expresses depends on the gem's function:**
+  - **All** — the top tier fires *every hit*; lower tiers fire only sometimes.
+    All I = occasional proc, All II = frequent, All III = every hit (full AoE /
+    full follower share). This makes All meaningfully worse until mastered,
+    which is the point of it being rare and leveled.
+  - **Elemental / Counter / Absorption / etc.** — the tier scales that gem's own
+    lever: Elemental +% (e.g. +20/+35/+50), Counter proc chance/magnitude,
+    Absorption heal %, Final Stand threshold/burst. Each gem's I–III curve is
+    tuned per function (P2 detail).
+
+Acquisition (scarcity model — **not found before ~level 15**):
 - **Hand-placed, FFVII style**: each support gem has one fixed, famous
   location (a Dwemer ruin's master-locked vault, a College questline reward,
   a dragon-priest hoard, ...) — injected into specific existing containers /
   quest rewards by the startup quest. Final location list chosen in P2.
-- **Rare boss-chest loot**: very low-weight entries in boss leveled lists as
-  a repeatable RNG backstop.
+- **Rare boss-chest loot**: very low-weight entries in **level-15+** boss
+  leveled lists as a repeatable RNG backstop, so they cannot show up early.
 
 Roster (FFVII support/independent materia, adapted):
 
@@ -330,7 +347,7 @@ now levels from socketing, feeding, and gem level-ups.
 | Frost Enchanter (40) | Froststone Affinity | Frost/Chaos gems +25% |
 | Storm Enchanter (50) | Stormstone Affinity | Shock/Chaos gems +25% |
 | Insightful Enchanter (50) | Facet Insight | Skill & attribute armor gems +25% |
-| Corpus Enchanter (70) | **Twinned Fitting** (penultimate) | Chest and gloves gain a second, linked socket (enables support gems there) |
+| Corpus Enchanter (70) | **Twinned Fitting** (penultimate) | Chest gains a second, linked socket (gloves are already dual by default) |
 | Extra Effect (100) | **Master Jeweler** (final) | Main-hand weapon gains a second, linked socket |
 
 Weapon charge / recharging is obsolete: gem procs are free, balanced by
