@@ -26,6 +26,19 @@ FIXABLE (dynamic path identified, not yet implemented), PORTABLE (fine as-is).
 
 ## FIXABLE (make dynamic before 1.0)
 
+### MEO gem magnitude anchors (per-gem [base, max])
+- Baked risk: the I->V curve is anchored to the Requiem enchant range for each
+  effect (DESIGN S3). Those absolute numbers are load-order-specific — vanilla /
+  Adamant / Enderal have different ceilings. Hardcoding them mistunes every
+  non-Requiem setup.
+- Dynamic path (identified, DESIGN "Configuration & tunability"): magnitudes are
+  computed at socket/rebuild time in script, never baked into records. Ship the
+  per-gem [base, max] as swappable DATA chosen by a FOMOD baseline preset
+  ("Requiem/LoreRim", "Vanilla-ish", "Hardcore"), and expose global/per-category
+  scalars + perk% + mastery% + curve + XP + enemy-cap as MCM sliders on top.
+- Release gate: at least one non-Requiem baseline data set + the MCM scalars
+  implemented, so the mod tunes without editing records.
+
 ### Physical DR curve kink — RESOLVED 2026-07-04 (v0.4.0)
 - Now read live from fMaxArmorRating / fArmorScalingFactor each update;
   the 99% point is an MCM slider (MRO_T_DR99Armor, default 2000).

@@ -215,6 +215,30 @@ capped low so player investment always outscales it:
   the v1 behavior. Until then NPC gear keeps its vanilla ENCH (see §2
   "Converting found loot") and simply reads as a low-level gem's worth of power.
 
+### Configuration & tunability (portability contract)
+
+Every balance number in this section is load-order-dependent (the Requiem
+anchors differ on vanilla / Adamant / Enderal / etc.). Per DYNAMIC_OR_DROP, a
+baked number is mistuned everywhere but this machine, so tuning is exposed, not
+frozen. The architecture already permits it: gem magnitudes are computed at
+socket/rebuild time in script (the same path perk multipliers already use), so
+NOTHING magnitude-related is baked into MGEF/ENCH records.
+
+- **MCM (runtime fine tuning)** — global and per-category scalars, not 90
+  per-gem sliders: master magnitude x, weapon-gem x and armor-gem x (and/or
+  per-family-group), the Attunement-perk % (default 40), the mastery % (default
+  50), the I->V curve shape, XP rates/thresholds, soul-feed values, and the
+  enemy cap level. Changing any re-applies worn gems on the next heartbeat (S6).
+- **FOMOD (install-time baseline)** — pick a balance baseline that seeds the
+  per-gem [base, max] data set: e.g. "Requiem/LoreRim", "Vanilla-ish",
+  "Hardcore". FOMOD only chooses which data installs; the MCM scalars ride on
+  top for per-playthrough adjustment.
+- Per-gem [base, max] anchors ship as DATA (the P1 sourcing task, S2), chosen by
+  the FOMOD baseline; the MCM never edits them individually, it scales them.
+  Sane knob count, yet any load order can land an appropriate absolute range.
+
+## 4. Sockets and the Gem Pouch
+
 | Gear | Sockets |
 |---|---|
 | Cuirass / chest (slot 32) | **2 (linked)** |
