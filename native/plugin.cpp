@@ -192,7 +192,8 @@ void SocketWornInstance(RE::FormID a_baseID) {
             const char*       baseName = entry->object->GetName();
             const std::string newName =
                 std::string("[MEO] ") + (baseName && *baseName ? baseName : "Item");
-            if (auto* xText = xList->GetByType<RE::ExtraTextDisplayData>()) {
+            auto* xText = xList->GetByType<RE::ExtraTextDisplayData>();
+            if (xText) {
                 spdlog::info("existing name data on {:08X}: '{}' ownerInstance={} temper={:.3f} — forcing MEO name",
                              a_baseID, xText->displayName.c_str(),
                              xText->ownerInstance.underlying(), xText->temperFactor);
@@ -200,7 +201,16 @@ void SocketWornInstance(RE::FormID a_baseID) {
                 xText->ownerQuest = nullptr;
                 xText->SetName(newName.c_str());
             } else {
-                xList->Add(new RE::ExtraTextDisplayData(newName.c_str()));
+                xText = new RE::ExtraTextDisplayData(newName.c_str());
+                xList->Add(xText);
+            }
+            // M2f (from the M2e gold-standard diff): the enchanting table's
+            // name record keeps temperFactor == ExtraHealth.health; NG's
+            // SetName hardcodes 1.0. The mismatch marks the name stale and
+            // the activate prompt / pickup notification fall back to the
+            // base name. Keep it in sync.
+            if (auto* xHealth = xList->GetByType<RE::ExtraHealth>()) {
+                xText->temperFactor = xHealth->health;
             }
 
             // P0's proven recipe, step 1: a CREATED weapon enchantment from the
@@ -325,9 +335,9 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
     if (message->type == SKSE::MessagingInterface::kDataLoaded) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESEquipEvent>(EquipSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.6.2 (M2e xdata dump) loaded — equip MEO + table-renamed weapons");
+            console->Print("MEO native v0.6.3 (M2f temper-synced name) loaded — equip an unenchanted weapon");
         }
-        spdlog::info("kDataLoaded: MEO M2e live; TESEquipEvent sink registered (no code hooks)");
+        spdlog::info("kDataLoaded: MEO M2f live; TESEquipEvent sink registered (no code hooks)");
     }
 }
 
@@ -338,7 +348,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SetupLog();
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.6.2 (M2e extra-data diagnostics) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.6.3 (M2f temper-synced display name) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
