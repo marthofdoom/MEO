@@ -78,11 +78,13 @@ mandatory, and that failure is what justifies fronting the native work earlier.
 - **M0 skeleton**: MRO's `native/` + `native.yml` copied and renamed; CI green;
   DLL loads, logs its version and the game version to `MEO.log`. Zero hooks.
   Proves the whole pipeline before any risk.
-- **M1 co-save index**: serialize a trivial structure (global XP pools + a test
-  instance->gem map) through Save/Load/Revert; prove it survives save/load and
-  a New Game reverts it. This is to native anti-bloat what P0 is to the marker
-  design — the core persistence proof. Decide here: co-save map vs item
-  enchantment as the socket-identity record.
+- **M1 co-save index**: serialize the REAL per-instance map (instance ID ->
+  {gem signature, level, XP}) through Save/Load/Revert; prove it survives
+  save/load and a New Game reverts it. Per the per-instance decision this is the
+  load-bearing persistence proof (not a throwaway). Stress-test the instance-ID
+  mechanism against stacking/merging. M1 and M2 ship together as the first
+  genuinely working native socket (apply + unique persistence), per Marth's
+  "working version on the next run".
 - **M2 native socket apply**: from C++, apply / rebuild / remove a gem
   enchantment on an inventory item *instance* (including non-worn); repoint the
   Gem Pouch menu to call the DLL instead of `WornObject`. Removes P0's
@@ -113,14 +115,31 @@ mandatory, and that failure is what justifies fronting the native work earlier.
   real play; features swap via config, not deletion.
 - Crash logs checked after every session (`Docs/DEBUGGING.md`).
 
-## Open decisions for the user
+## Decisions (settled 2026-07-06, Marth)
 
-1. **Per-instance XP or per-type pools?** DESIGN §3 currently pools XP per gem
-   type+level. Native makes true per-instance XP feasible (store AP in the
-   item's co-save entry). Per-instance is more FFVII-faithful but heavier and
-   forces the co-save unique-ID map in M1. Which do we want?
-2. **Socket-identity record**: item enchantment extra data (keep markers) vs a
-   co-save unique-ID map vs decoding the real effects directly. Settle in M1.
-3. **Item-instance ID mechanism**: reuse engine `ExtraUniqueID` vs our own
-   `BSExtraData` tag (need one that survives stacking/merging).
-4. Target runtime 1.6.1170 only, or a multi-runtime NG build?
+1. **Per-instance XP — DECIDED.** Each socketed gem is a unique instance with
+   its own level/XP in the co-save; NOT per-type pools ("the design falls apart
+   when every gem isn't tracked uniquely"). This makes the co-save unique-ID map
+   the core of M1 (not a throwaway structure) and supersedes DESIGN §3's pooled
+   model. M1 is now the real per-instance persistence proof.
+2. **Socket-identity record — DECIDED (co-save).** The co-save instance entry
+   holds the full socket state {gem signature, level, XP}. Markers are retired
+   as the identity record (they were the Papyrus-era self-describing tag); keep
+   a marker only if we later want the gem TYPE readable without the co-save.
+3. **Gem identity = effect SIGNATURE, not enumeration order — DECIDED.**
+   Enchant detection becomes a runtime `TESDataHandler` scan of the merged load
+   order (mod-added enchants included, correct override order) — the true
+   dynamic-or-drop. But per-instance references must survive load-order changes,
+   so a gem's stable identity is its effect signature (archetype + actor-value +
+   delivery), NOT a load-order index. Split: repo holds the curated
+   signature->balance table (curves/tier/xp_mult, portable); the DLL matches
+   present enchants to it by signature at runtime, co-save stores the signature.
+   Unmatched mod enchants get a default classification or drop.
+
+## Still open
+
+4. **Item-instance ID mechanism**: reuse engine `ExtraUniqueID` vs our own
+   `BSExtraData` tag. Prototype `ExtraUniqueID` first in M1 and stress-test
+   against stacking/merging (where per-instance schemes usually break); fall back
+   to a custom tag if it doesn't survive.
+5. Target runtime 1.6.1170 only, or a multi-runtime NG build?
