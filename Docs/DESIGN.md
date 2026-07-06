@@ -130,6 +130,21 @@ operation replaces the vanilla ENCH with MEO's rebuilt, marker-carrying
 enchantment (§7). Until the player touches it, the item is byte-for-byte
 vanilla — zero compatibility surface for unlooted/NPC gear.
 
+### World-visible socketed gear is a native capability (not Papyrus)
+A weapon lying on the ground showing "Fire I Glass Dagger" — and staying that
+way through pickup with **no transform-on-pickup** — is unreachable in Papyrus.
+Runtime enchantments (`WornObject.CreateEnchantment`) exist only on the *worn*
+slot, so nothing holds a ground item's socket state, and any script approach
+would necessarily mutate the item at `OnContainerChanged`/`OnEquip` (i.e.
+transform it at pickup), which is exactly the jarring behavior we reject. The
+only correct model is a DLL that **paints name + enchant on reference 3D-load**
+wherever the item renders (corpse, ground, container, worn), so the item is
+never "plain" and never transforms. This is a **native milestone** (M2+), not a
+Papyrus feature. Near-term loot policy accordingly: enemies drop **plain gear +
+loose gems** (gems are the loot); the player sockets. Player-socketed gear that
+is dropped *may* retain its enchant via `ExtraEnchantment` traveling with the
+stack — worth a spot-check, but the reliable form is native-painted.
+
 ### Compatibility — enchant-visibility mods (loot UX)
 
 Two popular mods depend on how enchanted gear reads before pickup; both must

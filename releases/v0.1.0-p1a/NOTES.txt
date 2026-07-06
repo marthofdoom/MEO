@@ -1,0 +1,1 @@
+P1a: full 234-gem catalog ESP + JsonUtil runtime pipeline. Gem Pouch power validates the data pipeline in-game (reports catalog gem count); socket menu is P1b.
