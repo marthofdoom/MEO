@@ -39,6 +39,7 @@
 #include <spdlog/sinks/basic_file_sink.h>
 
 #include <cstdint>
+#include <format>
 #include <string>
 #include <unordered_map>
 
@@ -72,6 +73,67 @@ void SetupLog() {
     spdlog::set_default_logger(std::move(logger));
     spdlog::set_level(spdlog::level::info);
     spdlog::flush_on(spdlog::level::info);
+}
+
+// ── M2e: diagnostic — dump the full extra-data anatomy of an instance ─
+// M2d closed inventory/equip/container names, but the ground activate
+// prompt + pickup notification still read the base name, while vanilla
+// TABLE-renamed enchanted gear shows its custom name there (Marth: dozens
+// of times). So the table's record differs from ours in some field we
+// can't see from CommonLib alone. This dump prints every extra type and
+// all name-relevant fields for any equipped weapon — equipping a
+// table-renamed weapon logs the engine's gold-standard record for a
+// field-by-field diff against ours.
+void DumpWornXList(const char* a_tag, RE::FormID a_baseID) {
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    auto* changes = player ? player->GetInventoryChanges() : nullptr;
+    if (!changes || !changes->entryList) {
+        return;
+    }
+    for (auto* entry : *changes->entryList) {
+        if (!entry || !entry->object || entry->object->GetFormID() != a_baseID || !entry->extraLists) {
+            continue;
+        }
+        int li = 0;
+        for (auto* xList : *entry->extraLists) {
+            if (!xList) {
+                continue;
+            }
+            const bool worn = xList->HasType(RE::ExtraDataType::kWorn) ||
+                              xList->HasType(RE::ExtraDataType::kWornLeft);
+            std::string types;
+            for (const auto& x : *xList) {
+                types += std::format("{:02X} ", static_cast<int>(x.GetType()));
+            }
+            spdlog::info("[dump:{}] {:08X} list#{} worn={} types: {}", a_tag, a_baseID, li, worn, types);
+            if (auto* xText = xList->GetByType<RE::ExtraTextDisplayData>()) {
+                spdlog::info("[dump:{}]   xText name='{}' msg={} quest={} ownerInstance={} temper={:.3f} nameLen={}",
+                             a_tag, xText->displayName.c_str(),
+                             static_cast<const void*>(xText->displayNameText),
+                             static_cast<const void*>(xText->ownerQuest),
+                             xText->ownerInstance.underlying(), xText->temperFactor,
+                             xText->customNameLength);
+            }
+            if (auto* xHealth = xList->GetByType<RE::ExtraHealth>()) {
+                spdlog::info("[dump:{}]   xHealth={:.3f}", a_tag, xHealth->health);
+            }
+            if (auto* xEnch = xList->GetByType<RE::ExtraEnchantment>()) {
+                spdlog::info("[dump:{}]   xEnch={:08X} '{}' charge={} removeOnUnequip={}",
+                             a_tag,
+                             xEnch->enchantment ? xEnch->enchantment->GetFormID() : 0,
+                             xEnch->enchantment ? xEnch->enchantment->GetName() : "null",
+                             xEnch->charge, xEnch->removeOnUnequip);
+            }
+            if (auto* xCharge = xList->GetByType<RE::ExtraCharge>()) {
+                spdlog::info("[dump:{}]   xCharge={:.1f}", a_tag, xCharge->charge);
+            }
+            if (auto* xid = xList->GetByType<RE::ExtraUniqueID>()) {
+                spdlog::info("[dump:{}]   xUniqueID base={:08X} uid={}", a_tag, xid->baseID, xid->uniqueID);
+            }
+            ++li;
+        }
+        return;
+    }
 }
 
 // ── M2b: stamp the full socket bundle onto the worn instance ─────────
@@ -199,7 +261,11 @@ public:
         spdlog::info("equip weapon {:08X} '{}' uniqueID={}",
                      a_event->baseObject, base->GetName(), a_event->uniqueID);
         const RE::FormID baseID = a_event->baseObject;
-        SKSE::GetTaskInterface()->AddTask([baseID]() { SocketWornInstance(baseID); });
+        SKSE::GetTaskInterface()->AddTask([baseID]() {
+            DumpWornXList("pre", baseID);
+            SocketWornInstance(baseID);
+            DumpWornXList("post", baseID);
+        });
         return RE::BSEventNotifyControl::kContinue;
     }
 };
@@ -259,9 +325,9 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
     if (message->type == SKSE::MessagingInterface::kDataLoaded) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESEquipEvent>(EquipSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.6.1 (M2d forced name) loaded — equip a fresh unenchanted weapon");
+            console->Print("MEO native v0.6.2 (M2e xdata dump) loaded — equip MEO + table-renamed weapons");
         }
-        spdlog::info("kDataLoaded: MEO M2d live; TESEquipEvent sink registered (no code hooks)");
+        spdlog::info("kDataLoaded: MEO M2e live; TESEquipEvent sink registered (no code hooks)");
     }
 }
 
@@ -272,7 +338,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SetupLog();
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.6.1 (M2d forced display name) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.6.2 (M2e extra-data diagnostics) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
