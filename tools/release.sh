@@ -30,6 +30,8 @@ mkdir -p "$STAGE/Scripts"
 cp out/Scripts/*.pex "$STAGE/Scripts/"
 mkdir -p "$STAGE/Scripts/Source"
 cp Source/Scripts/MEO_*.psc "$STAGE/Scripts/Source/"   # ship our own sources only
+# Runtime catalog JSON (JsonUtil reads it from Data/SKSE/Plugins/MEO/)
+if [[ -d out/SKSE ]]; then cp -r out/SKSE "$STAGE/"; fi
 # SEQ: P0's startup quest is Run Once, which starts without a SEQ file. When a
 # not-Run-Once quest is added (P1 tracker/MCM), emit Data/SEQ/MEO.seq here.
 

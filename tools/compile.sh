@@ -17,6 +17,7 @@ IMPORTS="$PWD/Source/Scripts"
 IMPORTS+=";$PWD/Source/Stubs"   # compile-only stubs for base types absent from SKSE sources
 IMPORTS+=";/mnt/gaming/modlists/LoreRim/mods/Skyrim Script Extender (SKSE64)/Scripts/Source"
 IMPORTS+=";/mnt/gaming/modlists/LoreRim/mods/powerofthree's Papyrus Extender/Source/scripts"
+IMPORTS+=";/mnt/gaming/modlists/LoreRim/mods/PapyrusUtil SE - Modders Scripting Utility Functions/Source/Scripts"
 IMPORTS+=";$NEMESIS/scripts"
 
 mkdir -p out/Scripts
