@@ -1,23 +1,27 @@
 // MEO native plugin — MEO.dll (CommonLibSSE-NG).
 //
-// M2a self-describing display (Docs/NATIVE_REWRITE_PLAN.md, DESIGN §2): proves
-// the core loot requirement — a socketed item shows the SAME name in the world
-// (dropped, chest, boss corpse) as in inventory, with NO transform on pickup —
-// via the modern engine-native path: attach an ExtraTextDisplayData to the item
-// INSTANCE. That extra data is engine-serialized and travels with the instance
-// everywhere it renders (exactly how a vanilla "Iron Sword of Sparks" shows its
-// name on the floor). Papyrus can't do this off the worn slot; C++ can, on any
-// instance — native-plan reason #2.
+// M2b real socket state (Docs/NATIVE_REWRITE_PLAN.md, DESIGN §2): the worn
+// instance now gets the FULL self-describing bundle —
+//   ExtraUniqueID        (distinct instance; co-save key; no stacking)
+//   ExtraTextDisplayData (display name, engine-rendered everywhere)
+//   ExtraEnchantment     (a REAL enchantment: EnchWeaponFireDamage01, verified
+//                         0x00049BB7 in Skyrim.esm — fire damage on hit)
+// plus a co-save record uid -> {gemType, level, xp} (the M1-proven substrate,
+// now carrying real data; the uid counter is persisted too, replacing M2a.1's
+// session-only stub).
 //
-// Trigger for the M2a test: a TESEquipEvent sink (standard SKSE pattern, not a
-// code hook). On equipping a weapon, the DLL stamps "[MEO] <name>" onto the worn
-// instance once. Test: equip a dagger -> renamed -> DROP it -> the ground item
-// shows "[MEO] Glass Dagger" -> pick it up -> still "[MEO] Glass Dagger", no
-// flicker. The event's uniqueID is logged as recon for M2b's per-instance
-// identity (co-save leveling record + ExtraEnchantment).
+// Why ExtraEnchantment matters beyond the effect: M2a.1 showed a bare rename is
+// visible on the ground (crosshair) but the vanilla pickup prompt still reads a
+// different name source. P0's Papyrus rename displayed fine everywhere — and
+// that item carried a real runtime enchantment. An enchanted instance goes
+// through the engine's enchanted-item display paths; this build tests exactly
+// that (Marth's call: fold in ExtraEnchantment next).
 //
-// The M1 co-save serialization stays armed underneath (proven persistence
-// substrate); M2b populates it with real records.
+// Test: equip a weapon -> it becomes "[MEO] <name>", carries a real fire
+// enchant (hits burn, charge bar appears), doesn't stack; drop it -> ground
+// name AND pickup prompt should now agree; save/reload -> log shows the uid
+// record restored with the same uid. Still zero code hooks (event sink + task
+// queue + serialization only).
 
 #include <spdlog/sinks/basic_file_sink.h>
 
@@ -27,17 +31,21 @@
 
 namespace {
 
-// ── Per-instance socket index (M1 substrate; populated in M2b) ────────
+// ── Per-instance socket index (co-save) ──────────────────────────────
 struct GemRecord {
-    std::uint32_t gemType;
-    std::uint32_t level;
+    std::uint32_t gemType;  // 1 = Fire (M2b hard-wires the donor; catalog in M3)
+    std::uint32_t level;    // 1..5
     float         xp;
 };
-std::unordered_map<std::uint32_t, GemRecord> g_gems;
+std::unordered_map<std::uint16_t, GemRecord> g_gems;  // uid -> record
+std::uint16_t g_nextUID = 0x9000;  // persisted; high range, clear of engine-assigned ids
 
 constexpr std::uint32_t kSerID = 'MEO1';
 constexpr std::uint32_t kRecGems = 'GEMS';
-constexpr std::uint32_t kSerVersion = 1;
+constexpr std::uint32_t kSerVersion = 2;  // v2: uid-keyed records + persisted counter
+
+// EnchWeaponFireDamage01 — verified against Skyrim.esm by tools/parse_ench.py.
+constexpr RE::FormID kFireEnchID = 0x00049BB7;
 
 void SetupLog() {
     auto logDir = SKSE::log::log_directory();
@@ -52,15 +60,19 @@ void SetupLog() {
     spdlog::flush_on(spdlog::level::info);
 }
 
-// ── M2a: stamp a persistent display name onto a worn item instance ────
-// Runs on the main thread (deferred via the task queue) after the equip
-// settles, so we never mutate an extra list mid-event.
-void RenameWornInstance(RE::FormID a_baseID) {
+// ── M2b: stamp the full socket bundle onto the worn instance ─────────
+void SocketWornInstance(RE::FormID a_baseID) {
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* changes = player ? player->GetInventoryChanges() : nullptr;
     if (!changes || !changes->entryList) {
         return;
     }
+    auto* ench = RE::TESForm::LookupByID<RE::EnchantmentItem>(kFireEnchID);
+    if (!ench) {
+        spdlog::error("EnchWeaponFireDamage01 ({:08X}) not found — no socket applied", kFireEnchID);
+        return;
+    }
+
     for (auto* entry : *changes->entryList) {
         if (!entry || !entry->object || entry->object->GetFormID() != a_baseID || !entry->extraLists) {
             continue;
@@ -74,38 +86,44 @@ void RenameWornInstance(RE::FormID a_baseID) {
             if (!worn) {
                 continue;
             }
-            bool changed = false;
-            // Make the instance genuinely UNIQUE first. A plain uniqueID=0 item
-            // is stackable: dropping it builds a count-based world ref that drops
-            // our added extra data (name lost on the ground, though container
-            // moves keep it). An ExtraUniqueID marks it a distinct instance, so
-            // its extra data (name now, enchantment in M2b) rides with it on drop
-            // too. NOTE: uid range/persistence is a test stub — M2b persists the
-            // counter in the co-save and de-collides against engine-assigned ids.
-            if (!xList->HasType(RE::ExtraDataType::kUniqueID)) {
-                static std::uint16_t s_nextUID = 0x9000;
-                const std::uint16_t uid = s_nextUID++;
-                xList->Add(new RE::ExtraUniqueID(entry->object->GetFormID(), uid));
-                spdlog::info("stamped ExtraUniqueID uid={} on instance {:08X}", uid, a_baseID);
-                changed = true;
+            // Skip items that already carry a base or instance enchantment:
+            // don't stomp vanilla enchanted gear in this test build.
+            if (xList->HasType(RE::ExtraDataType::kEnchantment)) {
+                spdlog::info("worn {:08X} already has an instance enchantment — leaving it", a_baseID);
+                return;
             }
+            if (auto* weap = entry->object->As<RE::TESObjectWEAP>(); weap && weap->formEnchanting) {
+                spdlog::info("worn {:08X} has a BASE enchantment — leaving it", a_baseID);
+                return;
+            }
+
+            std::uint16_t uid = 0;
+            if (auto* xid = xList->GetByType<RE::ExtraUniqueID>()) {
+                uid = xid->uniqueID;  // already ours from a previous session/equip
+            } else {
+                uid = g_nextUID++;
+                xList->Add(new RE::ExtraUniqueID(a_baseID, uid));
+            }
+
             if (!xList->GetByType<RE::ExtraTextDisplayData>()) {
                 const char* baseName = entry->object->GetName();
-                const std::string newName = std::string("[MEO] ") + (baseName && *baseName ? baseName : "Item");
+                const std::string newName =
+                    std::string("[MEO] ") + (baseName && *baseName ? baseName : "Item");
                 xList->Add(new RE::ExtraTextDisplayData(newName.c_str()));
-                spdlog::info("RENAMED worn instance {:08X} -> '{}'", a_baseID, newName);
-                changed = true;
             }
-            if (!changed) {
-                spdlog::info("worn {:08X} already tagged (uniqueID + name present)", a_baseID);
-            }
+
+            xList->Add(new RE::ExtraEnchantment(ench, 500, false));
+
+            g_gems[uid] = GemRecord{ 1u, 1u, 0.0f };  // Fire gem, level 1
+            spdlog::info("SOCKETED worn {:08X}: uid={} ench='{}' ({:08X}) charge=500; index now {} record(s)",
+                         a_baseID, uid, ench->GetName(), kFireEnchID, g_gems.size());
             return;
         }
     }
-    spdlog::warn("RenameWornInstance: no worn instance of {:08X} found", a_baseID);
+    spdlog::warn("SocketWornInstance: no worn instance of {:08X} found", a_baseID);
 }
 
-// ── TESEquipEvent sink (test trigger for M2a) ────────────────────────
+// ── TESEquipEvent sink (test trigger) ────────────────────────────────
 class EquipSink : public RE::BSTEventSink<RE::TESEquipEvent> {
 public:
     static EquipSink* GetSingleton() {
@@ -126,53 +144,62 @@ public:
         if (!base || !base->Is(RE::FormType::Weapon)) {
             return RE::BSEventNotifyControl::kContinue;
         }
-
-        // Recon for M2b: does the engine hand us a per-instance uniqueID?
-        spdlog::info("equip weapon {:08X} '{}' uniqueID={} (0 = untracked/stacked)",
+        spdlog::info("equip weapon {:08X} '{}' uniqueID={}",
                      a_event->baseObject, base->GetName(), a_event->uniqueID);
-
         const RE::FormID baseID = a_event->baseObject;
-        SKSE::GetTaskInterface()->AddTask([baseID]() { RenameWornInstance(baseID); });
+        SKSE::GetTaskInterface()->AddTask([baseID]() { SocketWornInstance(baseID); });
         return RE::BSEventNotifyControl::kContinue;
     }
 };
 
-// ── SKSE co-save callbacks (M1 substrate, armed; empty until M2b) ─────
+// ── SKSE co-save callbacks ───────────────────────────────────────────
 void SaveCallback(SKSE::SerializationInterface* a_intfc) {
     if (!a_intfc->OpenRecord(kRecGems, kSerVersion)) {
+        spdlog::error("SaveCallback: OpenRecord('GEMS') failed");
         return;
     }
+    a_intfc->WriteRecordData(g_nextUID);
     const std::uint32_t count = static_cast<std::uint32_t>(g_gems.size());
     a_intfc->WriteRecordData(count);
-    for (const auto& [id, rec] : g_gems) {
-        a_intfc->WriteRecordData(id);
+    for (const auto& [uid, rec] : g_gems) {
+        a_intfc->WriteRecordData(uid);
         a_intfc->WriteRecordData(rec);
     }
-    spdlog::info("[save] gem index: {} record(s)", g_gems.size());
+    spdlog::info("[save] gem index: {} record(s), nextUID=0x{:X}", g_gems.size(), g_nextUID);
 }
 
 void LoadCallback(SKSE::SerializationInterface* a_intfc) {
     g_gems.clear();
+    g_nextUID = 0x9000;
     std::uint32_t type = 0, version = 0, length = 0;
     while (a_intfc->GetNextRecordInfo(type, version, length)) {
-        if (type != kRecGems || version != kSerVersion) {
+        if (type != kRecGems) {
             continue;
         }
+        if (version != kSerVersion) {
+            spdlog::warn("[load] 'GEMS' version {} != {} — discarding (pre-M2b test data)", version, kSerVersion);
+            continue;
+        }
+        a_intfc->ReadRecordData(g_nextUID);
         std::uint32_t count = 0;
         a_intfc->ReadRecordData(count);
         for (std::uint32_t i = 0; i < count; ++i) {
-            std::uint32_t id = 0;
+            std::uint16_t uid = 0;
             GemRecord rec{};
-            a_intfc->ReadRecordData(id);
+            a_intfc->ReadRecordData(uid);
             a_intfc->ReadRecordData(rec);
-            g_gems[id] = rec;
+            g_gems[uid] = rec;
         }
     }
-    spdlog::info("[load] gem index: {} record(s)", g_gems.size());
+    spdlog::info("[load] gem index: {} record(s), nextUID=0x{:X}", g_gems.size(), g_nextUID);
+    for (const auto& [uid, rec] : g_gems) {
+        spdlog::info("    uid={} -> gemType={} level={} xp={:.1f}", uid, rec.gemType, rec.level, rec.xp);
+    }
 }
 
 void RevertCallback(SKSE::SerializationInterface*) {
     g_gems.clear();
+    g_nextUID = 0x9000;
     spdlog::info("[revert] gem index cleared");
 }
 
@@ -180,9 +207,9 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
     if (message->type == SKSE::MessagingInterface::kDataLoaded) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESEquipEvent>(EquipSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.4.1 (M2a.1 unique+display) loaded — equip a weapon, then drop it");
+            console->Print("MEO native v0.5.0 (M2b real socket) loaded — equip an unenchanted weapon");
         }
-        spdlog::info("kDataLoaded: MEO M2a.1 live; TESEquipEvent sink registered (no code hooks)");
+        spdlog::info("kDataLoaded: MEO M2b live; TESEquipEvent sink registered (no code hooks)");
     }
 }
 
@@ -193,7 +220,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SetupLog();
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.4.1 (M2a.1 unique instance + display) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.5.0 (M2b real socket state) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }

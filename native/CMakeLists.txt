@@ -3,7 +3,7 @@
 # adapt working sources, don't write build systems from memory).
 cmake_minimum_required(VERSION 3.21)
 
-project(MEO VERSION 0.4.1 LANGUAGES CXX)
+project(MEO VERSION 0.5.0 LANGUAGES CXX)
 
 find_package(CommonLibSSE CONFIG REQUIRED)
 add_commonlibsse_plugin(${PROJECT_NAME} SOURCES plugin.cpp)
