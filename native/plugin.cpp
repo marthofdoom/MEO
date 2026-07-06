@@ -1,27 +1,33 @@
 // MEO native plugin — MEO.dll (CommonLibSSE-NG).
 //
-// M2b real socket state (Docs/NATIVE_REWRITE_PLAN.md, DESIGN §2): the worn
-// instance now gets the FULL self-describing bundle —
+// M2c: replicate P0's PROVEN enchant recipe natively. M2b (attach the base
+// ENCH EnchWeaponFireDamage01 via ExtraEnchantment) showed the enchantment
+// DESCRIPTION on the item card but applied no actual effect and no rename.
+// SKSE's own source (PapyrusWornObject.cpp — the native code behind P0's
+// WornObject.CreateEnchantment, which worked in ALL UIs with real effects)
+// does two things M2b didn't:
+//   1. It never attaches a base ENCH — it builds a player-style CREATED
+//      enchantment via PersistentFormManager::CreateOffensiveEnchantment
+//      (= RE::BGSCreatedObjectManager::AddWeaponEnchantment in NG) from
+//      MGEF effect items.
+//   2. After attaching, it calls Actor::UpdateWeaponAbility(base, xList,
+//      leftHand) — THE call that activates the enchant's magic caster on the
+//      already-equipped actor. Without it the UI reads ExtraEnchantment (so
+//      the description shows) but no effect is ever attached — exactly the
+//      M2b symptom.
+// The bundle per instance is unchanged otherwise:
 //   ExtraUniqueID        (distinct instance; co-save key; no stacking)
 //   ExtraTextDisplayData (display name, engine-rendered everywhere)
-//   ExtraEnchantment     (a REAL enchantment: EnchWeaponFireDamage01, verified
-//                         0x00049BB7 in Skyrim.esm — fire damage on hit)
-// plus a co-save record uid -> {gemType, level, xp} (the M1-proven substrate,
-// now carrying real data; the uid counter is persisted too, replacing M2a.1's
-// session-only stub).
+//   ExtraEnchantment     (now a CREATED enchant: EnchFireDamageFFContact
+//                         0x0004605A, verified in Skyrim.esm — the same MGEF
+//                         the vanilla fire ENCH carries)
+// plus the co-save record uid -> {gemType, level, xp}.
 //
-// Why ExtraEnchantment matters beyond the effect: M2a.1 showed a bare rename is
-// visible on the ground (crosshair) but the vanilla pickup prompt still reads a
-// different name source. P0's Papyrus rename displayed fine everywhere — and
-// that item carried a real runtime enchantment. An enchanted instance goes
-// through the engine's enchanted-item display paths; this build tests exactly
-// that (Marth's call: fold in ExtraEnchantment next).
-//
-// Test: equip a weapon -> it becomes "[MEO] <name>", carries a real fire
-// enchant (hits burn, charge bar appears), doesn't stack; drop it -> ground
-// name AND pickup prompt should now agree; save/reload -> log shows the uid
-// record restored with the same uid. Still zero code hooks (event sink + task
-// queue + serialization only).
+// Test: equip a NEVER-TOUCHED unenchanted weapon -> "[MEO] <name>", hits burn,
+// charge bar; drop -> crosshair AND pickup prompt agree; save/reload -> same
+// uid restored. Still zero code hooks (event sink + task queue + serialization
+// only). NOTE: instances socketed by the dead M2b build still carry its inert
+// ExtraEnchantment and are deliberately skipped — use a fresh weapon.
 
 #include <spdlog/sinks/basic_file_sink.h>
 
@@ -44,8 +50,9 @@ constexpr std::uint32_t kSerID = 'MEO1';
 constexpr std::uint32_t kRecGems = 'GEMS';
 constexpr std::uint32_t kSerVersion = 2;  // v2: uid-keyed records + persisted counter
 
-// EnchWeaponFireDamage01 — verified against Skyrim.esm by tools/parse_ench.py.
-constexpr RE::FormID kFireEnchID = 0x00049BB7;
+// EnchFireDamageFFContact — the MGEF inside EnchWeaponFireDamage01 (mag 5.0,
+// contact delivery). Verified against Skyrim.esm by tools/parse_ench.py.
+constexpr RE::FormID kFireMGEF = 0x0004605A;
 
 void SetupLog() {
     auto logDir = SKSE::log::log_directory();
@@ -67,9 +74,9 @@ void SocketWornInstance(RE::FormID a_baseID) {
     if (!changes || !changes->entryList) {
         return;
     }
-    auto* ench = RE::TESForm::LookupByID<RE::EnchantmentItem>(kFireEnchID);
-    if (!ench) {
-        spdlog::error("EnchWeaponFireDamage01 ({:08X}) not found — no socket applied", kFireEnchID);
+    auto* mgef = RE::TESForm::LookupByID<RE::EffectSetting>(kFireMGEF);
+    if (!mgef) {
+        spdlog::error("EnchFireDamageFFContact ({:08X}) not found — no socket applied", kFireMGEF);
         return;
     }
 
@@ -112,11 +119,34 @@ void SocketWornInstance(RE::FormID a_baseID) {
                 xList->Add(new RE::ExtraTextDisplayData(newName.c_str()));
             }
 
+            // P0's proven recipe, step 1: a CREATED weapon enchantment from the
+            // MGEF (what WornObject.CreateEnchantment does via
+            // PersistentFormManager::CreateOffensiveEnchantment).
+            RE::BSTArray<RE::Effect> effects;
+            effects.resize(1);
+            auto& eff = effects[0];
+            eff.effectItem.magnitude = 10.0f;
+            eff.effectItem.area = 0;
+            eff.effectItem.duration = 0;
+            eff.baseEffect = mgef;
+            eff.cost = 0.0f;
+            auto* ench = RE::BGSCreatedObjectManager::GetSingleton()->AddWeaponEnchantment(effects);
+            if (!ench) {
+                spdlog::error("AddWeaponEnchantment returned null — no socket applied");
+                return;
+            }
             xList->Add(new RE::ExtraEnchantment(ench, 500, false));
 
             g_gems[uid] = GemRecord{ 1u, 1u, 0.0f };  // Fire gem, level 1
-            spdlog::info("SOCKETED worn {:08X}: uid={} ench='{}' ({:08X}) charge=500; index now {} record(s)",
-                         a_baseID, uid, ench->GetName(), kFireEnchID, g_gems.size());
+
+            // P0's proven recipe, step 2: activate the enchant's magic caster on
+            // the already-equipped actor (SKSE calls this after every
+            // Set/CreateEnchantment; skipping it = description with no effect).
+            const bool leftHand = xList->HasType(RE::ExtraDataType::kWornLeft);
+            player->UpdateWeaponAbility(entry->object, xList, leftHand);
+
+            spdlog::info("SOCKETED worn {:08X}: uid={} created ench {:08X} (MGEF {:08X} mag=10) charge=500, ability updated (left={}); index now {} record(s)",
+                         a_baseID, uid, ench->GetFormID(), kFireMGEF, leftHand, g_gems.size());
             return;
         }
     }
@@ -207,9 +237,9 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
     if (message->type == SKSE::MessagingInterface::kDataLoaded) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESEquipEvent>(EquipSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.5.0 (M2b real socket) loaded — equip an unenchanted weapon");
+            console->Print("MEO native v0.6.0 (M2c created enchant) loaded — equip a fresh unenchanted weapon");
         }
-        spdlog::info("kDataLoaded: MEO M2b live; TESEquipEvent sink registered (no code hooks)");
+        spdlog::info("kDataLoaded: MEO M2c live; TESEquipEvent sink registered (no code hooks)");
     }
 }
 
@@ -220,7 +250,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SetupLog();
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.5.0 (M2b real socket state) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.6.0 (M2c created enchant + ability update) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
