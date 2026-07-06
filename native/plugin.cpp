@@ -74,16 +74,31 @@ void RenameWornInstance(RE::FormID a_baseID) {
             if (!worn) {
                 continue;
             }
-            if (auto* existing = xList->GetByType<RE::ExtraTextDisplayData>()) {
-                spdlog::info("worn {:08X} already named '{}' — leaving it",
-                             a_baseID, existing->displayName.c_str());
-                return;
+            bool changed = false;
+            // Make the instance genuinely UNIQUE first. A plain uniqueID=0 item
+            // is stackable: dropping it builds a count-based world ref that drops
+            // our added extra data (name lost on the ground, though container
+            // moves keep it). An ExtraUniqueID marks it a distinct instance, so
+            // its extra data (name now, enchantment in M2b) rides with it on drop
+            // too. NOTE: uid range/persistence is a test stub — M2b persists the
+            // counter in the co-save and de-collides against engine-assigned ids.
+            if (!xList->HasType(RE::ExtraDataType::kUniqueID)) {
+                static std::uint16_t s_nextUID = 0x9000;
+                const std::uint16_t uid = s_nextUID++;
+                xList->Add(new RE::ExtraUniqueID(entry->object->GetFormID(), uid));
+                spdlog::info("stamped ExtraUniqueID uid={} on instance {:08X}", uid, a_baseID);
+                changed = true;
             }
-            const char* baseName = entry->object->GetName();
-            const std::string newName = std::string("[MEO] ") + (baseName && *baseName ? baseName : "Item");
-            xList->Add(new RE::ExtraTextDisplayData(newName.c_str()));
-            spdlog::info("RENAMED worn instance {:08X} -> '{}' (shows everywhere: inventory, ground, chest, corpse)",
-                         a_baseID, newName);
+            if (!xList->GetByType<RE::ExtraTextDisplayData>()) {
+                const char* baseName = entry->object->GetName();
+                const std::string newName = std::string("[MEO] ") + (baseName && *baseName ? baseName : "Item");
+                xList->Add(new RE::ExtraTextDisplayData(newName.c_str()));
+                spdlog::info("RENAMED worn instance {:08X} -> '{}'", a_baseID, newName);
+                changed = true;
+            }
+            if (!changed) {
+                spdlog::info("worn {:08X} already tagged (uniqueID + name present)", a_baseID);
+            }
             return;
         }
     }
@@ -165,9 +180,9 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
     if (message->type == SKSE::MessagingInterface::kDataLoaded) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESEquipEvent>(EquipSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.4.0 (M2a display) loaded — equip a weapon to rename its instance");
+            console->Print("MEO native v0.4.1 (M2a.1 unique+display) loaded — equip a weapon, then drop it");
         }
-        spdlog::info("kDataLoaded: MEO M2a live; TESEquipEvent sink registered (no code hooks)");
+        spdlog::info("kDataLoaded: MEO M2a.1 live; TESEquipEvent sink registered (no code hooks)");
     }
 }
 
@@ -178,7 +193,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SetupLog();
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.4.0 (M2a self-describing display) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.4.1 (M2a.1 unique instance + display) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
