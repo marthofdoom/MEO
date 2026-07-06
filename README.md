@@ -1,9 +1,8 @@
 # Marth's Enchanting Overhaul (MEO)
 
 A full replacement for Skyrim SE enchanting that turns enchantments into
-**gems** — Materia-style, in the vein of FFVII. Gems are pulled from found
-gear, socketed into your own equipment anywhere with no station, and **leveled
-through use**. Weapons, armor, and jewelry gain sockets; staves, wands, and
+**gems**: pulled from found gear, socketed into your own equipment anywhere
+with no station, and **leveled through use**. Weapons, armor, and jewelry gain sockets; staves, wands, and
 scripted artifacts are detected and left completely alone.
 
 Built entirely from Linux with no Creation Kit and no xEdit: the plugin is
@@ -69,7 +68,7 @@ symptom -> fix debugging cookbook, and the in-game test matrices.
   (the "item is the database" premise) across save/load, re-equip, and rebuild.
 - **P1 — core.** Full generated gem catalog, loot conversion, XP / leveling /
   birthing, soul feeding, the enchanting-perk rework, and an MCM.
-- **P2 — support gems.** All / Added Effect / Elemental and dual-socket linking.
+- **P2 — support gems.** Echo / Conduit / Focus and dual-socket linking.
 - **P3 — packaging.** FOMOD, plus a Requiem / LoreRim compatibility plugin.
 - **P4 — uniques.** Curated gems from artifact enchantments.
 

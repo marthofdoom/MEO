@@ -1,6 +1,6 @@
 # MEO Documentation Index — start here
 
-Marth's Enchanting Overhaul: materia-style socketable, leveling enchantment
+Marth's Enchanting Overhaul: socketable, leveling enchantment
 gems for Skyrim SE. This project is designed so any capable model or person
 can continue it from these docs alone. Load documents on demand, not all at
 once.

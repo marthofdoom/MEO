@@ -1,6 +1,6 @@
 # Marth's Enchanting Overhaul (MEO) — Design Document
 
-Materia-style enchanting for Skyrim SE. Enchantments become **gems**: removable,
+Socketed-gem enchanting for Skyrim SE. Enchantments become **gems**: removable,
 socketable, leveling items. This fully replaces vanilla enchanting for weapons
 and armor. Staves, wands, and scripted artifacts are detected and left alone.
 
@@ -201,7 +201,7 @@ in a later version.
   in the tracker quest, so unsocketing never loses progress.
 - XP sources (AP):
   - **Kills** — every kill awards AP to *every* socketed gem in parallel
-    (FFVII: AP per battle to all equipped materia): **1 AP per standard enemy,
+    **1 AP per standard enemy,
     10 AP per boss**. Tracked via `Game.QueryStat` on the heartbeat + menu-close.
   - **Soul feeding** — at a bench, consume a filled soul gem to grant AP to one
     gem: petty 5, lesser 12, common 25, greater 60, grand/black 200
@@ -213,8 +213,8 @@ in a later version.
 - **Level thresholds (default A-tier, MCM-tunable): cumulative 400 / 1,200 /
   3,600 / 10,000 AP to reach II / III / IV / V.** Reaching **10,000 = Level V =
   Master**, and at Master the gem **births** one fresh Level-1 copy (a
-  notification fires); a mastered gem is capped and stops accruing AP (FFVII
-  model). Birthing is the only way to replicate a gem.
+  notification fires); a mastered gem is capped and stops accruing AP.
+  Birthing is the only way to replicate a gem.
 - **Per-gem XP scales by power tier** ("dependent on rarity and power"): the
   threshold is `base × xp_mult`, with **S ×1.5** (build-defining, e.g. Chaos,
   Stagger, attributes, Magicka Rate, crafting skills), **A ×1.0** (most gems),
@@ -324,7 +324,7 @@ default" sketch):
 - **Support gems can function early but are rarity-gated.** They work in any
   linked slot (gloves from the start), but per §5 they are not found before
   ~level 15, so early game the dual gloves just hold two normal gems. Support
-  materia is still an endgame payoff — by scarcity, not by perk lock.
+  gems are still an endgame payoff — by scarcity, not by perk lock.
 
 - The **Gem Pouch** — a lesser power granted at startup
   (plus an MCM-bindable hotkey) — opens the socket menu anywhere: pick a worn
@@ -374,36 +374,44 @@ support gem earns nothing). They do **not** birth: scarcity is preserved by
 acquisition, not replication.
 
 - **How a tier expresses depends on the gem's function:**
-  - **All** — the top tier fires *every hit*; lower tiers fire only sometimes.
-    All I = occasional proc, All II = frequent, All III = every hit (full AoE /
-    full follower share). This makes All meaningfully worse until mastered,
-    which is the point of it being rare and leveled.
-  - **Elemental / Counter / Absorption / etc.** — the tier scales that gem's own
-    lever: Elemental +% (e.g. +20/+35/+50), Counter proc chance/magnitude,
-    Absorption heal %, Final Stand threshold/burst. Each gem's I–III curve is
+  - **Echo** — the top tier fires *every hit*; lower tiers fire only sometimes.
+    Echo I = occasional proc, Echo II = frequent, Echo III = every hit (full
+    AoE / full follower share). This makes Echo meaningfully worse until
+    mastered, which is the point of it being rare and leveled.
+  - **Focus / Reprisal / Siphon / etc.** — the tier scales that gem's own
+    lever: Focus +% (e.g. +20/+35/+50), Reprisal proc chance/magnitude,
+    Siphon heal %, Final Stand threshold/burst. Each gem's I–III curve is
     tuned per function (P2 detail).
 
 Acquisition (scarcity model — **not found before ~level 15**):
-- **Hand-placed, FFVII style**: each support gem has one fixed, famous
+- **Hand-placed**: each support gem has one fixed, famous
   location (a Dwemer ruin's master-locked vault, a College questline reward,
   a dragon-priest hoard, ...) — injected into specific existing containers /
   quest rewards by the startup quest. Final location list chosen in P2.
 - **Rare boss-chest loot**: very low-weight entries in **level-15+** boss
   leveled lists as a repeatable RNG backstop, so they cannot show up early.
 
-Roster (FFVII support/independent materia, adapted):
+Roster:
 
 | Gem | In a weapon (linked gem) | In armor (linked gem) |
 |---|---|---|
-| **All** | On-hit effect gains an area — AoE proc around the target | Constant effect is shared with current followers (PO3 `GetPlayerFollowers`, refreshed on heartbeat) |
-| **Added Effect** | An ARMOR gem rides the weapon: its stat becomes an on-hit debuff (Fortify Health gem → hits damage max health) | A WEAPON gem rides the armor as protection: **immunity/strong resist to that effect** (Fire gem → fire resist; Stagger gem → stagger/knockdown resist) — faithful FFVII semantics |
-| **Elemental** | Linked Fire/Frost/Shock/Chaos gem +50% magnitude and hits sunder the target's matching resistance | Linked elemental gem grants resistance equal to 2× its damage magnitude |
-| **Counter** | Linked gem's proc also fires on targets who hit you in melee while the weapon is drawn | Linked armor gem's magnitude doubles for 10 s whenever you're struck (stacking refresh) |
-| **Absorption** (HP/MP Absorb merged) | Linked gem's on-hit proc also heals you (health if the gem damages health/stamina, magicka if it damages/absorbs magicka) for 25% of magnitude | Linked constant gem also grants slow regen of the matching attribute |
-| **Final Stand** (Final Attack) | Dropping below 20% health triggers the linked gem's effect as a burst around you (60 s cooldown) | Dropping below 20% health triples the linked gem's magnitude for 15 s (60 s cooldown) |
+| **Echo** | On-hit effect gains an area — AoE proc around the target | Constant effect is shared with current followers (PO3 `GetPlayerFollowers`, refreshed on heartbeat) |
+| **Conduit** | An ARMOR gem rides the weapon: its stat becomes an on-hit debuff (Fortify Health gem → hits damage max health) | A WEAPON gem rides the armor as protection: **immunity/strong resist to that effect** (Fire gem → fire resist; Stagger gem → stagger/knockdown resist) |
+| **Focus** | Linked Fire/Frost/Shock/Chaos gem +50% magnitude and hits sunder the target's matching resistance | Linked elemental gem grants resistance equal to 2× its damage magnitude |
+| **Reprisal** | Linked gem's proc also fires on targets who hit you in melee while the weapon is drawn | Linked armor gem's magnitude doubles for 10 s whenever you're struck (stacking refresh) |
+| **Siphon** | Linked gem's on-hit proc also heals you (health if the gem damages health/stamina, magicka if it damages/absorbs magicka) for 25% of magnitude | Linked constant gem also grants slow regen of the matching attribute |
+| **Final Stand** | Dropping below 20% health triggers the linked gem's effect as a burst around you (60 s cooldown) | Dropping below 20% health triples the linked gem's magnitude for 15 s (60 s cooldown) |
 
-V1 ships All, Added Effect, Elemental; Counter, Absorption, Final Stand
-follow in P2 once the linking machinery is proven.
+V1 ships Echo, Conduit, Focus; Reprisal, Siphon, Final Stand follow in P2
+once the linking machinery is proven.
+
+**Pending pass (before catalog population): the support interaction matrix.**
+Each support × weapon/armor × each gem type (all 50) must be specified —
+what the combination does, whether it's excluded, and its balance numbers.
+The table above defines the RULE per support; the matrix enumerates the
+cases where the rule needs a per-gem exception (e.g. Conduit with a
+single-level utility gem, Echo with Banish, Siphon with a non-damaging
+constant). Deliverable: `data/support_matrix.json` + a DESIGN appendix.
 
 ## 6. Perk tree rework
 

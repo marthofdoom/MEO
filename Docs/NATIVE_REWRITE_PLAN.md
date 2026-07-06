@@ -45,7 +45,7 @@ The design says native gives "conformance + no save bloat." Be exact about
 | 2 | Identify an item *instance* | `ExtraDataList` on the `InventoryEntryData`; engine `ExtraUniqueID`, or a custom `BSExtraData` tag | Fenix's Equipment Durability System (per-instance item health + co-save) — VERIFY it's open/MIT; else po3 PapyrusExtender item-extradata code (MIT) |
 | 3 | Apply / rebuild / remove a gem enchantment on any inventory item | Construct a runtime `EnchantmentItem` (or reuse the engine's user-enchant path) and set it on the instance's `ExtraEnchantment`; refresh on equip | po3 PapyrusExtender `Object`/enchantment functions; engine's own player-enchant flow (RE'd in CommonLibSSE headers) |
 | 4 | Award gem XP per kill | `RE::TESDeath` event sink; credit kills to the player, distribute AP to socketed gems | Standard CommonLibSSE event-sink pattern (documented everywhere) |
-| 5 | Support-gem on-hit procs (All AoE, Counter, ...) | `RE::TESHitEvent` sink, or a weapon-hit call hook if the event is too coarse | [D7ry/valhallaCombat](https://github.com/D7ry/valhallaCombat) hit-site thunk (maintained post-1.6.1170); po3 `RegisterForHit` semantics |
+| 5 | Support-gem on-hit procs (Echo AoE, Reprisal, ...) | `RE::TESHitEvent` sink, or a weapon-hit call hook if the event is too coarse | [D7ry/valhallaCombat](https://github.com/D7ry/valhallaCombat) hit-site thunk (maintained post-1.6.1170); po3 `RegisterForHit` semantics |
 | 6 | Config / Papyrus bridge | INI (`SKSE/Plugins/MEO.ini`) + GlobalVariables the DLL reads; MCM writes them | MRO M4 pattern (this repo's sibling) |
 
 Not native (stays Papyrus): the Gem Pouch menu/UX and the MCM. The DLL exposes
@@ -90,7 +90,7 @@ mandatory, and that failure is what justifies fronting the native work earlier.
   Gem Pouch menu to call the DLL instead of `WornObject`. Removes P0's
   worn-only constraint. One item type (Fire) first, mirroring P0.
 - **M3 XP + procs**: `TESDeath` sink awards gem XP per kill; `TESHitEvent`
-  drives the first support-gem proc (All AoE). Flag-gated, one at a time.
+  drives the first support-gem proc (Echo AoE). Flag-gated, one at a time.
 - **M4 cleanup**: retire markers if M1/M2 made them redundant; Papyrus reduced
   to Gem Pouch UI + MCM; MCM toggles write INI/globals the DLL reads.
 
