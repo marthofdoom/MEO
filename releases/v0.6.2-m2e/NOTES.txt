@@ -1,0 +1,2 @@
+M2e diagnostic: dumps full extra-data anatomy (pre/post socket) for every equipped weapon. Equip the MEO dagger AND a table-renamed enchanted weapon, then send the log.
+built from native run 28824934321
