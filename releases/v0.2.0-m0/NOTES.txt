@@ -1,0 +1,2 @@
+M0: native DLL skeleton — loads, logs version+runtime to MEO.log, console banner on data load. No hooks.
+built from native run 28762815219
