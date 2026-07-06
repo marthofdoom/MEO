@@ -130,6 +130,24 @@ operation replaces the vanilla ENCH with MEO's rebuilt, marker-carrying
 enchantment (§7). Until the player touches it, the item is byte-for-byte
 vanilla — zero compatibility surface for unlooted/NPC gear.
 
+### Compatibility — enchant-visibility mods (loot UX)
+
+Two popular mods depend on how enchanted gear reads before pickup; both must
+keep working:
+- **See Enchantments SE** (weapon glow / visual effects in the world) — works
+  unchanged: found loot retains its real ENCH, so the glow is vanilla. TODO
+  verify the runtime enchantment applied after socketing (§7) still carries a
+  visual shader when the item is equipped; if not, reattach one.
+- **Unknown Enchants**-style "(U) you haven't learned this" indicators — read
+  the vanilla known-enchantment (disenchant) list, which MEO never populates,
+  so they would flag everything forever. Fix (semantic match): when the player
+  first **extracts a gem type**, mark that base enchantment KNOWN, so "(U)" then
+  means "a gem type you don't own yet" — exactly the loot-worth signal,
+  repurposed. Requires an API to add to the known-enchant list (verify SKSE /
+  PO3 in P3); **fallback** if none exists: MEO ships its own lightweight loot
+  tag (display-name suffix or on-loot hint) driven by gem ownership. Either way
+  the UX survives. (P3 compat task.)
+
 ### Unique / artifact enchantments (68 families)
 Policy: artifacts with scripted, quest, or one-off enchantments (Ebony Blade,
 Spellbreaker, Ring of Namira, nightingale sets, masks, ...) are **soulbound**:
