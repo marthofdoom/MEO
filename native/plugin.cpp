@@ -1,5 +1,12 @@
 // MEO native plugin — MEO.dll (CommonLibSSE-NG).
 //
+// M2d: force the display name. M2c PROVED the enchant layer in-game (created
+// enchant works, survives drop/pickup/save/reload) but the rename never
+// showed: the engine lazily creates a blank ExtraTextDisplayData for tempered
+// items (ExtraDataList::GetDisplayName when health != 1.0), so add-if-absent
+// skipped every tempered weapon. M2d reuses/forces the record instead
+// (SKSE SetDisplayName force=true semantics) and logs what it found.
+//
 // M2c: replicate P0's PROVEN enchant recipe natively. M2b (attach the base
 // ENCH EnchWeaponFireDamage01 via ExtraEnchantment) showed the enchantment
 // DESCRIPTION on the item card but applied no actual effect and no rename.
@@ -112,10 +119,25 @@ void SocketWornInstance(RE::FormID a_baseID) {
                 xList->Add(new RE::ExtraUniqueID(a_baseID, uid));
             }
 
-            if (!xList->GetByType<RE::ExtraTextDisplayData>()) {
-                const char* baseName = entry->object->GetName();
-                const std::string newName =
-                    std::string("[MEO] ") + (baseName && *baseName ? baseName : "Item");
+            // M2d: FORCE the display name. The engine lazily creates a blank
+            // ExtraTextDisplayData for any TEMPERED item (ExtraDataList::
+            // GetDisplayName, health != 1.0) and generates "Fine <name>" from
+            // it — so the old only-add-if-absent logic silently skipped every
+            // tempered weapon (the M2b/M2c "no rename"). Mirror SKSE's
+            // SetDisplayName(force=true): reuse the existing record, clear any
+            // message/quest owner, then SetName (which marks it kCustomName;
+            // customNameLength keeps temper suffixes appendable).
+            const char*       baseName = entry->object->GetName();
+            const std::string newName =
+                std::string("[MEO] ") + (baseName && *baseName ? baseName : "Item");
+            if (auto* xText = xList->GetByType<RE::ExtraTextDisplayData>()) {
+                spdlog::info("existing name data on {:08X}: '{}' ownerInstance={} temper={:.3f} — forcing MEO name",
+                             a_baseID, xText->displayName.c_str(),
+                             xText->ownerInstance.underlying(), xText->temperFactor);
+                xText->displayNameText = nullptr;
+                xText->ownerQuest = nullptr;
+                xText->SetName(newName.c_str());
+            } else {
                 xList->Add(new RE::ExtraTextDisplayData(newName.c_str()));
             }
 
@@ -237,9 +259,9 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
     if (message->type == SKSE::MessagingInterface::kDataLoaded) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESEquipEvent>(EquipSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.6.0 (M2c created enchant) loaded — equip a fresh unenchanted weapon");
+            console->Print("MEO native v0.6.1 (M2d forced name) loaded — equip a fresh unenchanted weapon");
         }
-        spdlog::info("kDataLoaded: MEO M2c live; TESEquipEvent sink registered (no code hooks)");
+        spdlog::info("kDataLoaded: MEO M2d live; TESEquipEvent sink registered (no code hooks)");
     }
 }
 
@@ -250,7 +272,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SetupLog();
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.6.0 (M2c created enchant + ability update) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.6.1 (M2d forced display name) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
