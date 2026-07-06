@@ -84,6 +84,13 @@ def tier_of(gid, cls, domain):
 
 # build magnitude lookup from base masters (portable) for curated multi gems
 mgefs_data, enchs = build_catalog()
+
+# edid -> (plugin, localFormID) so the runtime script can resolve each effect MGEF
+MGEF_BY_EDID = {}
+for (origin, fid), info in mgefs_data.items():
+    ed = info.get('edid')
+    if ed and ed not in MGEF_BY_EDID:
+        MGEF_BY_EDID[ed] = {'plugin': origin, 'fid': f"0x{fid:06X}"}
 def linear_from_base(base_mgef):
     mags = set()
     for e in enchs:
@@ -113,7 +120,9 @@ for mgef, e in bal.items():
         e = dict(e); e['curve'] = [10, 15, 20, 25, 30]; e['note'] = 'shout cooldown -%'
     single = e.get('single_level', cls == 'BINARY') or tier == 'U'
     catalog[gid] = {
-        'name': nice(mgef), 'mgefs':[mgef], 'domain':e['domain'], 'class':cls,
+        'name': nice(mgef), 'mgefs':[mgef],
+        'mgef_refs':[MGEF_BY_EDID.get(mgef, {'plugin':'?','fid':'?'})],
+        'domain':e['domain'], 'class':cls,
         'curve': 'Level 1 only' if single else (e.get('curve') or e.get('curve_dur')
                  or e.get('curve_level') or e.get('curve_stagger')),
         'single_level': single,
@@ -128,12 +137,21 @@ for gid, c in CURATED_MULTI.items():
         curve = [round(x * 0.4) for x in curve]
         note = 'per-element ~40% of single-element; edge is coverage vs mixed resist'
     catalog[gid] = {
-        'name': c['name'], 'mgefs': c['mgefs'], 'domain': c['domain'], 'class': c['class'],
+        'name': c['name'], 'mgefs': c['mgefs'],
+        'mgef_refs': [MGEF_BY_EDID.get(m, {'plugin':'?','fid':'?'}) for m in c['mgefs']],
+        'domain': c['domain'], 'class': c['class'],
         'curve': curve, 'single_level': False,
         'power_tier': tier, 'xp_mult': XP_MULT[tier],
     }
     if note: catalog[gid]['note'] = note
 
+# Stable type_index per gem (drives FormID allocation + the marker encoding
+# typeIndex*8+level). Assigned in sorted gid order; NEW gems must APPEND (keep
+# existing indices frozen post-release, per DEBUGGING 'never change FormIDs').
+for i, gid in enumerate(sorted(catalog), start=1):
+    catalog[gid]['type_index'] = i
+
+catalog = {gid: catalog[gid] for gid in sorted(catalog)}
 json.dump(catalog, open('data/gem_catalog.json','w'), indent=1)
 
 # summary by tier
