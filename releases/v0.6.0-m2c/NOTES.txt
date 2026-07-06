@@ -1,0 +1,2 @@
+M2c: created enchantment (AddWeaponEnchantment from EnchFireDamageFFContact MGEF) + UpdateWeaponAbility — replicates P0's proven SKSE recipe natively. Test on a FRESH unenchanted weapon: hits burn, charge bar, drop -> crosshair AND pickup prompt agree on [MEO] name, save/reload -> same uid, no stacking.
+built from native run 28807709734
