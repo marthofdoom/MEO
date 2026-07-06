@@ -130,20 +130,39 @@ operation replaces the vanilla ENCH with MEO's rebuilt, marker-carrying
 enchantment (§7). Until the player touches it, the item is byte-for-byte
 vanilla — zero compatibility surface for unlooted/NPC gear.
 
-### World-visible socketed gear is a native capability (not Papyrus)
+### World-visible socketed gear — self-describing item extra data (native)
 A weapon lying on the ground showing "Fire I Glass Dagger" — and staying that
-way through pickup with **no transform-on-pickup** — is unreachable in Papyrus.
-Runtime enchantments (`WornObject.CreateEnchantment`) exist only on the *worn*
-slot, so nothing holds a ground item's socket state, and any script approach
-would necessarily mutate the item at `OnContainerChanged`/`OnEquip` (i.e.
-transform it at pickup), which is exactly the jarring behavior we reject. The
-only correct model is a DLL that **paints name + enchant on reference 3D-load**
-wherever the item renders (corpse, ground, container, worn), so the item is
-never "plain" and never transforms. This is a **native milestone** (M2+), not a
-Papyrus feature. Near-term loot policy accordingly: enemies drop **plain gear +
-loose gems** (gems are the loot); the player sockets. Player-socketed gear that
-is dropped *may* retain its enchant via `ExtraEnchantment` traveling with the
-stack — worth a spot-check, but the reliable form is native-painted.
+way through pickup with **no transform-on-pickup** — is achieved the same way
+vanilla enchanted loot is: the socket state is stored as **engine extra data on
+the item instance itself**, which the engine renders everywhere the item appears
+(worn, dropped, chest, boss corpse) with no hooks and no repaint. The three
+pieces we attach to the instance:
+- **`ExtraTextDisplayData`** — the display name ("Fire I Glass Dagger").
+- **`ExtraEnchantment`** — the actual runtime effect.
+- **`ExtraUniqueID`** — stable per-instance identity; also stops it stacking
+  with plain copies.
+
+All are engine-serialized and travel with the instance, so the item is
+self-describing and **never transforms** — the world name and the picked-up name
+are the same because it is the same instance carrying the same data (exactly why
+a vanilla "Iron Sword of Sparks" shows its name on the floor).
+
+This requires **native**: Papyrus can only put a runtime enchantment on the
+*worn* slot (`WornObject.CreateEnchantment`); C++ can set these extra-data
+records on ANY item instance (native-plan reason #2). It is NOT "paint on
+3D-load" — that clunkier model is only needed if socket state lives off the
+item, which it does not.
+
+The **co-save** map holds only the leveling layer (per-instance XP/level, keyed
+by `uniqueID`); display does not depend on it. On level-up the DLL rewrites the
+magnitude + name on the instance.
+
+**Loot:** items the player sockets and drops display correctly in the world
+immediately (above). Items a boss/chest pre-drops **already socketed** must be
+stamped with this extra data at loot-generation time — a later milestone
+(leveled-list injection or a container-init hook), separate from the display
+mechanism itself. Untouched vanilla loot stays byte-for-byte vanilla until first
+socket.
 
 ### Compatibility — enchant-visibility mods (loot UX)
 
