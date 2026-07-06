@@ -1,0 +1,2 @@
+M2a: self-describing display name on item instance. Equip a weapon -> DLL stamps [MEO] <name> via ExtraTextDisplayData; name shows in world (drop/chest/corpse) and inventory identically, no transform on pickup. Logs equip uniqueID (M2b recon). No code hooks.
+built from native run 28774679198
