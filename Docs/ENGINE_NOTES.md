@@ -136,10 +136,12 @@ The `- 4` offset on the callback message is the trap everyone hits.
 - **Enchant-visual mods lag until sheathe/redraw.** The enchantment itself
   is live the instant we stamp/re-stamp (`UpdateWeaponAbility` applies the
   ability immediately — confirmed: the final level-up's effect worked at
-  once). But third-party enchantment-FX mods key their visuals off equip
-  events, so a weapon socketed or leveled *while drawn* shows no new glow
-  until sheathed and redrawn. Their timing, not ours. Won't fix; note it in
-  the mod description.
+  once). Removal is equally immediate: after M4b unsocket the actual damage
+  is gone even while drawn; only the FX mod's visual lingers. Their timing,
+  not ours. Planned cosmetic fix (MCM, not yet built): option to block
+  socket/unsocket while the weapon is drawn; the full version should also
+  block it in combat. Until MCM exists these are known issues — note in the
+  mod description.
 - **Weapons in containers, on racks/displays, or in NPC inventories are NOT
   born socketed.** `TESCellAttachDetachEvent` fires per *world reference*;
   container contents and carried items are inventory entries, not refs, and

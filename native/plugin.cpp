@@ -634,6 +634,9 @@ void SocketFromPouch() {
 // mastered: births one level-I copy of itself and stops accruing.
 // TODO M3d: 10x boss kills, follower kills feed the follower's own gems,
 // soul feeding, Mentor gem (paired-gem XP doubler, mid-Dawnguard reward).
+// TODO MCM: option to block socket/unsocket while drawn (cosmetic fix for
+// FX-mod redraw lag — the real effect applies/removes instantly, verified
+// M4b); full version also blocks it in combat. Known issues until then.
 float g_xpPerKill = 1.0f;         // [Dev] fXPPerKill in SKSE/Plugins/MEO.ini
 float g_gemDropChance = 0.05f;    // [Loot] fGemDropChance — corpse gem on player kill
 float g_worldSocketChance = 0.08f;// [Loot] fWorldSocketChance — world weapon born socketed
