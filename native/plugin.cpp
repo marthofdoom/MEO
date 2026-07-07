@@ -404,10 +404,13 @@ void SocketFromPouch() {
     ShowGemPicker(0);
 }
 
-// ── M3b: kill XP -> level-ups -> re-stamp; mastered gems birth a copy ─
-// DESIGN §3: 1 AP per player kill to every socketed gem on worn weapons;
-// cumulative thresholds 400/1200/3600/10000 x the gem's xpMult. Level V =
+// ── M3b: kill Gem XP -> level-ups -> re-stamp; mastered gems birth ────
+// DESIGN §3 (currency is "Gem XP", never "AP"): 1 per player kill to every
+// socketed gem on worn weapons; cumulative thresholds in kXPThresholds
+// (content-budget calibrated, see BALANCE.md) x the gem's xpMult. Level V =
 // mastered: births one level-I copy of itself and stops accruing.
+// TODO M3d: 10x boss kills, follower kills feed the follower's own gems,
+// soul feeding, Mentor gem (paired-gem XP doubler, mid-Dawnguard reward).
 float g_xpPerKill = 1.0f;         // [Dev] fXPPerKill in SKSE/Plugins/MEO.ini
 float g_gemDropChance = 0.05f;    // [Loot] fGemDropChance — corpse gem on player kill
 float g_worldSocketChance = 0.08f;// [Loot] fWorldSocketChance — world weapon born socketed

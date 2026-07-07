@@ -196,31 +196,54 @@ in a later version.
 
 - Gems are MISC items, one form per type × level: `MEO_Gem<Type><1..5>`.
   Support gems level too, but in **3 tiers** (`MEO_Support<Type><1..3>`); see §5.
-- **XP accrues only while socketed in player-worn gear.** Fungibility is by
-  type+level; partial XP toward the next level is banked per type+level pool
-  in the tracker quest, so unsocketing never loses progress.
-- XP sources (AP):
-  - **Kills** — every kill awards AP to *every* socketed gem in parallel
-    **1 AP per standard enemy,
-    10 AP per boss**. Tracked via `Game.QueryStat` on the heartbeat + menu-close.
-  - **Soul feeding** — at a bench, consume a filled soul gem to grant AP to one
-    gem: petty 5, lesser 12, common 25, greater 60, grand/black 200
-    (MCM-tunable). With the **Soul Feeder** perk, soul gems hold **2× AP** (both
-    when fed and when reclaimed), so a Grand ≈ 400 AP ≈ one full Level I→II.
-  - **Gem destruction** — destroying a gem reclaims **1/10 of its AP** into a
-    soul gem (the only sink that recovers investment).
+- **Terminology (Marth, 2026-07-07): the currency is "Gem XP"** — never "AP"
+  (an FFVII fingerprint; see the branding rule). Code/serialization keep `xp`.
+- **Gem XP accrues per INSTANCE while socketed in worn gear** (native
+  per-instance decision; supersedes the old pooled model). **Unsocketing
+  returns the gem** (key rule — investment is never destroyed): the gem item
+  comes back at its current level; partial progress toward the next level is
+  banked in a per-type+level pool and re-attached when a matching gem is next
+  socketed.
+- **Followers earn Gem XP too (Marth, 2026-07-07):** kills made by a player
+  teammate award Gem XP to the gems socketed in *that follower's* worn gear —
+  each actor levels their own gems, so equipping followers with gems is never
+  a waste. (Fallback if per-follower proves hard: share the player's awards.)
+- Gem XP sources:
+  - **Kills** — every kill by the player (or a follower, for their own gems)
+    awards Gem XP to *every* socketed gem in parallel: **1 per standard
+    enemy, 10 per boss**. Native `TESDeathEvent` sink (implemented v0.7.1).
+  - **Soul feeding** — at a bench, consume a filled soul gem to grant Gem XP
+    to one gem: petty 5, lesser 12, common 25, greater 60, grand/black 200
+    (MCM-tunable). With the **Soul Feeder** perk, soul gems hold **2×** (both
+    when fed and when reclaimed), so a Grand ≈ 400 ≈ one full Level I→II.
+  - **Gem destruction** — destroying a gem reclaims **1/10 of its Gem XP**
+    into a soul gem (the only sink that recovers investment).
+  - **The Mentor gem** — a unique support gem that **doubles the Gem XP of
+    its paired gem**, awarded mid-Dawnguard (around Chasing Echoes / Beyond
+    Death). The calibration below assumes it's active for the back half of a
+    playthrough. (Name "Mentor" provisional; no FFVII echoes.)
 
-- **Level thresholds (default A-tier, MCM-tunable): cumulative 400 / 1,200 /
-  3,600 / 10,000 AP to reach II / III / IV / V.** Reaching **10,000 = Level V =
-  Master**, and at Master the gem **births** one fresh Level-1 copy (a
-  notification fires); a mastered gem is capped and stops accruing AP.
-  Birthing is the only way to replicate a gem.
+- **Level thresholds (default A-tier, MCM-tunable): cumulative
+  400 / 900 / 2,800 / 7,000 Gem XP to reach II / III / IV / V.**
+  Reaching 7,000 = **Level V = Master**: the gem **births** one fresh
+  Level-1 copy (notification) and stops accruing. Birthing is the only way
+  to replicate a gem.
+- **Calibration ladder (Marth, 2026-07-07)** — thresholds are derived from
+  content budgets, not vibes; see BALANCE.md "Content budget" for the model:
+  - Main quest alone → **Level II comfortably, ~⅔ toward III, cannot reach
+    III** without extra content.
+  - III → main quest + one guild questline (or equivalent clearing).
+  - **IV = first plateau** → main quest + Dawnguard + misc clearing + one or
+    two guild questlines (Mentor gem doing its work from mid-Dawnguard).
+  - **V = the long haul** → achievable within remaining vanilla quests and
+    dungeons, **excluding Dragonborn** — Daedric quests, civil war, the rest
+    of the guilds, sustained clearing and soul feeding.
 - **Per-gem XP scales by power tier** ("dependent on rarity and power"): the
   threshold is `base × xp_mult`, with **S ×1.5** (build-defining, e.g. Chaos,
   Stagger, attributes, Magicka Rate, crafting skills), **A ×1.0** (most gems),
   **B ×0.6** (situational: control gems, trivial skills), **U** utilities don't
-  level. So an S-tier gem masters at 15,000, a B-tier at 6,000. Each gem's tier
-  lives in `data/gem_catalog.json` (see §3 scaling model / BALANCE.md).
+  level. So an S-tier gem masters at 10,500, a B-tier at 4,200. Each gem's
+  tier lives in `data/gem_catalog.json` (see §3 scaling model / BALANCE.md).
 
 ### Magnitude scaling model (the balance spine)
 

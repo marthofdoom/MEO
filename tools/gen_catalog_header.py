@@ -71,7 +71,7 @@ inline constexpr GemDef kWeaponGems[] = {{
 }};
 
 // Cumulative XP to reach level II..V, scaled per gem by xpMult (DESIGN §3).
-inline constexpr std::array<float, 4> kXPThresholds = {{ 400.0f, 1200.0f, 3600.0f, 10000.0f }};
+inline constexpr std::array<float, 4> kXPThresholds = {{ 400.0f, 900.0f, 2800.0f, 7000.0f }};
 
 inline constexpr const char* kRoman[5] = {{ "I", "II", "III", "IV", "V" }};
 

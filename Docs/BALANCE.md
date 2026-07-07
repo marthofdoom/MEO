@@ -44,3 +44,31 @@ DLC2 stagger ballista, generic StaggerAttack, DLC2 fake dragon-absorb.
 Model locked for LINEAR/ABSORB. The six classes above await Marth's calls;
 once decided, finalize the numbers here and freeze the default data set for the
 generator. Per-gem `[base,max]` for non-Requiem FOMOD baselines is a later pass.
+
+## Content budget — how the level thresholds were derived (2026-07-07)
+
+Model: an A-tier gem socketed early and worn throughout. Gem XP: 1/kill,
+10/boss, soul feeding as §3, **Mentor gem doubles from mid-Dawnguard on**.
+Kill counts are planning estimates for a normal (non-completionist) run —
+revisit against real playthrough logs.
+
+| Content block | Std kills | Bosses | Feeding | Gem XP | Running total |
+|---|---|---|---|---|---|
+| Main quest (full) | ~300 | ~20 | ~100 | ~600 | **600** |
+| + one guild questline | ~250 | ~8 | ~50 | ~380 | ~980 |
+| + Dawnguard (Mentor mid-line) | ~250 | ~15 | ~100 | ~500→~700 dbl | ~1,700 |
+| + misc clearing (10 dungeons) ×2 | ~300 | ~10 | ~100 | ~1,000 | ~2,700 |
+| + second guild line ×2 | ~250 | ~8 | ~50 | ~760 | ~3,500 |
+| + Daedric/civil war/rest ×2 | ~600 | ~25 | ~400 | ~3,400 | ~6,900 |
+
+Targets → thresholds (A-tier, cumulative):
+- **II = 400** — lands mid-main-quest.
+- **III = 900** — main quest ends ~⅔ of the way (600/900); needs one extra
+  questline. "Near but not without extra quests."
+- **IV = 2,800** — the first plateau: MQ + Dawnguard + clearing + guild(s).
+- **V = 7,000** — the rest of vanilla minus Dragonborn, Mentor running.
+
+S-tier ×1.5 → 600/1,350/4,200/10,500. B-tier ×0.6 → 240/540/1,680/4,200.
+Followers earn their own Gem XP (their kills, their worn gems) — this is
+extra throughput for players who arm followers, intentionally not modeled
+in the ladder (it accelerates, never gates).
