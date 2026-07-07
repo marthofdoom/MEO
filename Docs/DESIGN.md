@@ -208,8 +208,15 @@ in a later version.
   carries its own instance identity (ExtraUniqueID + co-save record, the
   same {gid, level, xp} record shape) — the record follows the gem between
   "socketed in weapon X" and "loose item" states, so distinct gems never
-  merge into a stack. The socket picker must therefore list each unique gem
+  merge into a stack. The pouch UI must therefore list each unique gem
   individually, with its progress (e.g. "Fire I — 250/900").
+  *M5 (v0.11.0)*: the Gem Pouch is a native two-pane **ContainerMenu**
+  (hidden CONT form + temp ref, activated by the pouch power; all mutation
+  in one reconcile pass on menu close). The socketed gem sits inside as a
+  live instance — take it out to unsocket; put a gem in to socket; both at
+  once is an **atomic swap** (the old gem leaves the weapon only when the
+  new one arrives — fixing the M4b message-box Swap, which unsocketed
+  before a choice was made). The M4a/M4b message-box menus are retired.
 - **Followers earn Gem XP too (Marth, 2026-07-07):** kills made by a player
   teammate award Gem XP to the gems socketed in *that follower's* worn gear —
   each actor levels their own gems, so equipping followers with gems is never
@@ -235,9 +242,11 @@ in a later version.
     (`DLC01SoulCairn` worldspace) — thematically between Chasing Echoes
     and Beyond Death, exactly the calibration window. Alternatives: a
     placed chest ref (cell-edit compat care), a quest-stage check, a
-    Boneyard boss drop. Soul feeding is likewise interim: via the pouch
-    prompt on the socketed weapon (no bench requirement yet; Soul Feeder
-    perk and gem destruction not yet implemented).
+    Boneyard boss drop. Soul feeding is likewise interim: drop filled soul
+    gems into the Gem Pouch menu — the player picks which souls to spend
+    (smallest-first consumption; reusable soul gems bounce back; no bench
+    requirement yet; Soul Feeder perk and gem destruction not yet
+    implemented).
 
 - **Level thresholds (default A-tier, MCM-tunable): cumulative
   400 / 900 / 2,800 / 7,000 Gem XP to reach II / III / IV / V.**
