@@ -35,6 +35,7 @@ FID_STARTUP_QUEST  = OWN | 0x804
 FID_FLST_ALL       = OWN | 0x805
 FID_FLST_WEAPON    = OWN | 0x806
 FID_FLST_ARMOR     = OWN | 0x807
+FID_POUCH_CONT     = OWN | 0x8FE   # hidden Gem Pouch container (M5 ContainerMenu UI); FROZEN
 FID_MENTOR_GEM     = OWN | 0x8FF   # unique support gem (M3d); FROZEN, outside the sequential range
 FID_GEM_BASE       = OWN | 0x900   # MISC gems allocated sequentially from here
 RUNTIME_REL = "MEO/meo_runtime.json"   # under Data/SKSE/Plugins (JsonUtil root)
@@ -144,6 +145,14 @@ def make_spel():
     body+=subrec('SPIT',spit_lesser_power())+subrec('EFID',struct.pack('<I',FID_POUCH_MGEF))+subrec('EFIT',struct.pack('<fII',0.0,0,0))
     return group('SPEL',record('SPEL',FID_POUCH_SPELL,0,body))
 
+def make_cont():
+    # Hidden Gem Pouch container: no model, no contents, no respawn flags.
+    # The DLL spawns a temporary reference of it and activates that ref to
+    # open a real two-pane ContainerMenu (M5). DATA = flags u8 + weight f32.
+    body =subrec('EDID',zstr("MEO_GemPouchCont"))+subrec('OBND',b'\x00'*12)
+    body+=subrec('FULL',zstr("Gem Pouch"))+subrec('DATA',struct.pack('<Bf',0,0.0))
+    return group('CONT',record('CONT',FID_POUCH_CONT,0,body))
+
 def qust_dnam(): return struct.pack('<B',20)+b'\x01\x00\xff'+struct.pack('<HHI',0x0001|0x0004,0,0)
 def make_qust():
     vmad=VMADBuilder(); vmad.add_script("MEO_StartupQuest",[("PlayerRef",prop_obj(FREF_PLAYER)),("GemPouchPower",prop_obj(FID_POUCH_SPELL))])
@@ -177,6 +186,7 @@ def main():
     esp.write(make_tes4(next_local & 0xFFFFFF))
     esp.write(make_mgefs())
     esp.write(group('MISC',misc_bytes))
+    esp.write(make_cont())
     esp.write(make_spel())
     flsts=(make_flst(FID_FLST_ALL,"MEO_AllGems",weapon_fids+armor_fids)
           +make_flst(FID_FLST_WEAPON,"MEO_WeaponGems",weapon_fids)
@@ -188,7 +198,7 @@ def main():
     write_runtime_json(out_dir, gem_form_map)
     ngems=len(CATALOG); nmisc=len(weapon_fids)+len(armor_fids)
     print(f"Written: {out_dir}/MEO.esp ({len(data):,} bytes)")
-    print(f"  MGEF x3  (marker contact+self, pouch)   SPEL x1  QUST x1  FLST x3")
+    print(f"  MGEF x3  (marker contact+self, pouch)   CONT x1  SPEL x1  QUST x1  FLST x3")
     print(f"  MISC x{nmisc}  ({ngems} gems: {len(weapon_fids)} weapon-domain + {len(armor_fids)} armor-domain forms)")
     print(f"Written: {out_dir}/SKSE/Plugins/{RUNTIME_REL} ({ngems} gems)")
 
