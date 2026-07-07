@@ -1,0 +1,2 @@
+M2g diagnostic: crosshair sink dumps ground weapon refs (GetDisplayFullName + full extraList). Drop the MEO dagger and the table-renamed sword side by side, hover both, send the log.
+built from native run 28833663943
