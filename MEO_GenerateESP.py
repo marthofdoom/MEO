@@ -35,6 +35,7 @@ FID_STARTUP_QUEST  = OWN | 0x804
 FID_FLST_ALL       = OWN | 0x805
 FID_FLST_WEAPON    = OWN | 0x806
 FID_FLST_ARMOR     = OWN | 0x807
+FID_MENTOR_GEM     = OWN | 0x8FF   # unique support gem (M3d); FROZEN, outside the sequential range
 FID_GEM_BASE       = OWN | 0x900   # MISC gems allocated sequentially from here
 RUNTIME_REL = "MEO/meo_runtime.json"   # under Data/SKSE/Plugins (JsonUtil root)
 
@@ -168,6 +169,10 @@ def write_runtime_json(out_dir, gem_form_map):
 def main():
     out_dir=sys.argv[1] if len(sys.argv)>1 else "out"; os.makedirs(out_dir,exist_ok=True)
     misc_bytes, gem_form_map, weapon_fids, armor_fids, next_local = allocate_gems()
+    # Mentor gem (unique support: doubles Gem XP; DLL-managed, not in FLSTs).
+    mentor=subrec('EDID',zstr("MEO_Gem_mentor"))+subrec('OBND',b'\x00'*12)
+    mentor+=subrec('FULL',zstr("Mentor Gem"))+subrec('DATA',struct.pack('<If',750,0.1))
+    misc_bytes=record('MISC',FID_MENTOR_GEM,0,mentor)+misc_bytes
     esp=BytesIO()
     esp.write(make_tes4(next_local & 0xFFFFFF))
     esp.write(make_mgefs())

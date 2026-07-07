@@ -228,6 +228,16 @@ in a later version.
     its paired gem**, awarded mid-Dawnguard (around Chasing Echoes / Beyond
     Death). The calibration below assumes it's active for the back half of a
     playthrough. (Name "Mentor" provisional; no FFVII echoes.)
+    *M3d interim*: doubles ALL Gem XP earned by whoever carries it
+    (whole-inventory aura — becomes true socket pairing once the
+    multi-socket model lands). *Acquisition (PROVISIONAL, placement under
+    discussion)*: granted on first arrival in the Soul Cairn
+    (`DLC01SoulCairn` worldspace) — thematically between Chasing Echoes
+    and Beyond Death, exactly the calibration window. Alternatives: a
+    placed chest ref (cell-edit compat care), a quest-stage check, a
+    Boneyard boss drop. Soul feeding is likewise interim: via the pouch
+    prompt on the socketed weapon (no bench requirement yet; Soul Feeder
+    perk and gem destruction not yet implemented).
 
 - **Level thresholds (default A-tier, MCM-tunable): cumulative
   400 / 900 / 2,800 / 7,000 Gem XP to reach II / III / IV / V.**

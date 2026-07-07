@@ -74,7 +74,7 @@ bool          g_starterGranted = false;
 
 constexpr std::uint32_t kSerID = 'MEO1';
 constexpr std::uint32_t kRecGems = 'GEMS';
-constexpr std::uint32_t kSerVersion = 3;  // v3: (base,uid) key + gid string + starter flag
+constexpr std::uint32_t kSerVersion = 4;  // v4: + mentorGranted flag (v3 reader kept forever)
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -90,6 +90,21 @@ std::unordered_map<RE::FormID, std::pair<int, int>> g_gemByItem;  // item -> {ge
 std::unordered_map<std::string_view, int>         g_gemByGid;
 std::vector<int>                                  g_lootableGems;  // resolved, levelable
 RE::SpellItem*                                    g_pouchSpell = nullptr;
+
+// ── M3d forms (all IDs extracted from the real Lorerim masters) ───────
+constexpr RE::FormID kMentorGemID = 0x8FF;        // MEO.esp MISC (frozen, outside gem range)
+constexpr RE::FormID kSoulCairnWorldID = 0x001408;// Dawnguard.esm WRLD DLC01SoulCairn
+constexpr RE::FormID kBossLocRefTypeID = 0x0130F7;// Skyrim.esm LCRT "Boss"
+constexpr RE::FormID kDragonKeywordID = 0x035D59; // Skyrim.esm KYWD ActorTypeDragon
+constexpr RE::FormID kReusableSoulGemKW = 0x0ED2F1;// Skyrim.esm KYWD ReusableSoulGem
+RE::TESObjectMISC*      g_mentorGem = nullptr;
+RE::TESWorldSpace*      g_soulCairn = nullptr;    // null = Dawnguard absent
+RE::BGSLocationRefType* g_bossRefType = nullptr;
+RE::BGSKeyword*         g_dragonKeyword = nullptr;
+RE::BGSKeyword*         g_reusableSoulGemKW = nullptr;
+bool                    g_mentorGranted = false;  // co-save v4
+// DESIGN §3 soul-feed Gem XP by soul size (petty..grand; black counts grand).
+constexpr float kSoulFeedXP[5] = { 5.0f, 12.0f, 25.0f, 60.0f, 200.0f };
 
 void SetupLog() {
     auto logDir = SKSE::log::log_directory();
@@ -140,9 +155,17 @@ void ResolveCatalog() {
             g_lootableGems.push_back(static_cast<int>(i));
         }
     }
-    spdlog::info("catalog resolved: {}/{} weapon gems live, {} socketable gem items, pouch={}",
+    // M3d forms. Skyrim.esm forms are unconditional; Dawnguard gates Mentor.
+    g_mentorGem = dh->LookupForm<RE::TESObjectMISC>(kMentorGemID, kPluginName);
+    g_soulCairn = dh->LookupForm<RE::TESWorldSpace>(kSoulCairnWorldID, "Dawnguard.esm");
+    g_bossRefType = dh->LookupForm<RE::BGSLocationRefType>(kBossLocRefTypeID, "Skyrim.esm");
+    g_dragonKeyword = dh->LookupForm<RE::BGSKeyword>(kDragonKeywordID, "Skyrim.esm");
+    g_reusableSoulGemKW = dh->LookupForm<RE::BGSKeyword>(kReusableSoulGemKW, "Skyrim.esm");
+    spdlog::info("catalog resolved: {}/{} weapon gems live, {} socketable gem items, pouch={}, "
+                 "mentor={}, soulCairn={}, bossType={}",
                  ok, std::size(meo::kWeaponGems), g_gemByItem.size(),
-                 g_pouchSpell ? "ok" : "MISSING");
+                 g_pouchSpell ? "ok" : "MISSING", g_mentorGem ? "ok" : "MISSING",
+                 g_soulCairn ? "ok" : "absent", g_bossRefType ? "ok" : "MISSING");
 }
 
 // ── The stamp: paint one socket onto one instance (engine flows only) ─
@@ -313,6 +336,7 @@ void GiveGemInstance(int a_gemIdx, int a_level, float a_xp) {
 }
 
 void SocketFromPouch();
+void FeedSoul();
 
 // Pull OUR gem out of the worn weapon: engine-remove the enchantment and
 // display name (uid stays — harmless), refresh the worn ability, return the
@@ -364,6 +388,8 @@ public:
             SKSE::GetTaskInterface()->AddTask([]() { UnsocketWorn(false); });
         } else if (response == 1) {
             SKSE::GetTaskInterface()->AddTask([]() { UnsocketWorn(true); });
+        } else if (response == 2) {
+            SKSE::GetTaskInterface()->AddTask([]() { FeedSoul(); });
         }
         // anything else = Cancel
     }
@@ -401,6 +427,7 @@ void ShowUnsocketPrompt(const SocketRecord& a_rec, int a_gemIdx, const char* a_w
     box->bodyText = std::format("{} is socketed in the {}.", gemLabel, a_weaponName).c_str();
     box->buttonText.push_back("Unsocket");
     box->buttonText.push_back("Swap...");
+    box->buttonText.push_back("Feed Soul");
     box->buttonText.push_back("Cancel");
     box->callback = RE::BSTSmartPointer<RE::IMessageBoxCallback>{ new UnsocketPromptCallback() };
     box->QueueMessage();
@@ -632,14 +659,17 @@ void SocketFromPouch() {
 // socketed gem on worn weapons; cumulative thresholds in kXPThresholds
 // (content-budget calibrated, see BALANCE.md) x the gem's xpMult. Level V =
 // mastered: births one level-I copy of itself and stops accruing.
-// TODO M3d: 10x boss kills, follower kills feed the follower's own gems,
-// soul feeding, Mentor gem (paired-gem XP doubler, mid-Dawnguard reward).
+// M3d: boss/dragon kills pay fBossXPMult; follower kills feed the
+// follower's own worn gems; soul feeding via the pouch prompt; Mentor Gem
+// (doubles the carrier's Gem XP — interim whole-inventory aura until the
+// multi-socket model makes it true pairing) granted on Soul Cairn arrival.
 // TODO MCM: option to block socket/unsocket while drawn (cosmetic fix for
 // FX-mod redraw lag — the real effect applies/removes instantly, verified
 // M4b); full version also blocks it in combat. Known issues until then.
 float g_xpPerKill = 1.0f;         // [Dev] fXPPerKill in SKSE/Plugins/MEO.ini
 float g_gemDropChance = 0.05f;    // [Loot] fGemDropChance — corpse gem on player kill
 float g_worldSocketChance = 0.08f;// [Loot] fWorldSocketChance — world weapon born socketed
+float g_bossXPMult = 10.0f;       // [XP] fBossXPMult — boss/dragon kill multiplier
 
 void ReadConfig() {
     std::ifstream ini("Data/SKSE/Plugins/MEO.ini");
@@ -662,6 +692,8 @@ void ReadConfig() {
             g_gemDropChance = val;
         } else if (key == "fWorldSocketChance") {
             g_worldSocketChance = val;
+        } else if (key == "fBossXPMult") {
+            g_bossXPMult = val;
         }
     }
     if (g_xpPerKill != 1.0f) {
@@ -671,11 +703,60 @@ void ReadConfig() {
                  g_gemDropChance, g_worldSocketChance);
 }
 
-void AwardKillXP(float a_ap) {
-    auto* player = RE::PlayerCharacter::GetSingleton();
-    auto* changes = player ? player->GetInventoryChanges() : nullptr;
+// Add Gem XP to one socketed worn instance; handles the level-up re-stamp,
+// notifications (named for followers), and mastered births. a_rec must be
+// the live g_sockets entry (StampInstance rewrites the same key — the
+// reference stays valid).
+void GrantGemXP(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList,
+                bool a_left, SocketRecord& a_rec, int a_gemIdx, float a_xp,
+                std::uint16_t a_uid) {
+    const auto& rg = g_gems[a_gemIdx];
+    if (!rg.mgef || rg.def->xpMult <= 0.0f || a_rec.level >= 5) {
+        return;  // single-level / disabled / mastered gems never level
+    }
+    a_rec.xp += a_xp;
+    const float need = meo::kXPThresholds[a_rec.level - 1] * rg.def->xpMult;
+    spdlog::info("[xp] {:08X}/{} {} L{}: {:.0f}/{:.0f}", a_base->GetFormID(), a_uid,
+                 a_rec.gid, a_rec.level, a_rec.xp, need);
+    if (a_rec.xp < need) {
+        return;
+    }
+    const int   newLevel = a_rec.level + 1;
+    const float carriedXP = a_rec.xp;
+    StampInstance(a_base, a_xList, a_gemIdx, newLevel, carriedXP);
+    a_owner->UpdateWeaponAbility(a_base, a_xList, a_left);
+    const bool isPlayer = a_owner->IsPlayerRef();
+    const char* who = a_owner->GetName();
+    Notify(isPlayer
+               ? std::format("Your {} gem has grown to {}.", rg.def->name, meo::kRoman[newLevel - 1])
+               : std::format("{}'s {} gem has grown to {}.", who && *who ? who : "Your follower",
+                             rg.def->name, meo::kRoman[newLevel - 1]));
+    if (newLevel == 5 && rg.items[0]) {
+        a_owner->AddObjectToContainer(rg.items[0], nullptr, 1, nullptr);
+        Notify(isPlayer ? std::format("Your mastered {} gem births a new gem.", rg.def->name)
+                        : std::format("{}'s mastered {} gem births a new gem.",
+                                      who && *who ? who : "Your follower", rg.def->name));
+        spdlog::info("[birth] mastered '{}' birthed a level-I copy", a_rec.gid);
+    }
+}
+
+// Award kill Gem XP to every socketed gem on a_owner's worn weapons.
+// M3d: followers earn into their own gems (pass the follower); a Mentor Gem
+// anywhere in the owner's inventory doubles the gain (interim whole-carrier
+// aura — becomes true socket pairing with the multi-socket model).
+void AwardKillXP(RE::Actor* a_owner, float a_ap) {
+    auto* changes = a_owner ? a_owner->GetInventoryChanges() : nullptr;
     if (!changes || !changes->entryList) {
         return;
+    }
+    float xp = a_ap;
+    if (g_mentorGem) {
+        for (auto* entry : *changes->entryList) {
+            if (entry && entry->object == g_mentorGem && entry->countDelta > 0) {
+                xp *= 2.0f;
+                break;
+            }
+        }
     }
     for (auto* entry : *changes->entryList) {
         if (!entry || !entry->object || !entry->object->Is(RE::FormType::Weapon) || !entry->extraLists) {
@@ -694,39 +775,96 @@ void AwardKillXP(float a_ap) {
             if (!xid) {
                 continue;
             }
-            const auto key = MakeKey(entry->object->GetFormID(), xid->uniqueID);
-            auto it = g_sockets.find(key);
+            auto it = g_sockets.find(MakeKey(entry->object->GetFormID(), xid->uniqueID));
             if (it == g_sockets.end()) {
                 continue;
             }
-            auto& rec = it->second;
-            auto gemIt = g_gemByGid.find(rec.gid);
-            if (gemIt == g_gemByGid.end() || rec.level >= 5) {
+            auto gemIt = g_gemByGid.find(it->second.gid);
+            if (gemIt == g_gemByGid.end()) {
                 continue;
             }
-            const auto& rg = g_gems[gemIt->second];
-            if (!rg.mgef || rg.def->xpMult <= 0.0f) {
-                continue;  // single-level / disabled gems never level
-            }
-            rec.xp += a_ap;
-            const float need = meo::kXPThresholds[rec.level - 1] * rg.def->xpMult;
-            spdlog::info("[xp] {:08X}/{} {} L{}: {:.0f}/{:.0f}",
-                         entry->object->GetFormID(), xid->uniqueID, rec.gid, rec.level, rec.xp, need);
-            if (rec.xp < need) {
-                continue;
-            }
-            const int   newLevel = rec.level + 1;
-            const float carriedXP = rec.xp;
-            StampInstance(entry->object, xList, gemIt->second, newLevel, carriedXP);
-            player->UpdateWeaponAbility(entry->object, xList, left);
-            Notify(std::format("Your {} gem has grown to {}.", rg.def->name, meo::kRoman[newLevel - 1]));
-            if (newLevel == 5 && rg.items[0]) {
-                player->AddObjectToContainer(rg.items[0], nullptr, 1, nullptr);
-                Notify(std::format("Your mastered {} gem births a new gem.", rg.def->name));
-                spdlog::info("[birth] mastered '{}' birthed a level-I copy", rec.gid);
-            }
+            GrantGemXP(a_owner, entry->object, xList, left, it->second, gemIt->second, xp,
+                       xid->uniqueID);
         }
     }
+}
+
+// M3d soul feeding (DESIGN §3): consume the smallest filled soul gem in the
+// player's inventory and feed its Gem XP to the worn weapon's gem. Reusable
+// soul gems (Azura's Star line, ReusableSoulGem keyword) are never consumed.
+void FeedSoul() {
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    RE::InventoryEntryData* entry = nullptr;
+    RE::ExtraDataList*      xList = nullptr;
+    bool                    left = false;
+    if (!player || !FindWornWeapon(entry, xList, left)) {
+        return;
+    }
+    auto* xid = xList->GetByType<RE::ExtraUniqueID>();
+    if (!xid) {
+        return;
+    }
+    auto it = g_sockets.find(MakeKey(entry->object->GetFormID(), xid->uniqueID));
+    if (it == g_sockets.end()) {
+        return;
+    }
+    auto gemIt = g_gemByGid.find(it->second.gid);
+    if (gemIt == g_gemByGid.end()) {
+        return;
+    }
+    if (it->second.level >= 5) {
+        Notify("A mastered gem can grow no further.");
+        return;
+    }
+    // Smallest filled soul first (waste-free default). A stack's fill comes
+    // from the base form; player-filled gems carry ExtraSoul per instance.
+    RE::TESBoundObject* bestItem = nullptr;
+    RE::ExtraDataList*  bestXL = nullptr;
+    int                 bestLevel = 99;
+    auto inv = player->GetInventory([](RE::TESBoundObject& obj) { return obj.Is(RE::FormType::SoulGem); });
+    for (const auto& [obj, data] : inv) {
+        if (data.first <= 0) {
+            continue;
+        }
+        auto* soulGem = obj->As<RE::TESSoulGem>();
+        if (!soulGem || (g_reusableSoulGemKW && soulGem->HasKeyword(g_reusableSoulGemKW))) {
+            continue;
+        }
+        std::int32_t withExtras = 0;
+        if (data.second && data.second->extraLists) {
+            for (auto* xl : *data.second->extraLists) {
+                if (!xl) {
+                    continue;
+                }
+                ++withExtras;
+                auto* xSoul = xl->GetByType<RE::ExtraSoul>();
+                const int lv = xSoul ? static_cast<int>(xSoul->GetContainedSoul()) : 0;
+                if (lv >= 1 && lv <= 5 && lv < bestLevel) {
+                    bestLevel = lv;
+                    bestItem = obj;
+                    bestXL = xl;
+                }
+            }
+        }
+        const int baseLv = static_cast<int>(soulGem->GetContainedSoul());
+        if (data.first - withExtras > 0 && baseLv >= 1 && baseLv <= 5 && baseLv < bestLevel) {
+            bestLevel = baseLv;
+            bestItem = obj;
+            bestXL = nullptr;
+        }
+    }
+    if (!bestItem) {
+        Notify("You have no filled soul gems.");
+        return;
+    }
+    const float xp = kSoulFeedXP[bestLevel - 1];
+    const auto& rg = g_gems[gemIt->second];
+    spdlog::info("[feed] soul L{} (+{:.0f}) -> '{}' on {:08X}/{}", bestLevel, xp,
+                 it->second.gid, entry->object->GetFormID(), xid->uniqueID);
+    GrantGemXP(player, entry->object, xList, left, it->second, gemIt->second, xp,
+               xid->uniqueID);
+    player->RemoveItem(bestItem, 1, RE::ITEM_REMOVE_REASON::kRemove, bestXL, nullptr);
+    Notify(std::format("The soul feeds your {} gem (+{:.0f} Gem XP).", rg.def->name, xp));
 }
 
 // ── M3c: gems enter the world — corpse drops + weapons born socketed ──
@@ -802,14 +940,32 @@ public:
     }
     RE::BSEventNotifyControl ProcessEvent(const RE::TESCellAttachDetachEvent* a_event,
                                           RE::BSTEventSource<RE::TESCellAttachDetachEvent>*) override {
-        if (a_event && a_event->attached && a_event->reference &&
-            a_event->reference->GetBaseObject() &&
+        if (!a_event || !a_event->attached || !a_event->reference) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        if (a_event->reference->GetBaseObject() &&
             a_event->reference->GetBaseObject()->Is(RE::FormType::Weapon)) {
             const RE::ObjectRefHandle handle = a_event->reference->GetHandle();
             SKSE::GetTaskInterface()->AddTask([handle]() {
                 if (auto ref = handle.get()) {
                     MaybeStampWorldWeapon(ref.get());
                 }
+            });
+        }
+        // M3d: the Mentor Gem waits in the Soul Cairn (mid-Dawnguard, between
+        // Chasing Echoes and Beyond Death) — granted once when the player
+        // arrives. Attach events for Soul Cairn refs gate the check for free.
+        if (!g_mentorGranted && g_mentorGem && g_soulCairn &&
+            a_event->reference->GetWorldspace() == g_soulCairn) {
+            SKSE::GetTaskInterface()->AddTask([]() {
+                auto* player = RE::PlayerCharacter::GetSingleton();
+                if (g_mentorGranted || !player || player->GetWorldspace() != g_soulCairn) {
+                    return;
+                }
+                g_mentorGranted = true;  // persisted in the co-save (v4)
+                player->AddObjectToContainer(g_mentorGem, nullptr, 1, nullptr);
+                Notify("A resonance among the souls draws to you... a Mentor Gem joins your pouch.");
+                spdlog::info("[mentor] granted on Soul Cairn arrival");
             });
         }
         return RE::BSEventNotifyControl::kContinue;
@@ -824,18 +980,47 @@ public:
     }
     RE::BSEventNotifyControl ProcessEvent(const RE::TESDeathEvent* a_event,
                                           RE::BSTEventSource<RE::TESDeathEvent>*) override {
-        if (a_event && a_event->dead && a_event->actorDying && !a_event->actorDying->IsPlayerRef() &&
-            a_event->actorKiller && a_event->actorKiller->IsPlayerRef()) {
-            const RE::ObjectRefHandle handle = a_event->actorDying->GetHandle();
-            SKSE::GetTaskInterface()->AddTask([handle]() {
-                AwardKillXP(g_xpPerKill);
-                if (auto ref = handle.get()) {
-                    if (auto* victim = ref->As<RE::Actor>()) {
-                        RollCorpseGem(victim);
+        if (!a_event || !a_event->dead || !a_event->actorDying ||
+            a_event->actorDying->IsPlayerRef() || !a_event->actorKiller) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        // M3d: player kills AND follower kills (followers feed their own gems).
+        auto* killer = a_event->actorKiller->As<RE::Actor>();
+        if (!killer || (!killer->IsPlayerRef() && !killer->IsPlayerTeammate())) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        // M3d: bosses (location ref type "Boss") and dragons pay fBossXPMult.
+        float mult = 1.0f;
+        auto* victimRef = a_event->actorDying.get();
+        if (auto* xlrt = victimRef->extraList.GetByType<RE::ExtraLocationRefType>();
+            g_bossRefType && xlrt && xlrt->locRefType == g_bossRefType) {
+            mult = g_bossXPMult;
+        } else if (auto* victimActor = victimRef->As<RE::Actor>();
+                   g_dragonKeyword && victimActor && victimActor->GetRace() &&
+                   victimActor->GetRace()->HasKeyword(g_dragonKeyword)) {
+            mult = g_bossXPMult;
+        }
+        if (mult > 1.0f) {
+            spdlog::info("[xp] boss/dragon kill: x{:.0f}", mult);
+        }
+        const bool                fromPlayer = killer->IsPlayerRef();
+        const RE::ObjectRefHandle victim = a_event->actorDying->GetHandle();
+        const RE::ObjectRefHandle killerHandle = a_event->actorKiller->GetHandle();
+        const float               xp = g_xpPerKill * mult;
+        SKSE::GetTaskInterface()->AddTask([victim, killerHandle, xp, fromPlayer]() {
+            if (auto k = killerHandle.get()) {
+                if (auto* killerActor = k->As<RE::Actor>()) {
+                    AwardKillXP(killerActor, xp);
+                }
+            }
+            if (fromPlayer) {  // corpse gems stay player-kill only
+                if (auto ref = victim.get()) {
+                    if (auto* v = ref->As<RE::Actor>()) {
+                        RollCorpseGem(v);
                     }
                 }
-            });
-        }
+            }
+        });
         return RE::BSEventNotifyControl::kContinue;
     }
 };
@@ -926,6 +1111,8 @@ void SaveCallback(SKSE::SerializationInterface* a_intfc) {
     a_intfc->WriteRecordData(g_nextUID);
     const std::uint8_t starter = g_starterGranted ? 1 : 0;
     a_intfc->WriteRecordData(starter);
+    const std::uint8_t mentor = g_mentorGranted ? 1 : 0;  // v4 field
+    a_intfc->WriteRecordData(mentor);
     const std::uint32_t count = static_cast<std::uint32_t>(g_sockets.size());
     a_intfc->WriteRecordData(count);
     for (const auto& [key, rec] : g_sockets) {
@@ -939,14 +1126,15 @@ void SaveCallback(SKSE::SerializationInterface* a_intfc) {
         a_intfc->WriteRecordData(len);
         a_intfc->WriteRecordData(rec.gid.data(), len);
     }
-    spdlog::info("[save] {} socket record(s), nextUID=0x{:X}, starter={}",
-                 g_sockets.size(), g_nextUID, g_starterGranted);
+    spdlog::info("[save] {} socket record(s), nextUID=0x{:X}, starter={}, mentor={}",
+                 g_sockets.size(), g_nextUID, g_starterGranted, g_mentorGranted);
 }
 
 void LoadCallback(SKSE::SerializationInterface* a_intfc) {
     g_sockets.clear();
     g_nextUID = 0x9000;
     g_starterGranted = false;
+    g_mentorGranted = false;
     std::uint32_t type = 0, version = 0, length = 0;
     while (a_intfc->GetNextRecordInfo(type, version, length)) {
         if (type != kRecGems) {
@@ -965,6 +1153,11 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
         std::uint8_t starter = 0;
         a_intfc->ReadRecordData(starter);
         g_starterGranted = starter != 0;
+        if (version >= 4) {  // v4: mentorGranted (v3 saves default to false)
+            std::uint8_t mentor = 0;
+            a_intfc->ReadRecordData(mentor);
+            g_mentorGranted = mentor != 0;
+        }
         std::uint32_t count = 0;
         a_intfc->ReadRecordData(count);
         for (std::uint32_t i = 0; i < count; ++i) {
@@ -982,14 +1175,15 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
             g_sockets[MakeKey(baseID, uid)] = std::move(rec);
         }
     }
-    spdlog::info("[load] {} socket record(s), nextUID=0x{:X}, starter={}",
-                 g_sockets.size(), g_nextUID, g_starterGranted);
+    spdlog::info("[load] {} socket record(s), nextUID=0x{:X}, starter={}, mentor={}",
+                 g_sockets.size(), g_nextUID, g_starterGranted, g_mentorGranted);
 }
 
 void RevertCallback(SKSE::SerializationInterface*) {
     g_sockets.clear();
     g_nextUID = 0x9000;
     g_starterGranted = false;
+    g_mentorGranted = false;
     spdlog::info("[revert] socket index cleared");
 }
 
@@ -1003,9 +1197,9 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESCellAttachDetachEvent>(CellAttachSink::GetSingleton());
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.9.0 (M4b unsocket/swap) loaded — gems keep their own XP");
+            console->Print("MEO native v0.10.0 (M3d) loaded — bosses, followers, souls, the Mentor");
         }
-        spdlog::info("kDataLoaded: MEO M4b live; SpellCast + Death + CellAttach + CrosshairRef sinks registered (no code hooks)");
+        spdlog::info("kDataLoaded: MEO M3d live; SpellCast + Death + CellAttach + CrosshairRef sinks registered (no code hooks)");
         break;
     case SKSE::MessagingInterface::kPostLoadGame:
     case SKSE::MessagingInterface::kNewGame:
@@ -1024,7 +1218,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SetupLog();
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.9.0 (M4b unsocket/swap: every gem owns its Gem XP) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.10.0 (M3d: boss XP, follower gems, soul feeding, Mentor Gem) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
