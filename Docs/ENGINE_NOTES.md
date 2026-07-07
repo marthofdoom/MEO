@@ -130,3 +130,23 @@ The `- 4` offset on the callback message is the trap everyone hits.
 - Proton log path:
   `compatdata/<appid>/pfx/drive_c/users/steamuser/Documents/My Games/
   Skyrim.INI/SKSE/MEO.log` (Lorerim appid 3375297225; truncates per launch).
+
+## 8. Known issues — external or by design (validated 2026-07-07, v0.8.0)
+
+- **Enchant-visual mods lag until sheathe/redraw.** The enchantment itself
+  is live the instant we stamp/re-stamp (`UpdateWeaponAbility` applies the
+  ability immediately — confirmed: the final level-up's effect worked at
+  once). But third-party enchantment-FX mods key their visuals off equip
+  events, so a weapon socketed or leveled *while drawn* shows no new glow
+  until sheathed and redrawn. Their timing, not ours. Won't fix; note it in
+  the mod description.
+- **Weapons in containers, on racks/displays, or in NPC inventories are NOT
+  born socketed.** `TESCellAttachDetachEvent` fires per *world reference*;
+  container contents and carried items are inventory entries, not refs, and
+  rack/display items ride linked/persistent refs that don't come through the
+  attach path the same way. By design for M3c — only loose world refs roll.
+  Container/NPC-inventory pre-socketing is future work (container-changed
+  sink or stamp-on-transfer).
+- **Some floor items vanish after save → main menu → load.** Suspected
+  engine save-culling issue (wskeever pinpointed it), external to MEO.
+  Socketed items *in inventory* persist correctly across save/load.
