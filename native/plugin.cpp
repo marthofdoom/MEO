@@ -84,6 +84,41 @@ void SetupLog() {
 // all name-relevant fields for any equipped weapon — equipping a
 // table-renamed weapon logs the engine's gold-standard record for a
 // field-by-field diff against ours.
+void DumpXList(const char* a_tag, RE::FormID a_id, RE::ExtraDataList* a_xList) {
+    if (!a_xList) {
+        return;
+    }
+    std::string types;
+    for (const auto& x : *a_xList) {
+        types += std::format("{:02X} ", static_cast<int>(x.GetType()));
+    }
+    spdlog::info("[dump:{}] {:08X} types: {}", a_tag, a_id, types);
+    if (auto* xText = a_xList->GetByType<RE::ExtraTextDisplayData>()) {
+        spdlog::info("[dump:{}]   xText name='{}' msg={} quest={} ownerInstance={} temper={:.3f} nameLen={}",
+                     a_tag, xText->displayName.c_str(),
+                     static_cast<const void*>(xText->displayNameText),
+                     static_cast<const void*>(xText->ownerQuest),
+                     xText->ownerInstance.underlying(), xText->temperFactor,
+                     xText->customNameLength);
+    }
+    if (auto* xHealth = a_xList->GetByType<RE::ExtraHealth>()) {
+        spdlog::info("[dump:{}]   xHealth={:.3f}", a_tag, xHealth->health);
+    }
+    if (auto* xEnch = a_xList->GetByType<RE::ExtraEnchantment>()) {
+        spdlog::info("[dump:{}]   xEnch={:08X} '{}' charge={} removeOnUnequip={}",
+                     a_tag,
+                     xEnch->enchantment ? xEnch->enchantment->GetFormID() : 0,
+                     xEnch->enchantment ? xEnch->enchantment->GetName() : "null",
+                     xEnch->charge, xEnch->removeOnUnequip);
+    }
+    if (auto* xCharge = a_xList->GetByType<RE::ExtraCharge>()) {
+        spdlog::info("[dump:{}]   xCharge={:.1f}", a_tag, xCharge->charge);
+    }
+    if (auto* xid = a_xList->GetByType<RE::ExtraUniqueID>()) {
+        spdlog::info("[dump:{}]   xUniqueID base={:08X} uid={}", a_tag, xid->baseID, xid->uniqueID);
+    }
+}
+
 void DumpWornXList(const char* a_tag, RE::FormID a_baseID) {
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* changes = player ? player->GetInventoryChanges() : nullptr;
@@ -94,43 +129,14 @@ void DumpWornXList(const char* a_tag, RE::FormID a_baseID) {
         if (!entry || !entry->object || entry->object->GetFormID() != a_baseID || !entry->extraLists) {
             continue;
         }
-        int li = 0;
         for (auto* xList : *entry->extraLists) {
             if (!xList) {
                 continue;
             }
             const bool worn = xList->HasType(RE::ExtraDataType::kWorn) ||
                               xList->HasType(RE::ExtraDataType::kWornLeft);
-            std::string types;
-            for (const auto& x : *xList) {
-                types += std::format("{:02X} ", static_cast<int>(x.GetType()));
-            }
-            spdlog::info("[dump:{}] {:08X} list#{} worn={} types: {}", a_tag, a_baseID, li, worn, types);
-            if (auto* xText = xList->GetByType<RE::ExtraTextDisplayData>()) {
-                spdlog::info("[dump:{}]   xText name='{}' msg={} quest={} ownerInstance={} temper={:.3f} nameLen={}",
-                             a_tag, xText->displayName.c_str(),
-                             static_cast<const void*>(xText->displayNameText),
-                             static_cast<const void*>(xText->ownerQuest),
-                             xText->ownerInstance.underlying(), xText->temperFactor,
-                             xText->customNameLength);
-            }
-            if (auto* xHealth = xList->GetByType<RE::ExtraHealth>()) {
-                spdlog::info("[dump:{}]   xHealth={:.3f}", a_tag, xHealth->health);
-            }
-            if (auto* xEnch = xList->GetByType<RE::ExtraEnchantment>()) {
-                spdlog::info("[dump:{}]   xEnch={:08X} '{}' charge={} removeOnUnequip={}",
-                             a_tag,
-                             xEnch->enchantment ? xEnch->enchantment->GetFormID() : 0,
-                             xEnch->enchantment ? xEnch->enchantment->GetName() : "null",
-                             xEnch->charge, xEnch->removeOnUnequip);
-            }
-            if (auto* xCharge = xList->GetByType<RE::ExtraCharge>()) {
-                spdlog::info("[dump:{}]   xCharge={:.1f}", a_tag, xCharge->charge);
-            }
-            if (auto* xid = xList->GetByType<RE::ExtraUniqueID>()) {
-                spdlog::info("[dump:{}]   xUniqueID base={:08X} uid={}", a_tag, xid->baseID, xid->uniqueID);
-            }
-            ++li;
+            spdlog::info("[dump:{}] inventory list worn={}", a_tag, worn);
+            DumpXList(a_tag, a_baseID, xList);
         }
         return;
     }
@@ -247,6 +253,37 @@ void SocketWornInstance(RE::FormID a_baseID) {
     spdlog::warn("SocketWornInstance: no worn instance of {:08X} found", a_baseID);
 }
 
+// ── M2g: crosshair sink — dump the GROUND reference on hover ─────────
+// M2f closed the pickup notification (temper sync) but the activate
+// rollover still reads the base name. The inventory record now mirrors the
+// table's exactly, so the remaining delta must be on the dropped REFERENCE
+// itself. Hovering any weapon ref logs GetDisplayFullName (the path the
+// console uses, known-good) plus the ref's own extraList anatomy.
+class CrosshairSink : public RE::BSTEventSink<SKSE::CrosshairRefEvent> {
+public:
+    static CrosshairSink* GetSingleton() {
+        static CrosshairSink singleton;
+        return &singleton;
+    }
+
+    RE::BSEventNotifyControl ProcessEvent(const SKSE::CrosshairRefEvent* a_event,
+                                          RE::BSTEventSource<SKSE::CrosshairRefEvent>*) override {
+        if (!a_event || !a_event->crosshairRef) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        auto& ref = a_event->crosshairRef;
+        auto* base = ref->GetBaseObject();
+        if (!base || !base->Is(RE::FormType::Weapon)) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        const char* dfn = ref->GetDisplayFullName();
+        spdlog::info("[xhair] ref {:08X} base {:08X} baseName='{}' GetDisplayFullName='{}'",
+                     ref->GetFormID(), base->GetFormID(), base->GetName(), dfn ? dfn : "null");
+        DumpXList("xhair", ref->GetFormID(), &ref->extraList);
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
 // ── TESEquipEvent sink (test trigger) ────────────────────────────────
 class EquipSink : public RE::BSTEventSink<RE::TESEquipEvent> {
 public:
@@ -334,10 +371,11 @@ void RevertCallback(SKSE::SerializationInterface*) {
 void OnMessage(SKSE::MessagingInterface::Message* message) {
     if (message->type == SKSE::MessagingInterface::kDataLoaded) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESEquipEvent>(EquipSink::GetSingleton());
+        SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.6.3 (M2f temper-synced name) loaded — equip an unenchanted weapon");
+            console->Print("MEO native v0.6.4 (M2g ground-ref dump) loaded — drop + hover weapons");
         }
-        spdlog::info("kDataLoaded: MEO M2f live; TESEquipEvent sink registered (no code hooks)");
+        spdlog::info("kDataLoaded: MEO M2g live; TESEquipEvent + CrosshairRef sinks registered (no code hooks)");
     }
 }
 
@@ -348,7 +386,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SetupLog();
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.6.3 (M2f temper-synced display name) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.6.4 (M2g ground-ref diagnostics) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
