@@ -206,17 +206,14 @@ void Notify(const std::string& a_msg) {
     RE::DebugNotification(a_msg.c_str());
 }
 
-void SocketFromPouch() {
+// Worn weapon instance (right hand preferred). Returns false if none drawn.
+bool FindWornWeapon(RE::InventoryEntryData*& a_entry, RE::ExtraDataList*& a_xList, bool& a_left) {
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* changes = player ? player->GetInventoryChanges() : nullptr;
     if (!changes || !changes->entryList) {
-        return;
+        return false;
     }
-
-    // Worn weapon instance (right hand preferred).
-    RE::InventoryEntryData* wornEntry = nullptr;
-    RE::ExtraDataList*      wornList = nullptr;
-    bool                    leftHand = false;
+    a_entry = nullptr;
     for (auto* entry : *changes->entryList) {
         if (!entry || !entry->object || !entry->object->Is(RE::FormType::Weapon) || !entry->extraLists) {
             continue;
@@ -227,29 +224,153 @@ void SocketFromPouch() {
             }
             const bool right = xList->HasType(RE::ExtraDataType::kWorn);
             const bool left = xList->HasType(RE::ExtraDataType::kWornLeft);
-            if ((right || left) && (!wornEntry || (right && leftHand))) {
-                wornEntry = entry;
-                wornList = xList;
-                leftHand = !right;
+            if ((right || left) && (!a_entry || (right && a_left))) {
+                a_entry = entry;
+                a_xList = xList;
+                a_left = !right;
             }
         }
     }
-    if (!wornEntry) {
+    return a_entry != nullptr;
+}
+
+// Shared guards; notifies and returns false if the instance can't take a gem.
+bool CanSocket(RE::InventoryEntryData* a_entry, RE::ExtraDataList* a_xList) {
+    if (a_xList->HasType(RE::ExtraDataType::kEnchantment)) {
+        Notify("That weapon already holds a gem.");
+        return false;
+    }
+    if (auto* weap = a_entry->object->As<RE::TESObjectWEAP>(); weap && weap->formEnchanting) {
+        Notify("Enchanted weapons cannot hold gems.");
+        return false;
+    }
+    return true;
+}
+
+// ── M4a: native gem-picker message box (chosen over blind first-gem) ──
+// Pattern verified against working source (Exit-9B/ForgetSpell,
+// D7ry/valhallaCombat): factory-created MessageBoxData, unk4C=4/unk38=10,
+// callback receives the pressed button as (Message - 4).
+struct GemChoice {
+    int                gemIdx;
+    int                level;
+    RE::TESObjectMISC* item;
+    std::int32_t       count;
+};
+std::vector<GemChoice> g_choices;  // captured when the picker opens
+constexpr std::size_t  kPickerPageSize = 8;
+
+void SocketChoice(GemChoice a_choice) {
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    RE::InventoryEntryData* entry = nullptr;
+    RE::ExtraDataList*      xList = nullptr;
+    bool                    left = false;
+    if (!player || !FindWornWeapon(entry, xList, left)) {
         Notify("Draw a weapon to socket a gem.");
         return;
     }
-    if (wornList->HasType(RE::ExtraDataType::kEnchantment)) {
-        Notify("That weapon already holds a gem.");
+    if (!CanSocket(entry, xList)) {
         return;
     }
-    if (auto* weap = wornEntry->object->As<RE::TESObjectWEAP>(); weap && weap->formEnchanting) {
-        Notify("Enchanted weapons cannot hold gems.");
+    // Re-validate the gem is still in inventory (menus can move things).
+    const auto counts = player->GetInventoryCounts(
+        [&](RE::TESBoundObject& obj) { return &obj == a_choice.item; });
+    if (counts.empty()) {
+        Notify("That gem is no longer in your inventory.");
+        return;
+    }
+    const auto uid = StampInstance(entry->object, xList, a_choice.gemIdx, a_choice.level);
+    if (!uid) {
+        return;
+    }
+    player->UpdateWeaponAbility(entry->object, xList, left);
+    player->RemoveItem(a_choice.item, 1, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
+    const auto& rg = g_gems[a_choice.gemIdx];
+    Notify(std::format("{} {} socketed into {}.", rg.def->name, meo::kRoman[a_choice.level - 1],
+                       entry->object->GetName()));
+}
+
+void ShowGemPicker(std::size_t a_page);
+
+class GemPickerCallback : public RE::IMessageBoxCallback {
+public:
+    GemPickerCallback(std::size_t a_page, std::size_t a_shown, bool a_more) :
+        page(a_page), shown(a_shown), more(a_more) {}
+
+    void Run(Message a_msg) override {
+        const std::int32_t response = static_cast<std::int32_t>(a_msg) - 4;
+        if (response < 0) {
+            return;
+        }
+        const std::size_t idx = page * kPickerPageSize + static_cast<std::size_t>(response);
+        if (static_cast<std::size_t>(response) < shown && idx < g_choices.size()) {
+            const GemChoice choice = g_choices[idx];
+            SKSE::GetTaskInterface()->AddTask([choice]() { SocketChoice(choice); });
+        } else if (more && static_cast<std::size_t>(response) == shown) {
+            const std::size_t next = page + 1;
+            SKSE::GetTaskInterface()->AddTask([next]() { ShowGemPicker(next); });
+        }
+        // anything else = Cancel
+    }
+
+private:
+    std::size_t page;
+    std::size_t shown;
+    bool        more;
+};
+
+void ShowGemPicker(std::size_t a_page) {
+    auto* factoryManager = RE::MessageDataFactoryManager::GetSingleton();
+    auto* uiStrings = RE::InterfaceStrings::GetSingleton();
+    auto* factory = (factoryManager && uiStrings)
+                        ? factoryManager->GetCreator<RE::MessageBoxData>(uiStrings->messageBoxData)
+                        : nullptr;
+    auto* box = factory ? factory->Create() : nullptr;
+    if (!box) {
+        spdlog::error("MessageBoxData factory unavailable — picker skipped");
+        return;
+    }
+    box->unk4C = 4;
+    box->unk38 = 10;
+    box->bodyText = "Socket which gem?";
+
+    const std::size_t first = a_page * kPickerPageSize;
+    const std::size_t last = std::min(first + kPickerPageSize, g_choices.size());
+    for (std::size_t i = first; i < last; ++i) {
+        const auto& c = g_choices[i];
+        const auto& rg = g_gems[c.gemIdx];
+        std::string label = std::format("{} {}", rg.def->name, meo::kRoman[c.level - 1]);
+        if (c.count > 1) {
+            label += std::format(" ({})", c.count);
+        }
+        box->buttonText.push_back(label.c_str());
+    }
+    const bool more = last < g_choices.size();
+    if (more) {
+        box->buttonText.push_back("More...");
+    }
+    box->buttonText.push_back("Cancel");
+    box->callback = RE::BSTSmartPointer<RE::IMessageBoxCallback>{
+        new GemPickerCallback(a_page, last - first, more)
+    };
+    box->QueueMessage();
+}
+
+void SocketFromPouch() {
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    RE::InventoryEntryData* entry = nullptr;
+    RE::ExtraDataList*      xList = nullptr;
+    bool                    left = false;
+    if (!player || !FindWornWeapon(entry, xList, left)) {
+        Notify("Draw a weapon to socket a gem.");
+        return;
+    }
+    if (!CanSocket(entry, xList)) {
         return;
     }
 
-    // First gem in inventory, deterministic order (catalog index, then level).
-    RE::TESObjectMISC* gemItem = nullptr;
-    int gemIdx = -1, gemLevel = 0;
+    // Gather distinct gem stacks, ordered by catalog index then level.
+    g_choices.clear();
     auto inv = player->GetInventory([](RE::TESBoundObject& obj) { return obj.Is(RE::FormType::Misc); });
     for (const auto& [obj, data] : inv) {
         if (data.first <= 0) {
@@ -259,27 +380,21 @@ void SocketFromPouch() {
         if (it == g_gemByItem.end()) {
             continue;
         }
-        const auto [idx, lv] = it->second;
-        if (!gemItem || idx < gemIdx || (idx == gemIdx && lv < gemLevel)) {
-            gemItem = obj->As<RE::TESObjectMISC>();
-            gemIdx = idx;
-            gemLevel = lv;
-        }
+        g_choices.push_back(GemChoice{ it->second.first, it->second.second,
+                                       obj->As<RE::TESObjectMISC>(), data.first });
     }
-    if (!gemItem) {
+    if (g_choices.empty()) {
         Notify("You have no gems to socket.");
         return;
     }
-
-    const auto uid = StampInstance(wornEntry->object, wornList, gemIdx, gemLevel);
-    if (!uid) {
+    std::sort(g_choices.begin(), g_choices.end(), [](const GemChoice& a, const GemChoice& b) {
+        return a.gemIdx != b.gemIdx ? a.gemIdx < b.gemIdx : a.level < b.level;
+    });
+    if (g_choices.size() == 1) {
+        SocketChoice(g_choices[0]);  // nothing to choose
         return;
     }
-    player->UpdateWeaponAbility(wornEntry->object, wornList, leftHand);
-    player->RemoveItem(gemItem, 1, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
-    const auto& rg = g_gems[gemIdx];
-    Notify(std::format("{} {} socketed into {}.", rg.def->name, meo::kRoman[gemLevel - 1],
-                       wornEntry->object->GetName()));
+    ShowGemPicker(0);
 }
 
 // ── M3b: kill XP -> level-ups -> re-stamp; mastered gems birth a copy ─
@@ -546,9 +661,9 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESDeathEvent>(DeathSink::GetSingleton());
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.7.1 (M3b gem XP) loaded — kills level your socketed gems");
+            console->Print("MEO native v0.7.2 (M4a gem picker) loaded — cast Gem Pouch to choose a gem");
         }
-        spdlog::info("kDataLoaded: MEO M3b live; SpellCast + Death + CrosshairRef sinks registered (no code hooks)");
+        spdlog::info("kDataLoaded: MEO M4a live; SpellCast + Death + CrosshairRef sinks registered (no code hooks)");
         break;
     case SKSE::MessagingInterface::kPostLoadGame:
     case SKSE::MessagingInterface::kNewGame:
@@ -567,7 +682,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SetupLog();
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.7.1 (M3b kill XP + leveling) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.7.2 (M4a gem-picker menu) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
