@@ -41,6 +41,7 @@
 #include <cstdlib>
 #include <format>
 #include <fstream>
+#include <random>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -80,6 +81,7 @@ struct ResolvedGem {
 std::vector<ResolvedGem>                          g_gems;
 std::unordered_map<RE::FormID, std::pair<int, int>> g_gemByItem;  // item -> {gemIdx, level}
 std::unordered_map<std::string_view, int>         g_gemByGid;
+std::vector<int>                                  g_lootableGems;  // resolved, levelable
 RE::SpellItem*                                    g_pouchSpell = nullptr;
 
 void SetupLog() {
@@ -125,6 +127,11 @@ void ResolveCatalog() {
             ++ok;
         }
         g_gems.push_back(rg);
+    }
+    for (std::size_t i = 0; i < g_gems.size(); ++i) {
+        if (g_gems[i].mgef && !g_gems[i].def->singleLevel) {
+            g_lootableGems.push_back(static_cast<int>(i));
+        }
     }
     spdlog::info("catalog resolved: {}/{} weapon gems live, {} socketable gem items, pouch={}",
                  ok, std::size(meo::kWeaponGems), g_gemByItem.size(),
@@ -401,28 +408,38 @@ void SocketFromPouch() {
 // DESIGN §3: 1 AP per player kill to every socketed gem on worn weapons;
 // cumulative thresholds 400/1200/3600/10000 x the gem's xpMult. Level V =
 // mastered: births one level-I copy of itself and stops accruing.
-float g_xpPerKill = 1.0f;  // [Dev] fXPPerKill in SKSE/Plugins/MEO.ini overrides
+float g_xpPerKill = 1.0f;         // [Dev] fXPPerKill in SKSE/Plugins/MEO.ini
+float g_gemDropChance = 0.05f;    // [Loot] fGemDropChance — corpse gem on player kill
+float g_worldSocketChance = 0.08f;// [Loot] fWorldSocketChance — world weapon born socketed
 
 void ReadConfig() {
     std::ifstream ini("Data/SKSE/Plugins/MEO.ini");
     std::string   line;
+    auto trim = [](std::string s) {
+        s.erase(0, s.find_first_not_of(" \t\r"));
+        s.erase(s.find_last_not_of(" \t\r") + 1);
+        return s;
+    };
     while (std::getline(ini, line)) {
         const auto eq = line.find('=');
         if (eq == std::string::npos) {
             continue;
         }
-        auto trim = [](std::string s) {
-            s.erase(0, s.find_first_not_of(" \t\r"));
-            s.erase(s.find_last_not_of(" \t\r") + 1);
-            return s;
-        };
-        if (trim(line.substr(0, eq)) == "fXPPerKill") {
-            g_xpPerKill = std::strtof(trim(line.substr(eq + 1)).c_str(), nullptr);
+        const std::string key = trim(line.substr(0, eq));
+        const float       val = std::strtof(trim(line.substr(eq + 1)).c_str(), nullptr);
+        if (key == "fXPPerKill") {
+            g_xpPerKill = val;
+        } else if (key == "fGemDropChance") {
+            g_gemDropChance = val;
+        } else if (key == "fWorldSocketChance") {
+            g_worldSocketChance = val;
         }
     }
     if (g_xpPerKill != 1.0f) {
         spdlog::warn("DEV: fXPPerKill={} (MEO.ini override)", g_xpPerKill);
     }
+    spdlog::info("config: fGemDropChance={:.2f} fWorldSocketChance={:.2f}",
+                 g_gemDropChance, g_worldSocketChance);
 }
 
 void AwardKillXP(float a_ap) {
@@ -483,6 +500,93 @@ void AwardKillXP(float a_ap) {
     }
 }
 
+// ── M3c: gems enter the world — corpse drops + weapons born socketed ──
+// No leveled-list surgery: player kills roll a corpse gem (lootable), and
+// world weapon REFERENCES roll a pre-socketed gem the moment their cell
+// attaches (TESCellAttachDetachEvent fires PER REFERENCE). World rolls are
+// hashed from the refID, so a given reference decides once, forever —
+// stable across revisits without storing anything.
+std::mt19937 g_rng{ std::random_device{}() };
+
+std::uint32_t HashU32(std::uint32_t x) {
+    x ^= x >> 16;
+    x *= 0x7FEB352Du;
+    x ^= x >> 15;
+    x *= 0x846CA68Bu;
+    x ^= x >> 16;
+    return x;
+}
+
+void RollCorpseGem(RE::Actor* a_victim) {
+    if (g_lootableGems.empty() || g_gemDropChance <= 0.0f) {
+        return;
+    }
+    if (std::uniform_real_distribution<float>(0.0f, 1.0f)(g_rng) >= g_gemDropChance) {
+        return;
+    }
+    const auto& rg = g_gems[g_lootableGems[
+        std::uniform_int_distribution<std::size_t>(0, g_lootableGems.size() - 1)(g_rng)]];
+    if (rg.items[0]) {
+        a_victim->AddObjectToContainer(rg.items[0], nullptr, 1, nullptr);
+        spdlog::info("[loot] corpse gem '{}' I on {:08X}", rg.def->gid, a_victim->GetFormID());
+    }
+}
+
+void MaybeStampWorldWeapon(RE::TESObjectREFR* a_ref) {
+    auto* base = a_ref->GetBaseObject();
+    if (!base || !base->Is(RE::FormType::Weapon) || g_lootableGems.empty() ||
+        g_worldSocketChance <= 0.0f) {
+        return;
+    }
+    if (a_ref->IsDeleted() || a_ref->IsDisabled()) {
+        return;
+    }
+    auto& xList = a_ref->extraList;
+    if (xList.HasType(RE::ExtraDataType::kEnchantment)) {
+        return;  // already socketed (ours or engine)
+    }
+    if (auto* weap = base->As<RE::TESObjectWEAP>(); weap && weap->formEnchanting) {
+        return;  // base-enchanted
+    }
+    if (auto* xid = xList.GetByType<RE::ExtraUniqueID>();
+        xid && g_sockets.contains(MakeKey(base->GetFormID(), xid->uniqueID))) {
+        return;  // recorded already
+    }
+    // Deterministic per-reference roll (same verdict on every cell attach).
+    const std::uint32_t h = HashU32(a_ref->GetFormID() ^ 0x4D454F31u);  // 'MEO1'
+    if ((h % 10000) / 10000.0f >= g_worldSocketChance) {
+        return;
+    }
+    const int gemIdx = g_lootableGems[HashU32(h) % g_lootableGems.size()];
+    const int level = (HashU32(h ^ 0x5A5A5A5Au) % 100) < 85 ? 1 : 2;  // mostly I, some II
+    if (StampInstance(base, &xList, gemIdx, level)) {
+        spdlog::info("[world] ref {:08X} born socketed: {} {} {}", a_ref->GetFormID(),
+                     g_gems[gemIdx].def->name, meo::kRoman[level - 1], base->GetName());
+    }
+}
+
+class CellAttachSink : public RE::BSTEventSink<RE::TESCellAttachDetachEvent> {
+public:
+    static CellAttachSink* GetSingleton() {
+        static CellAttachSink singleton;
+        return &singleton;
+    }
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESCellAttachDetachEvent* a_event,
+                                          RE::BSTEventSource<RE::TESCellAttachDetachEvent>*) override {
+        if (a_event && a_event->attached && a_event->reference &&
+            a_event->reference->GetBaseObject() &&
+            a_event->reference->GetBaseObject()->Is(RE::FormType::Weapon)) {
+            const RE::ObjectRefHandle handle = a_event->reference->GetHandle();
+            SKSE::GetTaskInterface()->AddTask([handle]() {
+                if (auto ref = handle.get()) {
+                    MaybeStampWorldWeapon(ref.get());
+                }
+            });
+        }
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
 class DeathSink : public RE::BSTEventSink<RE::TESDeathEvent> {
 public:
     static DeathSink* GetSingleton() {
@@ -493,7 +597,15 @@ public:
                                           RE::BSTEventSource<RE::TESDeathEvent>*) override {
         if (a_event && a_event->dead && a_event->actorDying && !a_event->actorDying->IsPlayerRef() &&
             a_event->actorKiller && a_event->actorKiller->IsPlayerRef()) {
-            SKSE::GetTaskInterface()->AddTask([]() { AwardKillXP(g_xpPerKill); });
+            const RE::ObjectRefHandle handle = a_event->actorDying->GetHandle();
+            SKSE::GetTaskInterface()->AddTask([handle]() {
+                AwardKillXP(g_xpPerKill);
+                if (auto ref = handle.get()) {
+                    if (auto* victim = ref->As<RE::Actor>()) {
+                        RollCorpseGem(victim);
+                    }
+                }
+            });
         }
         return RE::BSEventNotifyControl::kContinue;
     }
@@ -659,11 +771,12 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         ReadConfig();
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESSpellCastEvent>(SpellCastSink::GetSingleton());
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESDeathEvent>(DeathSink::GetSingleton());
+        RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESCellAttachDetachEvent>(CellAttachSink::GetSingleton());
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.7.2 (M4a gem picker) loaded — cast Gem Pouch to choose a gem");
+            console->Print("MEO native v0.8.0 (M3c world gems) loaded — gems drop, weapons spawn socketed");
         }
-        spdlog::info("kDataLoaded: MEO M4a live; SpellCast + Death + CrosshairRef sinks registered (no code hooks)");
+        spdlog::info("kDataLoaded: MEO M3c live; SpellCast + Death + CellAttach + CrosshairRef sinks registered (no code hooks)");
         break;
     case SKSE::MessagingInterface::kPostLoadGame:
     case SKSE::MessagingInterface::kNewGame:
@@ -682,7 +795,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SetupLog();
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.7.2 (M4a gem-picker menu) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.8.0 (M3c world gems: corpse drops + born-socketed weapons) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
