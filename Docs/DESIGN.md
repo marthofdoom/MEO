@@ -198,12 +198,18 @@ in a later version.
   Support gems level too, but in **3 tiers** (`MEO_Support<Type><1..3>`); see §5.
 - **Terminology (Marth, 2026-07-07): the currency is "Gem XP"** — never "AP"
   (an FFVII fingerprint; see the branding rule). Code/serialization keep `xp`.
-- **Gem XP accrues per INSTANCE while socketed in worn gear** (native
-  per-instance decision; supersedes the old pooled model). **Unsocketing
-  returns the gem** (key rule — investment is never destroyed): the gem item
-  comes back at its current level; partial progress toward the next level is
-  banked in a per-type+level pool and re-attached when a matching gem is next
-  socketed.
+- **Every unique gem owns its own Gem XP pool — no pooling, no fungibility
+  of any kind (Marth, 2026-07-07).** A gem is a unique individual for its
+  whole life: socketed or loose, it keeps its own {level, Gem XP}. A Fire I
+  can be slotted alongside a Fire III; two Fire I gems with different
+  partial progress stay distinct items. **Unsocketing returns THE gem**
+  (key rule — investment is never destroyed): the same instance comes back
+  with its exact level and partial XP. Mechanically: a loose leveled gem
+  carries its own instance identity (ExtraUniqueID + co-save record, the
+  same {gid, level, xp} record shape) — the record follows the gem between
+  "socketed in weapon X" and "loose item" states, so distinct gems never
+  merge into a stack. The socket picker must therefore list each unique gem
+  individually, with its progress (e.g. "Fire I — 250/900").
 - **Followers earn Gem XP too (Marth, 2026-07-07):** kills made by a player
   teammate award Gem XP to the gems socketed in *that follower's* worn gear —
   each actor levels their own gems, so equipping followers with gems is never
