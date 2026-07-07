@@ -476,6 +476,19 @@ magnitude; soul gems' economy role is Soul Feeder fuel.
 Perk math is applied in script when (re)applying enchantments, so all perks
 are plain flag perks — no fragile entry-point records. When any relevant perk
 changes, the heartbeat re-applies worn enchantments with new magnitudes.
+(Native era: "script-applied" = DLL-applied at stamp/re-stamp time via
+`HasPerk` checks; the ESP overrides only rename/redescribe the PERK records.)
+
+### Non-perk enchanting boosters (2026-07-07, pending implementation)
+Everything in the game that boosts enchanting must boost something relevant
+to MEO. The perk table above covers the tree; the remaining boosters —
+**Fortify Enchanting potions, Seeker of Sorcery (black book), Ahzidal's set
+bonus** — all raise the Fortify Enchanting actor value. Mapping: while the
+carrier's Fortify Enchanting AV is non-zero, **Gem XP gain scales by
+`1 + AV/100`** (kill and soul-feed alike) — the "enchant better while
+buffed" fantasy, timed like enchanters' potion sessions, trivially native
+(read the AV in GrantGemXP). Potency stays perk-driven so gear/potion
+stacking can't inflate magnitudes mid-combat.
 
 ### "Don't touch what isn't ours" rules
 - ENCH `enchType == 12` (staff/wand) → never convertible, never modified.
@@ -559,4 +572,17 @@ Open engineering risks (validate in P0, per guide philosophy):
    hand-placement locations; then Counter / Absorption / Final Stand.
 4. **P3 packaging**: FOMOD (core + Requiem patch page), LoreRim patch pass
    (Requiem perk records, Summermyst coexistence check).
+   **Compatibility baseline (verified 2026-07-07)**: MEO.esp declares a
+   single master (Skyrim.esm) and references NO external records — the DLL
+   resolves effect MGEFs from the live load order at runtime and disables
+   gems whose master is absent. The shipped ESP therefore works in ANY
+   load order out of the box; Requiem shaped only the balance numbers.
+   **Load-order regenerator (Marth, 2026-07-07)**: ship a C# regenerator
+   (Mutagen-based; Synthesis-runnable AND standalone via a batch wrapper)
+   that reads the user's real load order and regenerates/extends MEO.esp —
+   needed once load-order-dependent features land (signature-based
+   mod-enchant scan, support matrix, per-modlist balance baselines).
+   FOMOD runs it at install time when possible; manual run documented.
 5. **P4 uniques**: curated unique gems from artifact families.
+6. **Post-release**: follower/companion gem testing at scale (mechanics
+   shipped in v0.10.0-m3d but deep testing deferred — Marth, 2026-07-07).
