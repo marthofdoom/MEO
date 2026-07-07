@@ -210,14 +210,21 @@ void SocketWornInstance(RE::FormID a_baseID) {
                 xText = new RE::ExtraTextDisplayData(newName.c_str());
                 xList->Add(xText);
             }
-            // M2f (from the M2e gold-standard diff): the enchanting table's
-            // name record keeps temperFactor == ExtraHealth.health; NG's
-            // SetName hardcodes 1.0. The mismatch marks the name stale and
-            // the activate prompt / pickup notification fall back to the
-            // base name. Keep it in sync.
+            // M2h — STANDING RULE (Marth): follow the engine's own flow, do
+            // not hand-write engine state. M2f's manual temperFactor sync
+            // fixed the pickup notification but left a record shape the
+            // engine itself never produces (temper>1.0, suffix-less name),
+            // and the activate rollover still refused it. The enchanting
+            // table runs names through the engine's display-name builder;
+            // call that builder (real engine fn, RELOCATION_ID 12626/12768)
+            // and let IT reconcile suffix/customNameLength/temperFactor.
+            float health = 1.0f;
             if (auto* xHealth = xList->GetByType<RE::ExtraHealth>()) {
-                xText->temperFactor = xHealth->health;
+                health = xHealth->health;
             }
+            const char* reconciled = xText->GetDisplayName(entry->object, health);
+            spdlog::info("engine display-name builder reconciled: '{}' (health {:.3f})",
+                         reconciled ? reconciled : "null", health);
 
             // P0's proven recipe, step 1: a CREATED weapon enchantment from the
             // MGEF (what WornObject.CreateEnchantment does via
@@ -373,9 +380,9 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESEquipEvent>(EquipSink::GetSingleton());
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.6.4 (M2g ground-ref dump) loaded — drop + hover weapons");
+            console->Print("MEO native v0.6.5 (M2h engine-built name) loaded — equip, drop, hover");
         }
-        spdlog::info("kDataLoaded: MEO M2g live; TESEquipEvent + CrosshairRef sinks registered (no code hooks)");
+        spdlog::info("kDataLoaded: MEO M2h live; TESEquipEvent + CrosshairRef sinks registered (no code hooks)");
     }
 }
 
@@ -386,7 +393,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SetupLog();
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.6.4 (M2g ground-ref diagnostics) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.6.5 (M2h engine-reconciled display name) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
