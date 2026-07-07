@@ -38,7 +38,9 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <format>
+#include <fstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -131,9 +133,10 @@ void ResolveCatalog() {
 
 // ── The stamp: paint one socket onto one instance (engine flows only) ─
 // Returns the uid used, or 0 on failure. Caller handles UpdateWeaponAbility
-// (worn items) and gem-item consumption.
+// (worn items) and gem-item consumption. a_xp carries accumulated XP through
+// a level-up re-stamp (fresh sockets pass 0).
 std::uint16_t StampInstance(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList,
-                            int a_gemIdx, int a_level) {
+                            int a_gemIdx, int a_level, float a_xp = 0.0f) {
     const auto& rg = g_gems[a_gemIdx];
     if (!rg.mgef || !a_base || !a_xList) {
         return 0;
@@ -191,7 +194,7 @@ std::uint16_t StampInstance(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     }
 
     g_sockets[MakeKey(a_base->GetFormID(), uid)] =
-        SocketRecord{ rg.def->gid, static_cast<std::uint8_t>(lvIdx + 1), 0.0f };
+        SocketRecord{ rg.def->gid, static_cast<std::uint8_t>(lvIdx + 1), a_xp };
     spdlog::info("STAMP {:08X}/{}: '{}' gem={} L{} mag={} ench={:08X}; index {} record(s)",
                  a_base->GetFormID(), uid, newName, rg.def->gid, lvIdx + 1,
                  rg.def->magnitude[lvIdx], ench->GetFormID(), g_sockets.size());
@@ -279,6 +282,108 @@ void SocketFromPouch() {
                        wornEntry->object->GetName()));
 }
 
+// ── M3b: kill XP -> level-ups -> re-stamp; mastered gems birth a copy ─
+// DESIGN §3: 1 AP per player kill to every socketed gem on worn weapons;
+// cumulative thresholds 400/1200/3600/10000 x the gem's xpMult. Level V =
+// mastered: births one level-I copy of itself and stops accruing.
+float g_xpPerKill = 1.0f;  // [Dev] fXPPerKill in SKSE/Plugins/MEO.ini overrides
+
+void ReadConfig() {
+    std::ifstream ini("Data/SKSE/Plugins/MEO.ini");
+    std::string   line;
+    while (std::getline(ini, line)) {
+        const auto eq = line.find('=');
+        if (eq == std::string::npos) {
+            continue;
+        }
+        auto trim = [](std::string s) {
+            s.erase(0, s.find_first_not_of(" \t\r"));
+            s.erase(s.find_last_not_of(" \t\r") + 1);
+            return s;
+        };
+        if (trim(line.substr(0, eq)) == "fXPPerKill") {
+            g_xpPerKill = std::strtof(trim(line.substr(eq + 1)).c_str(), nullptr);
+        }
+    }
+    if (g_xpPerKill != 1.0f) {
+        spdlog::warn("DEV: fXPPerKill={} (MEO.ini override)", g_xpPerKill);
+    }
+}
+
+void AwardKillXP(float a_ap) {
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    auto* changes = player ? player->GetInventoryChanges() : nullptr;
+    if (!changes || !changes->entryList) {
+        return;
+    }
+    for (auto* entry : *changes->entryList) {
+        if (!entry || !entry->object || !entry->object->Is(RE::FormType::Weapon) || !entry->extraLists) {
+            continue;
+        }
+        for (auto* xList : *entry->extraLists) {
+            if (!xList) {
+                continue;
+            }
+            const bool right = xList->HasType(RE::ExtraDataType::kWorn);
+            const bool left = xList->HasType(RE::ExtraDataType::kWornLeft);
+            if (!right && !left) {
+                continue;
+            }
+            auto* xid = xList->GetByType<RE::ExtraUniqueID>();
+            if (!xid) {
+                continue;
+            }
+            const auto key = MakeKey(entry->object->GetFormID(), xid->uniqueID);
+            auto it = g_sockets.find(key);
+            if (it == g_sockets.end()) {
+                continue;
+            }
+            auto& rec = it->second;
+            auto gemIt = g_gemByGid.find(rec.gid);
+            if (gemIt == g_gemByGid.end() || rec.level >= 5) {
+                continue;
+            }
+            const auto& rg = g_gems[gemIt->second];
+            if (!rg.mgef || rg.def->xpMult <= 0.0f) {
+                continue;  // single-level / disabled gems never level
+            }
+            rec.xp += a_ap;
+            const float need = meo::kXPThresholds[rec.level - 1] * rg.def->xpMult;
+            spdlog::info("[xp] {:08X}/{} {} L{}: {:.0f}/{:.0f}",
+                         entry->object->GetFormID(), xid->uniqueID, rec.gid, rec.level, rec.xp, need);
+            if (rec.xp < need) {
+                continue;
+            }
+            const int   newLevel = rec.level + 1;
+            const float carriedXP = rec.xp;
+            StampInstance(entry->object, xList, gemIt->second, newLevel, carriedXP);
+            player->UpdateWeaponAbility(entry->object, xList, left);
+            Notify(std::format("Your {} gem has grown to {}.", rg.def->name, meo::kRoman[newLevel - 1]));
+            if (newLevel == 5 && rg.items[0]) {
+                player->AddObjectToContainer(rg.items[0], nullptr, 1, nullptr);
+                Notify(std::format("Your mastered {} gem births a new gem.", rg.def->name));
+                spdlog::info("[birth] mastered '{}' birthed a level-I copy", rec.gid);
+            }
+        }
+    }
+}
+
+class DeathSink : public RE::BSTEventSink<RE::TESDeathEvent> {
+public:
+    static DeathSink* GetSingleton() {
+        static DeathSink singleton;
+        return &singleton;
+    }
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESDeathEvent* a_event,
+                                          RE::BSTEventSource<RE::TESDeathEvent>*) override {
+        if (a_event && a_event->dead && a_event->actorDying && !a_event->actorDying->IsPlayerRef() &&
+            a_event->actorKiller && a_event->actorKiller->IsPlayerRef()) {
+            SKSE::GetTaskInterface()->AddTask([]() { AwardKillXP(g_xpPerKill); });
+        }
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
 class SpellCastSink : public RE::BSTEventSink<RE::TESSpellCastEvent> {
 public:
     static SpellCastSink* GetSingleton() {
@@ -345,8 +450,11 @@ void EnsurePlayerSetup() {
                 ++given;
             }
         }
-        g_starterGranted = true;  // persisted in the co-save on next save
+        // Only consume the one-time flag if something was actually granted —
+        // with the ESP missing/disabled the grant must retry next load, not
+        // burn itself (v0.7.0 did, poisoning that session's saves).
         if (given > 0) {
+            g_starterGranted = true;  // persisted in the co-save on next save
             spdlog::info("starter kit: {} level-I gems granted", given);
             Notify("Starter gems added to your inventory.");
         }
@@ -433,12 +541,14 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
     switch (message->type) {
     case SKSE::MessagingInterface::kDataLoaded:
         ResolveCatalog();
+        ReadConfig();
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESSpellCastEvent>(SpellCastSink::GetSingleton());
+        RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESDeathEvent>(DeathSink::GetSingleton());
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.7.0 (M3a socket core) loaded — cast Gem Pouch with a weapon drawn");
+            console->Print("MEO native v0.7.1 (M3b gem XP) loaded — kills level your socketed gems");
         }
-        spdlog::info("kDataLoaded: MEO M3a live; SpellCast + CrosshairRef sinks registered (no code hooks)");
+        spdlog::info("kDataLoaded: MEO M3b live; SpellCast + Death + CrosshairRef sinks registered (no code hooks)");
         break;
     case SKSE::MessagingInterface::kPostLoadGame:
     case SKSE::MessagingInterface::kNewGame:
@@ -457,7 +567,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SetupLog();
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.7.0 (M3a playable socket core) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.7.1 (M3b kill XP + leveling) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
