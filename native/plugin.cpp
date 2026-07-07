@@ -1,66 +1,84 @@
 // MEO native plugin — MEO.dll (CommonLibSSE-NG).
 //
-// M2d: force the display name. M2c PROVED the enchant layer in-game (created
-// enchant works, survives drop/pickup/save/reload) but the rename never
-// showed: the engine lazily creates a blank ExtraTextDisplayData for tempered
-// items (ExtraDataList::GetDisplayName when health != 1.0), so add-if-absent
-// skipped every tempered weapon. M2d reuses/forces the record instead
-// (SKSE SetDisplayName force=true semantics) and logs what it found.
+// M3a: THE PLAYABLE SOCKET CORE. The M2 equip-anything scaffold is gone;
+// socketing is now deliberate and catalog-driven:
+//   - MEO.esp ships the gem MISC items (14 weapon gems x 5 levels) and the
+//     Gem Pouch lesser power. The DLL grants the power natively (no Papyrus
+//     anywhere; the ESP's script-era VMAD references stay unshipped/harmless).
+//   - Cast Gem Pouch with a weapon drawn -> the first gem in inventory is
+//     socketed into it: "Fire I Glass Dagger" + a real created enchantment at
+//     the catalog magnitude for that gem/level. The gem item is consumed.
+//   - Catalog is EMBEDDED at build time (native/GemCatalog.h, generated from
+//     data/gem_catalog.json) — no runtime JSON, nothing to mis-path.
 //
-// M2c: replicate P0's PROVEN enchant recipe natively. M2b (attach the base
-// ENCH EnchWeaponFireDamage01 via ExtraEnchantment) showed the enchantment
-// DESCRIPTION on the item card but applied no actual effect and no rename.
-// SKSE's own source (PapyrusWornObject.cpp — the native code behind P0's
-// WornObject.CreateEnchantment, which worked in ALL UIs with real effects)
-// does two things M2b didn't:
-//   1. It never attaches a base ENCH — it builds a player-style CREATED
-//      enchantment via PersistentFormManager::CreateOffensiveEnchantment
-//      (= RE::BGSCreatedObjectManager::AddWeaponEnchantment in NG) from
-//      MGEF effect items.
-//   2. After attaching, it calls Actor::UpdateWeaponAbility(base, xList,
-//      leftHand) — THE call that activates the enchant's magic caster on the
-//      already-equipped actor. Without it the UI reads ExtraEnchantment (so
-//      the description shows) but no effect is ever attached — exactly the
-//      M2b symptom.
-// The bundle per instance is unchanged otherwise:
-//   ExtraUniqueID        (distinct instance; co-save key; no stacking)
-//   ExtraTextDisplayData (display name, engine-rendered everywhere)
-//   ExtraEnchantment     (now a CREATED enchant: EnchFireDamageFFContact
-//                         0x0004605A, verified in Skyrim.esm — the same MGEF
-//                         the vanilla fire ENCH carries)
-// plus the co-save record uid -> {gemType, level, xp}.
+// ── SAVE-SAFETY RULES (from v0.7.0 every update must load older saves) ──
+//   1. Co-save 'GEMS' schema is VERSIONED. Readers for every shipped version
+//      stay forever; writers write only the newest. Never reorder/remove
+//      fields — extend via a version bump + migration in LoadCallback.
+//   2. Socket identity in the co-save is the gem's STABLE STRING gid (catalog
+//      key), never an array index — indexes change, gids don't.
+//   3. Record key is (baseFormID, uniqueID): engine uniqueIDs are only unique
+//      PER BASE FORM (a favorited dagger and a favorited sword can share
+//      uid 108) — uid alone would collide.
+//   4. MEO.esp FormIDs are frozen (generator constants). Forms are only ever
+//      ADDED, never renumbered or deleted.
+//   5. Created enchantments (FF forms) are engine-persisted in the save and
+//      self-contained — a DLL update never invalidates an already-socketed
+//      item; the co-save record is what levels/rebuilds it.
 //
-// Test: equip a NEVER-TOUCHED unenchanted weapon -> "MEO <name>", hits burn,
-// charge bar; drop -> crosshair AND pickup prompt agree; save/reload -> same
-// uid restored. Still zero code hooks (event sink + task queue + serialization
-// only). NOTE: instances socketed by the dead M2b build still carry its inert
-// ExtraEnchantment and are deliberately skipped — use a fresh weapon.
+// The proven M2 stamp recipe (all engine flows, per the standing rule):
+//   ExtraUniqueID -> ExtraTextDisplayData (forced SetName + engine
+//   display-name builder reconcile; NO BRACKETS — Lorerim's UI strips leading
+//   [...] tags from the activate rollover) -> created enchantment via
+//   BGSCreatedObjectManager::AddWeaponEnchantment -> ExtraEnchantment ->
+//   Actor::UpdateWeaponAbility when worn.
 
 #include <spdlog/sinks/basic_file_sink.h>
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <format>
 #include <string>
 #include <unordered_map>
+#include <vector>
+
+#include "GemCatalog.h"
 
 namespace {
 
-// ── Per-instance socket index (co-save) ──────────────────────────────
-struct GemRecord {
-    std::uint32_t gemType;  // 1 = Fire (M2b hard-wires the donor; catalog in M3)
-    std::uint32_t level;    // 1..5
-    float         xp;
+// ── Co-save state ─────────────────────────────────────────────────────
+struct SocketRecord {
+    std::string  gid;    // stable catalog identity
+    std::uint8_t level;  // 1..5
+    float        xp;
 };
-std::unordered_map<std::uint16_t, GemRecord> g_gems;  // uid -> record
-std::uint16_t g_nextUID = 0x9000;  // persisted; high range, clear of engine-assigned ids
+// key = (baseFormID << 16) | uniqueID  — see save-safety rule 3.
+using InstKey = std::uint64_t;
+constexpr InstKey MakeKey(RE::FormID a_base, std::uint16_t a_uid) {
+    return (static_cast<InstKey>(a_base) << 16) | a_uid;
+}
+std::unordered_map<InstKey, SocketRecord> g_sockets;
+std::uint16_t g_nextUID = 0x9000;  // our range, clear of engine-assigned ids
+bool          g_starterGranted = false;
 
 constexpr std::uint32_t kSerID = 'MEO1';
 constexpr std::uint32_t kRecGems = 'GEMS';
-constexpr std::uint32_t kSerVersion = 2;  // v2: uid-keyed records + persisted counter
+constexpr std::uint32_t kSerVersion = 3;  // v3: (base,uid) key + gid string + starter flag
 
-// EnchFireDamageFFContact — the MGEF inside EnchWeaponFireDamage01 (mag 5.0,
-// contact delivery). Verified against Skyrim.esm by tools/parse_ench.py.
-constexpr RE::FormID kFireMGEF = 0x0004605A;
+// ── Catalog resolved against the live load order (kDataLoaded) ───────
+constexpr const char* kPluginName = "MEO.esp";
+constexpr RE::FormID  kPouchSpellID = 0x803;  // MEO.esp-local
+
+struct ResolvedGem {
+    const meo::GemDef*                  def = nullptr;
+    RE::EffectSetting*                  mgef = nullptr;   // null = disabled (missing master)
+    std::array<RE::TESObjectMISC*, 5>   items{};
+};
+std::vector<ResolvedGem>                          g_gems;
+std::unordered_map<RE::FormID, std::pair<int, int>> g_gemByItem;  // item -> {gemIdx, level}
+std::unordered_map<std::string_view, int>         g_gemByGid;
+RE::SpellItem*                                    g_pouchSpell = nullptr;
 
 void SetupLog() {
     auto logDir = SKSE::log::log_directory();
@@ -75,209 +93,215 @@ void SetupLog() {
     spdlog::flush_on(spdlog::level::info);
 }
 
-// ── M2e: diagnostic — dump the full extra-data anatomy of an instance ─
-// M2d closed inventory/equip/container names, but the ground activate
-// prompt + pickup notification still read the base name, while vanilla
-// TABLE-renamed enchanted gear shows its custom name there (Marth: dozens
-// of times). So the table's record differs from ours in some field we
-// can't see from CommonLib alone. This dump prints every extra type and
-// all name-relevant fields for any equipped weapon — equipping a
-// table-renamed weapon logs the engine's gold-standard record for a
-// field-by-field diff against ours.
-void DumpXList(const char* a_tag, RE::FormID a_id, RE::ExtraDataList* a_xList) {
-    if (!a_xList) {
+void ResolveCatalog() {
+    auto* dh = RE::TESDataHandler::GetSingleton();
+    if (!dh) {
+        spdlog::error("TESDataHandler missing — catalog not resolved");
         return;
     }
-    std::string types;
-    for (const auto& x : *a_xList) {
-        types += std::format("{:02X} ", static_cast<int>(x.GetType()));
+    g_pouchSpell = dh->LookupForm<RE::SpellItem>(kPouchSpellID, kPluginName);
+    if (!g_pouchSpell) {
+        spdlog::error("Gem Pouch power not found in {} — is the ESP enabled?", kPluginName);
     }
-    spdlog::info("[dump:{}] {:08X} types: {}", a_tag, a_id, types);
-    if (auto* xText = a_xList->GetByType<RE::ExtraTextDisplayData>()) {
-        spdlog::info("[dump:{}]   xText name='{}' msg={} quest={} ownerInstance={} temper={:.3f} nameLen={}",
-                     a_tag, xText->displayName.c_str(),
-                     static_cast<const void*>(xText->displayNameText),
-                     static_cast<const void*>(xText->ownerQuest),
-                     xText->ownerInstance.underlying(), xText->temperFactor,
-                     xText->customNameLength);
+    int ok = 0;
+    for (const auto& def : meo::kWeaponGems) {
+        ResolvedGem rg;
+        rg.def = &def;
+        rg.mgef = dh->LookupForm<RE::EffectSetting>(def.mgefID, def.plugin);
+        if (!rg.mgef) {
+            spdlog::warn("gem '{}' disabled: MGEF {:06X} not found in {}", def.gid, def.mgefID, def.plugin);
+        }
+        const int levels = def.singleLevel ? 1 : 5;
+        for (int lv = 0; lv < levels; ++lv) {
+            rg.items[lv] = dh->LookupForm<RE::TESObjectMISC>(def.gemItem[lv], kPluginName);
+            if (rg.items[lv] && rg.mgef) {
+                g_gemByItem[rg.items[lv]->GetFormID()] = { static_cast<int>(g_gems.size()), lv + 1 };
+            }
+        }
+        g_gemByGid[def.gid] = static_cast<int>(g_gems.size());
+        if (rg.mgef) {
+            ++ok;
+        }
+        g_gems.push_back(rg);
     }
-    if (auto* xHealth = a_xList->GetByType<RE::ExtraHealth>()) {
-        spdlog::info("[dump:{}]   xHealth={:.3f}", a_tag, xHealth->health);
+    spdlog::info("catalog resolved: {}/{} weapon gems live, {} socketable gem items, pouch={}",
+                 ok, std::size(meo::kWeaponGems), g_gemByItem.size(),
+                 g_pouchSpell ? "ok" : "MISSING");
+}
+
+// ── The stamp: paint one socket onto one instance (engine flows only) ─
+// Returns the uid used, or 0 on failure. Caller handles UpdateWeaponAbility
+// (worn items) and gem-item consumption.
+std::uint16_t StampInstance(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList,
+                            int a_gemIdx, int a_level) {
+    const auto& rg = g_gems[a_gemIdx];
+    if (!rg.mgef || !a_base || !a_xList) {
+        return 0;
     }
-    if (auto* xEnch = a_xList->GetByType<RE::ExtraEnchantment>()) {
-        spdlog::info("[dump:{}]   xEnch={:08X} '{}' charge={} removeOnUnequip={}",
-                     a_tag,
-                     xEnch->enchantment ? xEnch->enchantment->GetFormID() : 0,
-                     xEnch->enchantment ? xEnch->enchantment->GetName() : "null",
-                     xEnch->charge, xEnch->removeOnUnequip);
-    }
-    if (auto* xCharge = a_xList->GetByType<RE::ExtraCharge>()) {
-        spdlog::info("[dump:{}]   xCharge={:.1f}", a_tag, xCharge->charge);
-    }
+    const int lvIdx = std::clamp(a_level, 1, 5) - 1;
+
+    std::uint16_t uid = 0;
     if (auto* xid = a_xList->GetByType<RE::ExtraUniqueID>()) {
-        spdlog::info("[dump:{}]   xUniqueID base={:08X} uid={}", a_tag, xid->baseID, xid->uniqueID);
+        uid = xid->uniqueID;  // engine-assigned is fine: key includes baseID
+    } else {
+        uid = g_nextUID++;
+        a_xList->Add(new RE::ExtraUniqueID(a_base->GetFormID(), uid));
     }
+
+    // Forced name + engine reconcile (M2d/M2h). No brackets (M2i).
+    const char*       baseName = a_base->GetName();
+    const std::string newName = std::format("{} {} {}", rg.def->name, meo::kRoman[lvIdx],
+                                            (baseName && *baseName) ? baseName : "Item");
+    auto* xText = a_xList->GetByType<RE::ExtraTextDisplayData>();
+    if (xText) {
+        xText->displayNameText = nullptr;
+        xText->ownerQuest = nullptr;
+        xText->SetName(newName.c_str());
+    } else {
+        xText = new RE::ExtraTextDisplayData(newName.c_str());
+        a_xList->Add(xText);
+    }
+    float health = 1.0f;
+    if (auto* xHealth = a_xList->GetByType<RE::ExtraHealth>()) {
+        health = xHealth->health;
+    }
+    xText->GetDisplayName(a_base, health);  // engine builder reconciles the record
+
+    // Created enchantment at the catalog magnitude (M2c recipe).
+    RE::BSTArray<RE::Effect> effects;
+    effects.resize(1);
+    auto& eff = effects[0];
+    eff.effectItem.magnitude = rg.def->magnitude[lvIdx];
+    eff.effectItem.area = 0;
+    eff.effectItem.duration = static_cast<std::uint32_t>(rg.def->duration);
+    eff.baseEffect = rg.mgef;
+    eff.cost = 0.0f;
+    auto* ench = RE::BGSCreatedObjectManager::GetSingleton()->AddWeaponEnchantment(effects);
+    if (!ench) {
+        spdlog::error("AddWeaponEnchantment returned null for '{}'", rg.def->gid);
+        return 0;
+    }
+    // Replace any previous instance enchantment (level-up path re-stamps).
+    if (auto* xEnch = a_xList->GetByType<RE::ExtraEnchantment>()) {
+        xEnch->enchantment = ench;
+        xEnch->charge = 500;
+        xEnch->removeOnUnequip = false;
+    } else {
+        a_xList->Add(new RE::ExtraEnchantment(ench, 500, false));
+    }
+
+    g_sockets[MakeKey(a_base->GetFormID(), uid)] =
+        SocketRecord{ rg.def->gid, static_cast<std::uint8_t>(lvIdx + 1), 0.0f };
+    spdlog::info("STAMP {:08X}/{}: '{}' gem={} L{} mag={} ench={:08X}; index {} record(s)",
+                 a_base->GetFormID(), uid, newName, rg.def->gid, lvIdx + 1,
+                 rg.def->magnitude[lvIdx], ench->GetFormID(), g_sockets.size());
+    return uid;
 }
 
-void DumpWornXList(const char* a_tag, RE::FormID a_baseID) {
+// ── Pouch cast -> socket the first inventory gem into the drawn weapon ─
+void Notify(const std::string& a_msg) {
+    RE::DebugNotification(a_msg.c_str());
+}
+
+void SocketFromPouch() {
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* changes = player ? player->GetInventoryChanges() : nullptr;
     if (!changes || !changes->entryList) {
         return;
     }
+
+    // Worn weapon instance (right hand preferred).
+    RE::InventoryEntryData* wornEntry = nullptr;
+    RE::ExtraDataList*      wornList = nullptr;
+    bool                    leftHand = false;
     for (auto* entry : *changes->entryList) {
-        if (!entry || !entry->object || entry->object->GetFormID() != a_baseID || !entry->extraLists) {
+        if (!entry || !entry->object || !entry->object->Is(RE::FormType::Weapon) || !entry->extraLists) {
             continue;
         }
         for (auto* xList : *entry->extraLists) {
             if (!xList) {
                 continue;
             }
-            const bool worn = xList->HasType(RE::ExtraDataType::kWorn) ||
-                              xList->HasType(RE::ExtraDataType::kWornLeft);
-            spdlog::info("[dump:{}] inventory list worn={}", a_tag, worn);
-            DumpXList(a_tag, a_baseID, xList);
+            const bool right = xList->HasType(RE::ExtraDataType::kWorn);
+            const bool left = xList->HasType(RE::ExtraDataType::kWornLeft);
+            if ((right || left) && (!wornEntry || (right && leftHand))) {
+                wornEntry = entry;
+                wornList = xList;
+                leftHand = !right;
+            }
         }
+    }
+    if (!wornEntry) {
+        Notify("Draw a weapon to socket a gem.");
         return;
     }
-}
-
-// ── M2b: stamp the full socket bundle onto the worn instance ─────────
-void SocketWornInstance(RE::FormID a_baseID) {
-    auto* player = RE::PlayerCharacter::GetSingleton();
-    auto* changes = player ? player->GetInventoryChanges() : nullptr;
-    if (!changes || !changes->entryList) {
+    if (wornList->HasType(RE::ExtraDataType::kEnchantment)) {
+        Notify("That weapon already holds a gem.");
         return;
     }
-    auto* mgef = RE::TESForm::LookupByID<RE::EffectSetting>(kFireMGEF);
-    if (!mgef) {
-        spdlog::error("EnchFireDamageFFContact ({:08X}) not found — no socket applied", kFireMGEF);
+    if (auto* weap = wornEntry->object->As<RE::TESObjectWEAP>(); weap && weap->formEnchanting) {
+        Notify("Enchanted weapons cannot hold gems.");
         return;
     }
 
-    for (auto* entry : *changes->entryList) {
-        if (!entry || !entry->object || entry->object->GetFormID() != a_baseID || !entry->extraLists) {
+    // First gem in inventory, deterministic order (catalog index, then level).
+    RE::TESObjectMISC* gemItem = nullptr;
+    int gemIdx = -1, gemLevel = 0;
+    auto inv = player->GetInventory([](RE::TESBoundObject& obj) { return obj.Is(RE::FormType::Misc); });
+    for (const auto& [obj, data] : inv) {
+        if (data.first <= 0) {
             continue;
         }
-        for (auto* xList : *entry->extraLists) {
-            if (!xList) {
-                continue;
-            }
-            const bool worn = xList->HasType(RE::ExtraDataType::kWorn) ||
-                              xList->HasType(RE::ExtraDataType::kWornLeft);
-            if (!worn) {
-                continue;
-            }
-            // Skip items that already carry a base or instance enchantment:
-            // don't stomp vanilla enchanted gear in this test build.
-            if (xList->HasType(RE::ExtraDataType::kEnchantment)) {
-                spdlog::info("worn {:08X} already has an instance enchantment — leaving it", a_baseID);
-                return;
-            }
-            if (auto* weap = entry->object->As<RE::TESObjectWEAP>(); weap && weap->formEnchanting) {
-                spdlog::info("worn {:08X} has a BASE enchantment — leaving it", a_baseID);
-                return;
-            }
-
-            std::uint16_t uid = 0;
-            if (auto* xid = xList->GetByType<RE::ExtraUniqueID>()) {
-                uid = xid->uniqueID;  // already ours from a previous session/equip
-            } else {
-                uid = g_nextUID++;
-                xList->Add(new RE::ExtraUniqueID(a_baseID, uid));
-            }
-
-            // M2d: FORCE the display name. The engine lazily creates a blank
-            // ExtraTextDisplayData for any TEMPERED item (ExtraDataList::
-            // GetDisplayName, health != 1.0) and generates "Fine <name>" from
-            // it — so the old only-add-if-absent logic silently skipped every
-            // tempered weapon (the M2b/M2c "no rename"). Mirror SKSE's
-            // SetDisplayName(force=true): reuse the existing record, clear any
-            // message/quest owner, then SetName (which marks it kCustomName;
-            // customNameLength keeps temper suffixes appendable).
-            // M2i: NO BRACKETS in display names. Lorerim's UI chain treats a
-            // leading "[...]" as a tag and strips it from the activate
-            // rollover ("[pookie] X" -> "X", proven with a table-renamed
-            // item), so "[MEO] Glass Dagger" rendered as "Glass Dagger" —
-            // the rename worked everywhere all along.
-            const char*       baseName = entry->object->GetName();
-            const std::string newName =
-                std::string("MEO ") + (baseName && *baseName ? baseName : "Item");
-            auto* xText = xList->GetByType<RE::ExtraTextDisplayData>();
-            if (xText) {
-                spdlog::info("existing name data on {:08X}: '{}' ownerInstance={} temper={:.3f} — forcing MEO name",
-                             a_baseID, xText->displayName.c_str(),
-                             xText->ownerInstance.underlying(), xText->temperFactor);
-                xText->displayNameText = nullptr;
-                xText->ownerQuest = nullptr;
-                xText->SetName(newName.c_str());
-            } else {
-                xText = new RE::ExtraTextDisplayData(newName.c_str());
-                xList->Add(xText);
-            }
-            // M2h — STANDING RULE (Marth): follow the engine's own flow, do
-            // not hand-write engine state. M2f's manual temperFactor sync
-            // fixed the pickup notification but left a record shape the
-            // engine itself never produces (temper>1.0, suffix-less name),
-            // and the activate rollover still refused it. The enchanting
-            // table runs names through the engine's display-name builder;
-            // call that builder (real engine fn, RELOCATION_ID 12626/12768)
-            // and let IT reconcile suffix/customNameLength/temperFactor.
-            float health = 1.0f;
-            if (auto* xHealth = xList->GetByType<RE::ExtraHealth>()) {
-                health = xHealth->health;
-            }
-            const char* reconciled = xText->GetDisplayName(entry->object, health);
-            spdlog::info("engine display-name builder reconciled: '{}' (health {:.3f})",
-                         reconciled ? reconciled : "null", health);
-
-            // P0's proven recipe, step 1: a CREATED weapon enchantment from the
-            // MGEF (what WornObject.CreateEnchantment does via
-            // PersistentFormManager::CreateOffensiveEnchantment).
-            RE::BSTArray<RE::Effect> effects;
-            effects.resize(1);
-            auto& eff = effects[0];
-            eff.effectItem.magnitude = 10.0f;
-            eff.effectItem.area = 0;
-            eff.effectItem.duration = 0;
-            eff.baseEffect = mgef;
-            eff.cost = 0.0f;
-            auto* ench = RE::BGSCreatedObjectManager::GetSingleton()->AddWeaponEnchantment(effects);
-            if (!ench) {
-                spdlog::error("AddWeaponEnchantment returned null — no socket applied");
-                return;
-            }
-            xList->Add(new RE::ExtraEnchantment(ench, 500, false));
-
-            g_gems[uid] = GemRecord{ 1u, 1u, 0.0f };  // Fire gem, level 1
-
-            // P0's proven recipe, step 2: activate the enchant's magic caster on
-            // the already-equipped actor (SKSE calls this after every
-            // Set/CreateEnchantment; skipping it = description with no effect).
-            const bool leftHand = xList->HasType(RE::ExtraDataType::kWornLeft);
-            player->UpdateWeaponAbility(entry->object, xList, leftHand);
-
-            spdlog::info("SOCKETED worn {:08X}: uid={} created ench {:08X} (MGEF {:08X} mag=10) charge=500, ability updated (left={}); index now {} record(s)",
-                         a_baseID, uid, ench->GetFormID(), kFireMGEF, leftHand, g_gems.size());
-            return;
+        auto it = g_gemByItem.find(obj->GetFormID());
+        if (it == g_gemByItem.end()) {
+            continue;
+        }
+        const auto [idx, lv] = it->second;
+        if (!gemItem || idx < gemIdx || (idx == gemIdx && lv < gemLevel)) {
+            gemItem = obj->As<RE::TESObjectMISC>();
+            gemIdx = idx;
+            gemLevel = lv;
         }
     }
-    spdlog::warn("SocketWornInstance: no worn instance of {:08X} found", a_baseID);
+    if (!gemItem) {
+        Notify("You have no gems to socket.");
+        return;
+    }
+
+    const auto uid = StampInstance(wornEntry->object, wornList, gemIdx, gemLevel);
+    if (!uid) {
+        return;
+    }
+    player->UpdateWeaponAbility(wornEntry->object, wornList, leftHand);
+    player->RemoveItem(gemItem, 1, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
+    const auto& rg = g_gems[gemIdx];
+    Notify(std::format("{} {} socketed into {}.", rg.def->name, meo::kRoman[gemLevel - 1],
+                       wornEntry->object->GetName()));
 }
 
-// ── M2g: crosshair sink — dump the GROUND reference on hover ─────────
-// M2f closed the pickup notification (temper sync) but the activate
-// rollover still reads the base name. The inventory record now mirrors the
-// table's exactly, so the remaining delta must be on the dropped REFERENCE
-// itself. Hovering any weapon ref logs GetDisplayFullName (the path the
-// console uses, known-good) plus the ref's own extraList anatomy.
+class SpellCastSink : public RE::BSTEventSink<RE::TESSpellCastEvent> {
+public:
+    static SpellCastSink* GetSingleton() {
+        static SpellCastSink singleton;
+        return &singleton;
+    }
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESSpellCastEvent* a_event,
+                                          RE::BSTEventSource<RE::TESSpellCastEvent>*) override {
+        if (a_event && g_pouchSpell && a_event->spell == g_pouchSpell->GetFormID() &&
+            a_event->object && a_event->object->IsPlayerRef()) {
+            SKSE::GetTaskInterface()->AddTask([]() { SocketFromPouch(); });
+        }
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+// ── Crosshair sink (kept from M2g: read-only ground-ref verification) ─
 class CrosshairSink : public RE::BSTEventSink<SKSE::CrosshairRefEvent> {
 public:
     static CrosshairSink* GetSingleton() {
         static CrosshairSink singleton;
         return &singleton;
     }
-
     RE::BSEventNotifyControl ProcessEvent(const SKSE::CrosshairRefEvent* a_event,
                                           RE::BSTEventSource<SKSE::CrosshairRefEvent>*) override {
         if (!a_event || !a_event->crosshairRef) {
@@ -285,109 +309,144 @@ public:
         }
         auto& ref = a_event->crosshairRef;
         auto* base = ref->GetBaseObject();
-        if (!base || !base->Is(RE::FormType::Weapon)) {
+        // Only log instances that carry our data — quiet during normal play.
+        if (!base || !base->Is(RE::FormType::Weapon) ||
+            !ref->extraList.HasType(RE::ExtraDataType::kUniqueID)) {
             return RE::BSEventNotifyControl::kContinue;
         }
         const char* dfn = ref->GetDisplayFullName();
-        spdlog::info("[xhair] ref {:08X} base {:08X} baseName='{}' GetDisplayFullName='{}'",
-                     ref->GetFormID(), base->GetFormID(), base->GetName(), dfn ? dfn : "null");
-        DumpXList("xhair", ref->GetFormID(), &ref->extraList);
+        spdlog::info("[xhair] ref {:08X} base {:08X} name='{}'",
+                     ref->GetFormID(), base->GetFormID(), dfn ? dfn : "null");
         return RE::BSEventNotifyControl::kContinue;
     }
 };
 
-// ── TESEquipEvent sink (test trigger) ────────────────────────────────
-class EquipSink : public RE::BSTEventSink<RE::TESEquipEvent> {
-public:
-    static EquipSink* GetSingleton() {
-        static EquipSink singleton;
-        return &singleton;
+// ── Player setup: grant the pouch power + one-time starter gems ───────
+void EnsurePlayerSetup() {
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    if (!player) {
+        return;
     }
-
-    RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent* a_event,
-                                          RE::BSTEventSource<RE::TESEquipEvent>*) override {
-        if (!a_event || !a_event->equipped) {
-            return RE::BSEventNotifyControl::kContinue;
-        }
-        auto* actor = a_event->actor.get();
-        if (!actor || !actor->IsPlayerRef()) {
-            return RE::BSEventNotifyControl::kContinue;
-        }
-        auto* base = RE::TESForm::LookupByID(a_event->baseObject);
-        if (!base || !base->Is(RE::FormType::Weapon)) {
-            return RE::BSEventNotifyControl::kContinue;
-        }
-        spdlog::info("equip weapon {:08X} '{}' uniqueID={}",
-                     a_event->baseObject, base->GetName(), a_event->uniqueID);
-        const RE::FormID baseID = a_event->baseObject;
-        SKSE::GetTaskInterface()->AddTask([baseID]() {
-            DumpWornXList("pre", baseID);
-            SocketWornInstance(baseID);
-            DumpWornXList("post", baseID);
-        });
-        return RE::BSEventNotifyControl::kContinue;
+    if (g_pouchSpell && !player->HasSpell(g_pouchSpell)) {
+        player->AddSpell(g_pouchSpell);
+        spdlog::info("granted Gem Pouch power");
+        Notify("You have learned to socket gems (Gem Pouch power).");
     }
-};
+    if (!g_starterGranted) {
+        int given = 0;
+        for (const char* gid : { "firedamage", "frost", "shockdamage" }) {
+            auto it = g_gemByGid.find(gid);
+            if (it == g_gemByGid.end()) {
+                continue;
+            }
+            const auto& rg = g_gems[it->second];
+            if (rg.mgef && rg.items[0]) {
+                player->AddObjectToContainer(rg.items[0], nullptr, 1, nullptr);
+                ++given;
+            }
+        }
+        g_starterGranted = true;  // persisted in the co-save on next save
+        if (given > 0) {
+            spdlog::info("starter kit: {} level-I gems granted", given);
+            Notify("Starter gems added to your inventory.");
+        }
+    }
+}
 
-// ── SKSE co-save callbacks ───────────────────────────────────────────
+// ── SKSE co-save (schema v3 — see save-safety rules in the header) ────
 void SaveCallback(SKSE::SerializationInterface* a_intfc) {
     if (!a_intfc->OpenRecord(kRecGems, kSerVersion)) {
         spdlog::error("SaveCallback: OpenRecord('GEMS') failed");
         return;
     }
     a_intfc->WriteRecordData(g_nextUID);
-    const std::uint32_t count = static_cast<std::uint32_t>(g_gems.size());
+    const std::uint8_t starter = g_starterGranted ? 1 : 0;
+    a_intfc->WriteRecordData(starter);
+    const std::uint32_t count = static_cast<std::uint32_t>(g_sockets.size());
     a_intfc->WriteRecordData(count);
-    for (const auto& [uid, rec] : g_gems) {
+    for (const auto& [key, rec] : g_sockets) {
+        const std::uint32_t baseID = static_cast<std::uint32_t>(key >> 16);
+        const std::uint16_t uid = static_cast<std::uint16_t>(key & 0xFFFF);
+        a_intfc->WriteRecordData(baseID);
         a_intfc->WriteRecordData(uid);
-        a_intfc->WriteRecordData(rec);
+        a_intfc->WriteRecordData(rec.level);
+        a_intfc->WriteRecordData(rec.xp);
+        const std::uint16_t len = static_cast<std::uint16_t>(rec.gid.size());
+        a_intfc->WriteRecordData(len);
+        a_intfc->WriteRecordData(rec.gid.data(), len);
     }
-    spdlog::info("[save] gem index: {} record(s), nextUID=0x{:X}", g_gems.size(), g_nextUID);
+    spdlog::info("[save] {} socket record(s), nextUID=0x{:X}, starter={}",
+                 g_sockets.size(), g_nextUID, g_starterGranted);
 }
 
 void LoadCallback(SKSE::SerializationInterface* a_intfc) {
-    g_gems.clear();
+    g_sockets.clear();
     g_nextUID = 0x9000;
+    g_starterGranted = false;
     std::uint32_t type = 0, version = 0, length = 0;
     while (a_intfc->GetNextRecordInfo(type, version, length)) {
         if (type != kRecGems) {
             continue;
         }
-        if (version != kSerVersion) {
-            spdlog::warn("[load] 'GEMS' version {} != {} — discarding (pre-M2b test data)", version, kSerVersion);
+        if (version < 3) {
+            spdlog::warn("[load] 'GEMS' v{} is pre-playable test data — discarded", version);
+            continue;
+        }
+        if (version > kSerVersion) {
+            spdlog::error("[load] 'GEMS' v{} is from a NEWER MEO — records preserved as unread, "
+                          "sockets inert this session (downgrade unsupported)", version);
             continue;
         }
         a_intfc->ReadRecordData(g_nextUID);
+        std::uint8_t starter = 0;
+        a_intfc->ReadRecordData(starter);
+        g_starterGranted = starter != 0;
         std::uint32_t count = 0;
         a_intfc->ReadRecordData(count);
         for (std::uint32_t i = 0; i < count; ++i) {
+            std::uint32_t baseID = 0;
             std::uint16_t uid = 0;
-            GemRecord rec{};
+            SocketRecord  rec{};
+            std::uint16_t len = 0;
+            a_intfc->ReadRecordData(baseID);
             a_intfc->ReadRecordData(uid);
-            a_intfc->ReadRecordData(rec);
-            g_gems[uid] = rec;
+            a_intfc->ReadRecordData(rec.level);
+            a_intfc->ReadRecordData(rec.xp);
+            a_intfc->ReadRecordData(len);
+            rec.gid.resize(len);
+            a_intfc->ReadRecordData(rec.gid.data(), len);
+            g_sockets[MakeKey(baseID, uid)] = std::move(rec);
         }
     }
-    spdlog::info("[load] gem index: {} record(s), nextUID=0x{:X}", g_gems.size(), g_nextUID);
-    for (const auto& [uid, rec] : g_gems) {
-        spdlog::info("    uid={} -> gemType={} level={} xp={:.1f}", uid, rec.gemType, rec.level, rec.xp);
-    }
+    spdlog::info("[load] {} socket record(s), nextUID=0x{:X}, starter={}",
+                 g_sockets.size(), g_nextUID, g_starterGranted);
 }
 
 void RevertCallback(SKSE::SerializationInterface*) {
-    g_gems.clear();
+    g_sockets.clear();
     g_nextUID = 0x9000;
-    spdlog::info("[revert] gem index cleared");
+    g_starterGranted = false;
+    spdlog::info("[revert] socket index cleared");
 }
 
 void OnMessage(SKSE::MessagingInterface::Message* message) {
-    if (message->type == SKSE::MessagingInterface::kDataLoaded) {
-        RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESEquipEvent>(EquipSink::GetSingleton());
+    switch (message->type) {
+    case SKSE::MessagingInterface::kDataLoaded:
+        ResolveCatalog();
+        RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESSpellCastEvent>(SpellCastSink::GetSingleton());
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.6.6 (M2i bracket-free name) loaded — equip, drop, hover");
+            console->Print("MEO native v0.7.0 (M3a socket core) loaded — cast Gem Pouch with a weapon drawn");
         }
-        spdlog::info("kDataLoaded: MEO M2i live; TESEquipEvent + CrosshairRef sinks registered (no code hooks)");
+        spdlog::info("kDataLoaded: MEO M3a live; SpellCast + CrosshairRef sinks registered (no code hooks)");
+        break;
+    case SKSE::MessagingInterface::kPostLoadGame:
+    case SKSE::MessagingInterface::kNewGame:
+        // After LoadCallback/Revert — co-save flags are current here.
+        SKSE::GetTaskInterface()->AddTask([]() { EnsurePlayerSetup(); });
+        break;
+    default:
+        break;
     }
 }
 
@@ -398,7 +457,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SetupLog();
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.6.6 (M2i bracket-free display name) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.7.0 (M3a playable socket core) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
