@@ -225,12 +225,16 @@ in a later version.
   - **Kills** — every kill by the player (or a follower, for their own gems)
     awards Gem XP to *every* socketed gem in parallel: **1 per standard
     enemy, 10 per boss**. Native `TESDeathEvent` sink (implemented v0.7.1).
-  - **Soul feeding** — at a bench, consume a filled soul gem to grant Gem XP
+  - **Soul feeding** — at an **enchanting station** (SETTLED, Marth
+    2026-07-07: feeding and destruction are station interactions, NOT pouch
+    ones — the pouch/socket menu never grows a feeding zone), consume a
+    filled soul gem to grant Gem XP
     to one gem: petty 5, lesser 12, common 25, greater 60, grand/black 200
     (MCM-tunable). With the **Soul Feeder** perk, soul gems hold **2×** (both
     when fed and when reclaimed), so a Grand ≈ 400 ≈ one full Level I→II.
-  - **Gem destruction** — destroying a gem reclaims **1/10 of its Gem XP**
-    into a soul gem (the only sink that recovers investment).
+  - **Gem destruction** — at an **enchanting station** (same 2026-07-07
+    decision), destroying a gem reclaims **1/10 of its Gem XP** into a soul
+    gem (the only sink that recovers investment).
   - **The Mentor gem** — a unique support gem that **doubles the Gem XP of
     its paired gem**, awarded mid-Dawnguard (around Chasing Echoes / Beyond
     Death). The calibration below assumes it's active for the back half of a
@@ -242,11 +246,10 @@ in a later version.
     (`DLC01SoulCairn` worldspace) — thematically between Chasing Echoes
     and Beyond Death, exactly the calibration window. Alternatives: a
     placed chest ref (cell-edit compat care), a quest-stage check, a
-    Boneyard boss drop. Soul feeding is likewise interim: drop filled soul
-    gems into the Gem Pouch menu — the player picks which souls to spend
-    (smallest-first consumption; reusable soul gems bounce back; no bench
-    requirement yet; Soul Feeder perk and gem destruction not yet
-    implemented).
+    Boneyard boss drop. Soul feeding via the Gem Pouch menu (drop filled
+    soul gems in; smallest first; reusables bounce) is INTERIM ONLY — it
+    moves to enchanting stations along with gem destruction (Marth,
+    2026-07-07); Soul Feeder perk and destruction not yet implemented.
 
 - **Level thresholds (default A-tier, MCM-tunable): cumulative
   400 / 900 / 2,800 / 7,000 Gem XP to reach II / III / IV / V.**
