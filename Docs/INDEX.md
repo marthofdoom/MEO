@@ -34,6 +34,12 @@ once.
    own native plan: co-save socket/XP index, per-item-instance identity, hit/
    kill hooks; toolchain + safety discipline reused from MRO. Rewritten for MEO
    (MRO's DR/absorb/vendor/mastery hooks do not apply here).
+8. **ENGINE_NOTES.md** (before ANY native instance/extra-data work) — every
+   engine mechanism the M2–M4 arc proved in-game: the self-describing instance
+   bundle, rename traps (force + temper sync + NO BRACKETS + 0x1C indirection),
+   the created-enchantment recipe, validated event sinks, native message boxes,
+   co-save discipline, ops traps. Synced once to
+   `../Linux-Native-Tools/instance-data-and-events.md` (this repo is canonical).
 
 ## Sibling project
 
