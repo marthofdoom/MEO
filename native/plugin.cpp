@@ -680,6 +680,7 @@ float g_xpPerKill = 1.0f;         // [Dev] fXPPerKill in SKSE/Plugins/MEO.ini
 float g_gemDropChance = 0.05f;    // [Loot] fGemDropChance — corpse gem on player kill
 float g_worldSocketChance = 0.08f;// [Loot] fWorldSocketChance — world weapon born socketed
 float g_bossXPMult = 10.0f;       // [XP] fBossXPMult — boss/dragon kill multiplier
+bool  g_xpNotify = true;          // [UI] bXPNotify — "Gem XP +N" on kills (MCM later)
 
 void ReadConfig() {
     std::ifstream ini("Data/SKSE/Plugins/MEO.ini");
@@ -704,6 +705,8 @@ void ReadConfig() {
             g_worldSocketChance = val;
         } else if (key == "fBossXPMult") {
             g_bossXPMult = val;
+        } else if (key == "bXPNotify") {
+            g_xpNotify = val != 0.0f;
         }
     }
     if (g_xpPerKill != 1.0f) {
@@ -717,19 +720,19 @@ void ReadConfig() {
 // notifications (named for followers), and mastered births. a_rec must be
 // the live g_sockets entry (StampInstance rewrites the same key — the
 // reference stays valid).
-void GrantGemXP(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList,
+bool GrantGemXP(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList,
                 bool a_left, SocketRecord& a_rec, int a_gemIdx, float a_xp,
                 std::uint16_t a_uid) {
     const auto& rg = g_gems[a_gemIdx];
     if (!rg.mgef || rg.def->xpMult <= 0.0f || a_rec.level >= 5) {
-        return;  // single-level / disabled / mastered gems never level
+        return false;  // single-level / disabled / mastered gems never level
     }
     a_rec.xp += a_xp;
     const float need = meo::kXPThresholds[a_rec.level - 1] * rg.def->xpMult;
     spdlog::info("[xp] {:08X}/{} {} L{}: {:.0f}/{:.0f}", a_base->GetFormID(), a_uid,
                  a_rec.gid, a_rec.level, a_rec.xp, need);
     if (a_rec.xp < need) {
-        return;
+        return true;
     }
     const int   newLevel = a_rec.level + 1;
     const float carriedXP = a_rec.xp;
@@ -748,6 +751,7 @@ void GrantGemXP(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataLis
                                       who && *who ? who : "Your follower", rg.def->name));
         spdlog::info("[birth] mastered '{}' birthed a level-I copy", a_rec.gid);
     }
+    return true;
 }
 
 // Award kill Gem XP to every socketed gem on a_owner's worn weapons.
@@ -768,6 +772,7 @@ void AwardKillXP(RE::Actor* a_owner, float a_ap) {
             }
         }
     }
+    int awarded = 0;
     for (auto* entry : *changes->entryList) {
         if (!entry || !entry->object || !entry->object->Is(RE::FormType::Weapon) || !entry->extraLists) {
             continue;
@@ -793,9 +798,16 @@ void AwardKillXP(RE::Actor* a_owner, float a_ap) {
             if (gemIt == g_gemByGid.end()) {
                 continue;
             }
-            GrantGemXP(a_owner, entry->object, xList, left, it->second, gemIt->second, xp,
-                       xid->uniqueID);
+            if (GrantGemXP(a_owner, entry->object, xList, left, it->second, gemIt->second, xp,
+                           xid->uniqueID)) {
+                ++awarded;
+            }
         }
+    }
+    // "Gem XP +N" HUD feedback (player only; bXPNotify, MCM toggle later).
+    if (awarded > 0 && g_xpNotify && a_owner->IsPlayerRef()) {
+        Notify(awarded == 1 ? std::format("Gem XP +{:.0f}", xp)
+                            : std::format("Gem XP +{:.0f} (x{} gems)", xp, awarded));
     }
 }
 
