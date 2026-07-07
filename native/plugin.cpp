@@ -30,7 +30,7 @@
 //                         the vanilla fire ENCH carries)
 // plus the co-save record uid -> {gemType, level, xp}.
 //
-// Test: equip a NEVER-TOUCHED unenchanted weapon -> "[MEO] <name>", hits burn,
+// Test: equip a NEVER-TOUCHED unenchanted weapon -> "MEO <name>", hits burn,
 // charge bar; drop -> crosshair AND pickup prompt agree; save/reload -> same
 // uid restored. Still zero code hooks (event sink + task queue + serialization
 // only). NOTE: instances socketed by the dead M2b build still carry its inert
@@ -195,9 +195,14 @@ void SocketWornInstance(RE::FormID a_baseID) {
             // SetDisplayName(force=true): reuse the existing record, clear any
             // message/quest owner, then SetName (which marks it kCustomName;
             // customNameLength keeps temper suffixes appendable).
+            // M2i: NO BRACKETS in display names. Lorerim's UI chain treats a
+            // leading "[...]" as a tag and strips it from the activate
+            // rollover ("[pookie] X" -> "X", proven with a table-renamed
+            // item), so "[MEO] Glass Dagger" rendered as "Glass Dagger" —
+            // the rename worked everywhere all along.
             const char*       baseName = entry->object->GetName();
             const std::string newName =
-                std::string("[MEO] ") + (baseName && *baseName ? baseName : "Item");
+                std::string("MEO ") + (baseName && *baseName ? baseName : "Item");
             auto* xText = xList->GetByType<RE::ExtraTextDisplayData>();
             if (xText) {
                 spdlog::info("existing name data on {:08X}: '{}' ownerInstance={} temper={:.3f} — forcing MEO name",
@@ -380,9 +385,9 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESEquipEvent>(EquipSink::GetSingleton());
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.6.5 (M2h engine-built name) loaded — equip, drop, hover");
+            console->Print("MEO native v0.6.6 (M2i bracket-free name) loaded — equip, drop, hover");
         }
-        spdlog::info("kDataLoaded: MEO M2h live; TESEquipEvent + CrosshairRef sinks registered (no code hooks)");
+        spdlog::info("kDataLoaded: MEO M2i live; TESEquipEvent + CrosshairRef sinks registered (no code hooks)");
     }
 }
 
@@ -393,7 +398,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SetupLog();
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.6.5 (M2h engine-reconciled display name) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.6.6 (M2i bracket-free display name) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
