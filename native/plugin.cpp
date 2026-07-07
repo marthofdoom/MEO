@@ -380,18 +380,23 @@ void UnsocketWorn(bool a_thenPicker) {
     }
 }
 
+// SAFETY (v0.10.1): a keyboard/UI cancel can reach the callback as button
+// index 0 (proven in-game: Cancel unsocketed the gem). Button 0 must
+// therefore always be the harmless no-op — destructive actions live at 1+.
 class UnsocketPromptCallback : public RE::IMessageBoxCallback {
 public:
     void Run(Message a_msg) override {
         const std::int32_t response = static_cast<std::int32_t>(a_msg) - 4;
-        if (response == 0) {
+        spdlog::info("[ui] unsocket prompt: raw={} response={}",
+                     static_cast<std::uint32_t>(a_msg), response);
+        if (response == 1) {
             SKSE::GetTaskInterface()->AddTask([]() { UnsocketWorn(false); });
-        } else if (response == 1) {
-            SKSE::GetTaskInterface()->AddTask([]() { UnsocketWorn(true); });
         } else if (response == 2) {
+            SKSE::GetTaskInterface()->AddTask([]() { UnsocketWorn(true); });
+        } else if (response == 3) {
             SKSE::GetTaskInterface()->AddTask([]() { FeedSoul(); });
         }
-        // anything else = Cancel
+        // 0 / anything else = Cancel (index 0 is the safe slot)
     }
 };
 
@@ -425,10 +430,10 @@ void ShowUnsocketPrompt(const SocketRecord& a_rec, int a_gemIdx, const char* a_w
     }
     // bodyText is a BSString (owns its copy) — verified from NG source.
     box->bodyText = std::format("{} is socketed in the {}.", gemLabel, a_weaponName).c_str();
+    box->buttonText.push_back("Cancel");  // index 0 = safe slot (see callback)
     box->buttonText.push_back("Unsocket");
     box->buttonText.push_back("Swap...");
     box->buttonText.push_back("Feed Soul");
-    box->buttonText.push_back("Cancel");
     box->callback = RE::BSTSmartPointer<RE::IMessageBoxCallback>{ new UnsocketPromptCallback() };
     box->QueueMessage();
 }
@@ -528,14 +533,19 @@ public:
 
     void Run(Message a_msg) override {
         const std::int32_t response = static_cast<std::int32_t>(a_msg) - 4;
-        if (response < 0) {
+        spdlog::info("[ui] gem picker: raw={} response={}",
+                     static_cast<std::uint32_t>(a_msg), response);
+        // Button 0 is Cancel (the safe slot — a keyboard/UI cancel can land
+        // there, see UnsocketPromptCallback); choices occupy 1..shown.
+        if (response < 1) {
             return;
         }
-        const std::size_t idx = page * kPickerPageSize + static_cast<std::size_t>(response);
-        if (static_cast<std::size_t>(response) < shown && idx < g_choices.size()) {
+        const std::size_t slot = static_cast<std::size_t>(response - 1);
+        const std::size_t idx = page * kPickerPageSize + slot;
+        if (slot < shown && idx < g_choices.size()) {
             const GemChoice choice = g_choices[idx];
             SKSE::GetTaskInterface()->AddTask([choice]() { SocketChoice(choice); });
-        } else if (more && static_cast<std::size_t>(response) == shown) {
+        } else if (more && slot == shown) {
             const std::size_t next = page + 1;
             SKSE::GetTaskInterface()->AddTask([next]() { ShowGemPicker(next); });
         }
@@ -554,6 +564,7 @@ void ShowGemPicker(std::size_t a_page) {
         return;
     }
     box->bodyText = "Socket which gem?";
+    box->buttonText.push_back("Cancel");  // index 0 = safe slot (see callback)
 
     const std::size_t first = a_page * kPickerPageSize;
     const std::size_t last = std::min(first + kPickerPageSize, g_choices.size());
@@ -577,7 +588,6 @@ void ShowGemPicker(std::size_t a_page) {
     if (more) {
         box->buttonText.push_back("More...");
     }
-    box->buttonText.push_back("Cancel");
     box->callback = RE::BSTSmartPointer<RE::IMessageBoxCallback>{
         new GemPickerCallback(a_page, last - first, more)
     };
@@ -1197,7 +1207,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESCellAttachDetachEvent>(CellAttachSink::GetSingleton());
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.10.0 (M3d) loaded — bosses, followers, souls, the Mentor");
+            console->Print("MEO native v0.10.1 (M3e cancel-safe) loaded");
         }
         spdlog::info("kDataLoaded: MEO M3d live; SpellCast + Death + CellAttach + CrosshairRef sinks registered (no code hooks)");
         break;
@@ -1218,7 +1228,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SetupLog();
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.10.0 (M3d: boss XP, follower gems, soul feeding, Mentor Gem) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.10.1 (M3e: cancel-safe prompts) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
