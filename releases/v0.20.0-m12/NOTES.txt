@@ -1,0 +1,2 @@
+Fixes: enchant charge/cost (enchants now fire at any magnitude) + armor slot detection
+built from native run 28967007663
