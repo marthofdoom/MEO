@@ -26,15 +26,18 @@ VER="${1:?usage: tools/release_native.sh <version> [description] [--run <id>] [-
 shift
 DESC=""
 RUN_ID=""
-WITH_ESP=0
-WITH_JSON=0
+# Every release is a COMPLETE, standalone mod (Marth's rule 2026-07-08: MO2
+# install REPLACES a mod's content, so a partial zip = broken download). ESP,
+# MCM config + settings, the compiled MCM script, and the runtime JSON are
+# ALWAYS packaged alongside the DLL. --esp/--json accepted for back-compat, ignored.
+WITH_ESP=1
+WITH_JSON=1
 # First non-flag arg (if any) is the description.
 if [[ $# -gt 0 && "$1" != --* ]]; then DESC="$1"; shift; fi
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --run)  RUN_ID="${2:?--run needs an id}"; shift 2 ;;
-        --esp)  WITH_ESP=1; shift ;;
-        --json) WITH_JSON=1; shift ;;
+        --esp|--json) shift ;;  # always-on now; accepted for back-compat
         *) echo "unknown arg: $1" >&2; exit 1 ;;
     esac
 done
@@ -63,25 +66,23 @@ gh run download "$RUN_ID" -n MEO-dll -D "$STAGE/SKSE/Plugins"
 [[ -f "$STAGE/SKSE/Plugins/MEO.dll" ]] || { echo "ERROR: artifact had no MEO.dll" >&2; exit 1; }
 echo "DLL: $(stat -c '%s bytes' "$STAGE/SKSE/Plugins/MEO.dll")"
 
-# Optional data catalog the DLL reads (regenerate first so it is current).
-if [[ "$WITH_JSON" == 1 ]]; then
-    python3 MEO_GenerateESP.py out
-    mkdir -p "$STAGE/SKSE/Plugins/MEO"
-    cp out/SKSE/Plugins/MEO/meo_runtime.json "$STAGE/SKSE/Plugins/MEO/"
-fi
+# Regenerate ALL DLL-adjacent content fresh so the zip is a complete, standalone
+# mod every time (never rely on files left in a previous install).
+python3 MEO_GenerateESP.py out            # MEO.esp + MCM/ + SKSE/Plugins/MEO/meo_runtime.json
+tools/compile.sh MEO_MCM >/dev/null       # Scripts/MEO_MCM.pex (Papyrus, local Proton toolchain)
 
-# Optional ESP (only builds that ship forms). Carries the MCM config +
-# compiled MCM shim script, which are generated alongside the ESP.
-if [[ "$WITH_ESP" == 1 ]]; then
-    [[ -f out/MEO.esp ]] || python3 MEO_GenerateESP.py out
-    cp out/MEO.esp "$STAGE/"
-    if [[ -d out/MCM ]]; then
-        mkdir -p "$STAGE/MCM"; cp -r out/MCM/. "$STAGE/MCM/"
-    fi
-    if [[ -f out/Scripts/MEO_MCM.pex ]]; then
-        mkdir -p "$STAGE/Scripts"; cp out/Scripts/MEO_MCM.pex "$STAGE/Scripts/"
-    fi
-fi
+mkdir -p "$STAGE/SKSE/Plugins/MEO"
+cp out/SKSE/Plugins/MEO/meo_runtime.json "$STAGE/SKSE/Plugins/MEO/"
+cp out/MEO.esp "$STAGE/"
+mkdir -p "$STAGE/MCM";     cp -r out/MCM/. "$STAGE/MCM/"
+mkdir -p "$STAGE/Scripts"; cp out/Scripts/MEO_MCM.pex "$STAGE/Scripts/"
+
+# Completeness gate: refuse to write a release missing any required file.
+for req in "SKSE/Plugins/MEO.dll" "MEO.esp" "Scripts/MEO_MCM.pex" \
+           "MCM/Config/MEO/config.json" "MCM/Settings/MEO.ini" \
+           "SKSE/Plugins/MEO/meo_runtime.json"; do
+    [[ -f "$STAGE/$req" ]] || { echo "ERROR: release incomplete — missing $req" >&2; exit 1; }
+done
 
 mkdir -p "$DEST"
 ( cd "$STAGE" && zip -qr - . ) > "$ZIP"
