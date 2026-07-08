@@ -26,6 +26,7 @@ the database; it travels through drop/pickup/containers/saves with no script:
 | Extra | Role |
 |---|---|
 | `ExtraUniqueID` (0x9F) | instance identity — **only unique per base form**; any map must key on `(baseFormID, uniqueID)` |
+| | **TRAP (validated 2026-07-07, v0.11.0):** the engine REWRITES `uniqueID` when the item transfers between containers (per-container bookkeeping, reassigned from 1). uid-keyed identity is only stable while the item stays in ONE container. Player-inventory round trips (drop/pickup of world refs, equip/unequip) preserve it; `player -> chest -> player` does NOT — MEO's pouch-container menu (v0.11.0) orphaned banked-XP records this way and was scrapped. Never move uid-keyed instances through another container. |
 | `ExtraTextDisplayData` (0x99) | display name (see §2) |
 | `ExtraEnchantment` (0x9B) | the *created* enchantment (see §3) |
 
@@ -88,6 +89,10 @@ Register TES events on `RE::ScriptEventSourceHolder`; defer all mutation to
 `SKSE::GetTaskInterface()->AddTask` (main-thread).
 
 ## 5. Native message box with buttons (no UI framework)
+
+> Retired in MEO v0.11.0 in favor of a container menu, which was itself
+> scrapped the same day (uid rewrite trap, §1). Pattern kept: it is proven,
+> safe, and the right tool for small confirmations.
 
 Verified against Exit-9B/ForgetSpell + D7ry/valhallaCombat:
 
