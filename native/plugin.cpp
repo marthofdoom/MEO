@@ -139,6 +139,10 @@ RE::BGSKeyword*         g_reusableSoulGemKW = nullptr;
 bool                    g_mentorGranted = false;  // co-save v4
 // DESIGN §3 soul-feed Gem XP by soul size (petty..grand; black counts grand).
 constexpr float kSoulFeedXP[5] = { 5.0f, 12.0f, 25.0f, 60.0f, 200.0f };
+// Filled vanilla soul gems (Skyrim.esm), petty..grand — gem destruction
+// reclaims 1/10 of banked Gem XP into the largest of these it can afford.
+constexpr RE::FormID kFilledSoulGemIDs[5] = { 0x02E4E3, 0x02E4E5, 0x02E4F3, 0x02E4FB, 0x02E4FF };
+RE::TESSoulGem*      g_filledSoulGems[5] = {};
 
 void SetupLog() {
     auto logDir = SKSE::log::log_directory();
@@ -212,6 +216,9 @@ void ResolveCatalog() {
     g_bossRefType = dh->LookupForm<RE::BGSLocationRefType>(kBossLocRefTypeID, "Skyrim.esm");
     g_dragonKeyword = dh->LookupForm<RE::BGSKeyword>(kDragonKeywordID, "Skyrim.esm");
     g_reusableSoulGemKW = dh->LookupForm<RE::BGSKeyword>(kReusableSoulGemKW, "Skyrim.esm");
+    for (int i = 0; i < 5; ++i) {
+        g_filledSoulGems[i] = dh->LookupForm<RE::TESSoulGem>(kFilledSoulGemIDs[i], "Skyrim.esm");
+    }
     spdlog::info("catalog resolved: {}/{} gems live (weapon+armor), {} socketable gem items, pouch={}, "
                  "mentor={}, soulCairn={}, bossType={}",
                  ok, std::size(meo::kGems), g_gemByItem.size(),
@@ -454,6 +461,35 @@ void ReadConfig() {
                  g_bossXPMult, g_magnitudeMult, g_xpNotify);
 }
 
+// Menu snapshot rows + shared state (declared here so MenuSink can read
+// g_menu.station; the menu is built/drawn much further down).
+struct MenuItemRow {
+    std::string   label;
+    RE::FormID    base = 0;
+    std::uint16_t uid = 0;       // 0 = plain stack (xList materialized on socket)
+    bool          worn = false;
+    bool          socketed = false;
+    bool          isArmor = false;  // gates which gems can socket into it
+    std::string   gemLabel;      // socketed gem, e.g. "Fire II (250/900)"
+};
+struct MenuGemRow {
+    std::string   label;
+    RE::FormID    base = 0;
+    std::uint16_t uid = 0;       // instance with banked XP, else 0
+    bool          isArmor = false;
+};
+struct MenuState {
+    std::mutex               lock;
+    std::atomic<bool>        open{ false };
+    std::atomic<bool>        busy{ false };      // an action task is in flight
+    std::atomic<bool>        wantClose{ false }; // set by input, consumed by draw
+    std::atomic<bool>        station{ false };   // opened at an enchanting station (feed/destroy)
+    std::vector<MenuItemRow> items;
+    std::vector<MenuGemRow>  gems;
+    int                      selItem = 0;
+};
+MenuState g_menu;
+
 void OpenGemMenu(bool a_station = false);  // defined with the render hooks below
 void CloseGemMenu();
 
@@ -667,32 +703,6 @@ void GiveGemInstance(int a_gemIdx, int a_level, float a_xp) {
 }
 
 // ── Menu state: draw thread reads, SKSE tasks write ───────────────────
-struct MenuItemRow {
-    std::string   label;
-    RE::FormID    base = 0;
-    std::uint16_t uid = 0;       // 0 = plain stack (xList materialized on socket)
-    bool          worn = false;
-    bool          socketed = false;
-    bool          isArmor = false;  // gates which gems can socket into it
-    std::string   gemLabel;      // socketed gem, e.g. "Fire II (250/900)"
-};
-struct MenuGemRow {
-    std::string   label;
-    RE::FormID    base = 0;
-    std::uint16_t uid = 0;       // instance with banked XP, else 0
-    bool          isArmor = false;
-};
-struct MenuState {
-    std::mutex               lock;
-    std::atomic<bool>        open{ false };
-    std::atomic<bool>        busy{ false };      // an action task is in flight
-    std::atomic<bool>        wantClose{ false }; // set by input, consumed by draw
-    std::atomic<bool>        station{ false };   // opened at an enchanting station (feed/destroy)
-    std::vector<MenuItemRow> items;
-    std::vector<MenuGemRow>  gems;
-    int                      selItem = 0;
-};
-MenuState g_menu;
 
 bool IsWornXList(const RE::ExtraDataList* a_xl) {
     return a_xl->HasType(RE::ExtraDataType::kWorn) ||
@@ -889,6 +899,42 @@ void MenuUnsocket(RE::FormID a_base, std::uint16_t a_uid) {
     GiveGemInstance(gemIt->second, rec.level, rec.xp);
     const auto& rg = g_gems[gemIt->second];
     Notify(std::format("{} {} returned to your pouch.", rg.def->name, meo::kRoman[rec.level - 1]));
+}
+
+// M10 (stage 2b): destroy a socketed gem at a station, reclaiming 1/10 of its
+// banked Gem XP as the largest filled soul gem it affords (the only investment
+// sink that recovers anything). The gem itself is gone — not returned.
+void DestroyGem(RE::FormID a_base, std::uint16_t a_uid) {
+    static const char* kSoulNames[5] = { "petty", "lesser", "common", "greater", "grand" };
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    auto* form = RE::TESForm::LookupByID<RE::TESBoundObject>(a_base);
+    auto  it = g_sockets.find(MakeKey(a_base, a_uid));
+    auto* xl = form ? FindInstanceXList(player, form, a_uid) : nullptr;
+    if (!player || it == g_sockets.end() || !xl) {
+        return;
+    }
+    const SocketRecord rec = it->second;
+    const float        reclaim = rec.xp / 10.0f;
+    int                tier = -1;
+    for (int i = 0; i < 5; ++i) {
+        if (reclaim >= kSoulFeedXP[i]) {
+            tier = i;
+        }
+    }
+    g_sockets.erase(it);
+    xl->RemoveByType(RE::ExtraDataType::kEnchantment);
+    xl->RemoveByType(RE::ExtraDataType::kTextDisplayData);
+    if (IsWornXList(xl)) {
+        ApplyWornAbility(player, form, xl, xl->HasType(RE::ExtraDataType::kWornLeft));
+    }
+    if (tier >= 0 && g_filledSoulGems[tier]) {
+        player->AddObjectToContainer(g_filledSoulGems[tier], nullptr, 1, nullptr);
+        Notify(std::format("Gem destroyed — its essence yields a {} soul gem.", kSoulNames[tier]));
+    } else {
+        Notify("Gem destroyed — too little essence to reclaim a soul.");
+    }
+    spdlog::info("[destroy] {:08X}/{} '{}' L{} xp={:.0f} -> soul tier {}", a_base, a_uid, rec.gid,
+                 rec.level, rec.xp, tier);
 }
 
 void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gemBase,
@@ -1188,12 +1234,16 @@ namespace menuhook {
                 }
                 ImGui::PopStyleColor();
                 if (g_menu.station.load()) {
-                    // Enchanting-station action: feed the smallest filled soul gem.
+                    // Enchanting-station actions: feed a soul, or destroy for reclaim.
                     if (ImGui::Button("Feed Soul Gem")) {
                         QueueMenuTask([sel]() { FeedSoulToGem(sel.base, sel.uid); });
                     }
                     ImGui::SameLine();
-                    ImGui::TextDisabled("(smallest soul first)");
+                    if (ImGui::Button("Destroy Gem")) {
+                        QueueMenuTask([sel]() { DestroyGem(sel.base, sel.uid); });
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(feed: smallest soul; destroy: reclaim 1/10)");
                 }
                 ImGui::Separator();
             }
@@ -1773,7 +1823,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.18.0 (M10 soul feeding) loaded");
+            console->Print("MEO native v0.18.0 (M10 enchanting stations) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -1795,7 +1845,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.18.0 (M10: enchanting-station soul feeding) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.18.0 (M10: enchanting stations - soul feed + destroy) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
