@@ -1,0 +1,2 @@
+M6: native ImGui gem menu — item/gem panes, atomic swap, uid-stable (gems never leave inventory)
+built from native run 28914523194
