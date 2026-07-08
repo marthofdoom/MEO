@@ -107,7 +107,7 @@ bool          g_starterGranted = false;
 
 constexpr std::uint32_t kSerID = 'MEO1';
 constexpr std::uint32_t kRecGems = 'GEMS';
-constexpr std::uint32_t kSerVersion = 5;  // v5: + per-socket slot (multi-socket). v3/v4 → slot 0
+constexpr std::uint32_t kSerVersion = 6;  // v6: + armorStarterGranted. v5: per-socket slot. v3/v4 → slot 0
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -140,6 +140,7 @@ RE::BGSLocationRefType* g_bossRefType = nullptr;
 RE::BGSKeyword*         g_dragonKeyword = nullptr;
 RE::BGSKeyword*         g_reusableSoulGemKW = nullptr;
 bool                    g_mentorGranted = false;  // co-save v4
+bool                    g_armorStarterGranted = false;  // co-save v6
 // DESIGN §3 soul-feed Gem XP by soul size (petty..grand; black counts grand).
 constexpr float kSoulFeedXP[5] = { 5.0f, 12.0f, 25.0f, 60.0f, 200.0f };
 // Filled vanilla soul gems (Skyrim.esm), petty..grand — gem destruction
@@ -1874,6 +1875,71 @@ void EnsurePlayerSetup() {
             Notify("Starter gems added to your inventory.");
         }
     }
+    // Armor starter set (v6 flag — grants once, even on saves that already
+    // burned the weapon-starter flag). Enough for dual-glove testing + variety.
+    if (!g_armorStarterGranted) {
+        int given = 0;
+        for (const char* gid : { "fortifyhealth", "fortifymagicka", "fortifystamina",
+                                 "resistfire", "fortifydestruction" }) {
+            auto it = g_gemByGid.find(gid);
+            if (it == g_gemByGid.end()) {
+                continue;
+            }
+            const auto& rg = g_gems[it->second];
+            if (rg.mgef && rg.items[0]) {
+                player->AddObjectToContainer(rg.items[0], nullptr, 1, nullptr);
+                ++given;
+            }
+        }
+        if (given > 0) {
+            g_armorStarterGranted = true;
+            spdlog::info("armor starter kit: {} level-I gems granted", given);
+            Notify("Armor gems added to your inventory.");
+        }
+    }
+}
+
+// On load, worn socketed gems' abilities are runtime state that doesn't persist
+// — re-stamp + re-activate every worn socketed item so effects are live without
+// a re-equip. (The g_sockets records + item ExtraEnchantment do persist; the
+// magic caster does not.)
+void ReapplyWornSockets() {
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    auto* changes = player ? player->GetInventoryChanges() : nullptr;
+    if (!changes || !changes->entryList) {
+        return;
+    }
+    int n = 0;
+    for (auto* entry : *changes->entryList) {
+        if (!entry || !entry->object || !entry->extraLists ||
+            !(entry->object->Is(RE::FormType::Weapon) || entry->object->Is(RE::FormType::Armor))) {
+            continue;
+        }
+        for (auto* xl : *entry->extraLists) {
+            if (!xl || !IsWornXList(xl)) {
+                continue;
+            }
+            auto* xid = xl->GetByType<RE::ExtraUniqueID>();
+            if (!xid) {
+                continue;
+            }
+            bool ours = false;
+            for (int s = 0; s < kMaxSockets; ++s) {
+                if (g_sockets.contains(MakeKey(entry->object->GetFormID(), xid->uniqueID,
+                                               static_cast<std::uint8_t>(s)))) {
+                    ours = true;
+                    break;
+                }
+            }
+            if (!ours) {
+                continue;
+            }
+            RebuildInstanceEnchant(entry->object, xl);
+            ApplyWornAbility(player, entry->object, xl, xl->HasType(RE::ExtraDataType::kWornLeft));
+            ++n;
+        }
+    }
+    spdlog::info("[load] reapplied {} worn socketed item(s)", n);
 }
 
 // ── SKSE co-save (schema v3 — see save-safety rules in the header) ────
@@ -1887,6 +1953,8 @@ void SaveCallback(SKSE::SerializationInterface* a_intfc) {
     a_intfc->WriteRecordData(starter);
     const std::uint8_t mentor = g_mentorGranted ? 1 : 0;  // v4 field
     a_intfc->WriteRecordData(mentor);
+    const std::uint8_t armorStarter = g_armorStarterGranted ? 1 : 0;  // v6 field
+    a_intfc->WriteRecordData(armorStarter);
     const std::uint32_t count = static_cast<std::uint32_t>(g_sockets.size());
     a_intfc->WriteRecordData(count);
     for (const auto& [key, rec] : g_sockets) {
@@ -1911,6 +1979,7 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
     g_nextUID = 0x9000;
     g_starterGranted = false;
     g_mentorGranted = false;
+    g_armorStarterGranted = false;
     CloseGemMenu();
     std::uint32_t type = 0, version = 0, length = 0;
     while (a_intfc->GetNextRecordInfo(type, version, length)) {
@@ -1934,6 +2003,11 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
             std::uint8_t mentor = 0;
             a_intfc->ReadRecordData(mentor);
             g_mentorGranted = mentor != 0;
+        }
+        if (version >= 6) {  // v6: armorStarterGranted (older saves default false)
+            std::uint8_t armorStarter = 0;
+            a_intfc->ReadRecordData(armorStarter);
+            g_armorStarterGranted = armorStarter != 0;
         }
         std::uint32_t count = 0;
         a_intfc->ReadRecordData(count);
@@ -1965,6 +2039,7 @@ void RevertCallback(SKSE::SerializationInterface*) {
     g_nextUID = 0x9000;
     g_starterGranted = false;
     g_mentorGranted = false;
+    g_armorStarterGranted = false;
     CloseGemMenu();
     spdlog::info("[revert] socket index cleared");
 }
@@ -1980,14 +2055,18 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.21.0 (M13 multi-socket) loaded");
+            console->Print("MEO native v0.22.0 (M14 load-reapply + armor starters) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
     case SKSE::MessagingInterface::kPostLoadGame:
     case SKSE::MessagingInterface::kNewGame:
         // After LoadCallback/Revert — co-save flags are current here.
-        SKSE::GetTaskInterface()->AddTask([]() { EnsurePlayerSetup(); RefreshPerks(); });
+        SKSE::GetTaskInterface()->AddTask([]() {
+            EnsurePlayerSetup();
+            RefreshPerks();
+            ReapplyWornSockets();  // re-activate worn gem effects after load
+        });
         break;
     default:
         break;
@@ -2002,7 +2081,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.21.0 (M13: multi-socket - gloves dual by default) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.22.0 (M14: on-load reapply + armor starter set) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
