@@ -1,0 +1,2 @@
+M6a: menu base-eligibility filters (Unarmed/artifacts), backbuffer centering + movable window, Skyrim styling; global -15% LINEAR/ABSORB balance pass
+built from native run 28915975066
