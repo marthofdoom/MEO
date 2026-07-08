@@ -17,24 +17,25 @@ struct GemDef {
     float                xpMult;     // level-threshold multiplier (0 = never levels)
     bool                 singleLevel;
     std::array<std::uint32_t, 5> gemItem;  // MEO.esp-local MISC FormID per level
+    std::uint8_t         spawnWeight;  // copies in the loot pool (rarer = stronger)
 };
 
 inline constexpr GemDef kWeaponGems[] = {
-    { "absorbhealth", "Absorb Health", "Skyrim.esm", 0x0AA155, { 6.8f, 11.0f, 15.3f, 19.6f, 23.8f }, 0.0f, 1.5f, false, { 0x000900, 0x000901, 0x000902, 0x000903, 0x000904 } },
-    { "absorbmagicka", "Absorb Magicka", "Skyrim.esm", 0x0AA156, { 12.8f, 20.4f, 28.9f, 36.5f, 44.2f }, 0.0f, 1.0f, false, { 0x000905, 0x000906, 0x000907, 0x000908, 0x000909 } },
-    { "absorbstamina", "Absorb Stamina", "Skyrim.esm", 0x0AA157, { 12.8f, 20.4f, 28.9f, 36.5f, 44.2f }, 0.0f, 1.0f, false, { 0x00090A, 0x00090B, 0x00090C, 0x00090D, 0x00090E } },
-    { "banish", "Banish", "Skyrim.esm", 0x0ACBB5, { 6.0f, 10.0f, 15.0f, 22.0f, 30.0f }, 30.0f, 0.6f, false, { 0x00090F, 0x000910, 0x000911, 0x000912, 0x000913 } },
-    { "chaos", "Chaos", "Dragonborn.esm", 0x02C46B, { 5.1f, 8.5f, 11.9f, 14.4f, 17.8f }, 0.0f, 1.5f, false, { 0x000914, 0x000915, 0x000916, 0x000917, 0x000918 } },
-    { "firedamage", "Fire", "Skyrim.esm", 0x04605A, { 8.5f, 13.6f, 18.7f, 24.6f, 29.8f }, 0.0f, 1.0f, false, { 0x000919, 0x00091A, 0x00091B, 0x00091C, 0x00091D } },
-    { "frost", "Frost", "Skyrim.esm", 0x04605B, { 8.5f, 13.6f, 18.7f, 24.6f, 29.8f }, 0.0f, 1.0f, false, { 0x0009A1, 0x0009A2, 0x0009A3, 0x0009A4, 0x0009A5 } },
-    { "influenceconfdownlow", "Fear", "Skyrim.esm", 0x05B451, { 6.0f, 10.0f, 15.0f, 22.0f, 30.0f }, 30.0f, 0.6f, false, { 0x0009A6, 0x0009A7, 0x0009A8, 0x0009A9, 0x0009AA } },
-    { "magickadamage", "Magicka", "Skyrim.esm", 0x05B44F, { 12.8f, 20.4f, 28.9f, 36.5f, 44.2f }, 0.0f, 1.0f, false, { 0x0009AB, 0x0009AC, 0x0009AD, 0x0009AE, 0x0009AF } },
-    { "paralysis", "Stagger", "Skyrim.esm", 0x0ACBB6, { 0.3f, 0.4f, 0.5f, 0.6f, 0.75f }, 0.0f, 1.5f, false, { 0x0009B1, 0x0009B2, 0x0009B3, 0x0009B4, 0x0009B5 } },
-    { "shockdamage", "Shock", "Skyrim.esm", 0x04605C, { 8.5f, 13.6f, 18.7f, 24.6f, 29.8f }, 0.0f, 1.0f, false, { 0x0009D4, 0x0009D5, 0x0009D6, 0x0009D7, 0x0009D8 } },
-    { "soultrap", "Soul Trap", "Skyrim.esm", 0x05B452, { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, 5.0f, 0.0f, true, { 0x0009D9, 0x0009D9, 0x0009D9, 0x0009D9, 0x0009D9 } },
-    { "staminadamage", "Stamina", "Skyrim.esm", 0x05B450, { 8.5f, 13.6f, 18.7f, 24.6f, 29.8f }, 0.0f, 1.0f, false, { 0x0009DA, 0x0009DB, 0x0009DC, 0x0009DD, 0x0009DE } },
-    { "sundamage", "Sun", "Dawnguard.esm", 0x015719, { 8.5f, 13.6f, 18.7f, 24.6f, 29.8f }, 0.0f, 1.0f, false, { 0x0009EF, 0x0009F0, 0x0009F1, 0x0009F2, 0x0009F3 } },
-    { "turnundead", "Turn Undead", "Skyrim.esm", 0x05B46B, { 6.0f, 10.0f, 15.0f, 22.0f, 30.0f }, 30.0f, 0.6f, false, { 0x0009DF, 0x0009E0, 0x0009E1, 0x0009E2, 0x0009E3 } },
+    { "absorbhealth", "Absorb Health", "Skyrim.esm", 0x0AA155, { 6.8f, 11.0f, 15.3f, 19.6f, 23.8f }, 0.0f, 1.5f, false, { 0x000900, 0x000901, 0x000902, 0x000903, 0x000904 }, 1 },
+    { "absorbmagicka", "Absorb Magicka", "Skyrim.esm", 0x0AA156, { 12.8f, 20.4f, 28.9f, 36.5f, 44.2f }, 0.0f, 1.0f, false, { 0x000905, 0x000906, 0x000907, 0x000908, 0x000909 }, 3 },
+    { "absorbstamina", "Absorb Stamina", "Skyrim.esm", 0x0AA157, { 12.8f, 20.4f, 28.9f, 36.5f, 44.2f }, 0.0f, 1.0f, false, { 0x00090A, 0x00090B, 0x00090C, 0x00090D, 0x00090E }, 3 },
+    { "banish", "Banish", "Skyrim.esm", 0x0ACBB5, { 6.0f, 10.0f, 15.0f, 22.0f, 30.0f }, 30.0f, 0.6f, false, { 0x00090F, 0x000910, 0x000911, 0x000912, 0x000913 }, 5 },
+    { "chaos", "Chaos", "Dragonborn.esm", 0x02C46B, { 5.1f, 8.5f, 11.9f, 14.4f, 17.8f }, 0.0f, 1.5f, false, { 0x000914, 0x000915, 0x000916, 0x000917, 0x000918 }, 1 },
+    { "firedamage", "Fire", "Skyrim.esm", 0x04605A, { 8.5f, 13.6f, 18.7f, 24.6f, 29.8f }, 0.0f, 1.0f, false, { 0x000919, 0x00091A, 0x00091B, 0x00091C, 0x00091D }, 3 },
+    { "frost", "Frost", "Skyrim.esm", 0x04605B, { 8.5f, 13.6f, 18.7f, 24.6f, 29.8f }, 0.0f, 1.0f, false, { 0x0009A1, 0x0009A2, 0x0009A3, 0x0009A4, 0x0009A5 }, 3 },
+    { "influenceconfdownlow", "Fear", "Skyrim.esm", 0x05B451, { 6.0f, 10.0f, 15.0f, 22.0f, 30.0f }, 30.0f, 0.6f, false, { 0x0009A6, 0x0009A7, 0x0009A8, 0x0009A9, 0x0009AA }, 5 },
+    { "magickadamage", "Magicka", "Skyrim.esm", 0x05B44F, { 12.8f, 20.4f, 28.9f, 36.5f, 44.2f }, 0.0f, 1.0f, false, { 0x0009AB, 0x0009AC, 0x0009AD, 0x0009AE, 0x0009AF }, 3 },
+    { "paralysis", "Stagger", "Skyrim.esm", 0x0ACBB6, { 0.3f, 0.4f, 0.5f, 0.6f, 0.75f }, 0.0f, 1.5f, false, { 0x0009B1, 0x0009B2, 0x0009B3, 0x0009B4, 0x0009B5 }, 1 },
+    { "shockdamage", "Shock", "Skyrim.esm", 0x04605C, { 8.5f, 13.6f, 18.7f, 24.6f, 29.8f }, 0.0f, 1.0f, false, { 0x0009D4, 0x0009D5, 0x0009D6, 0x0009D7, 0x0009D8 }, 3 },
+    { "soultrap", "Soul Trap", "Skyrim.esm", 0x05B452, { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, 5.0f, 0.0f, true, { 0x0009D9, 0x0009D9, 0x0009D9, 0x0009D9, 0x0009D9 }, 3 },
+    { "staminadamage", "Stamina", "Skyrim.esm", 0x05B450, { 8.5f, 13.6f, 18.7f, 24.6f, 29.8f }, 0.0f, 1.0f, false, { 0x0009DA, 0x0009DB, 0x0009DC, 0x0009DD, 0x0009DE }, 3 },
+    { "sundamage", "Sun", "Dawnguard.esm", 0x015719, { 8.5f, 13.6f, 18.7f, 24.6f, 29.8f }, 0.0f, 1.0f, false, { 0x0009EF, 0x0009F0, 0x0009F1, 0x0009F2, 0x0009F3 }, 3 },
+    { "turnundead", "Turn Undead", "Skyrim.esm", 0x05B46B, { 6.0f, 10.0f, 15.0f, 22.0f, 30.0f }, 30.0f, 0.6f, false, { 0x0009DF, 0x0009E0, 0x0009E1, 0x0009E2, 0x0009E3 }, 5 },
 };
 
 // Cumulative XP to reach level II..V, scaled per gem by xpMult (DESIGN §3).

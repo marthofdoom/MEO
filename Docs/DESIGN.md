@@ -192,6 +192,25 @@ generic catalog). A curated subset with clean effects (e.g. Silent Moons)
 can graduate into extractable **unique gems** (level normally, cannot birth)
 in a later version.
 
+### Install-time load-order scanner (design DECIDED 2026-07-08, tool pending)
+The catalog ships vanilla effects; a mod load order carries dozens more
+(Lorerim scan: ~267 single-effect enchant MGEFs not in our catalog). An
+install-time tool remaps and extends against the *actual* load order. Two jobs:
+1. **Remap** each existing gem to the load order's *winning* MGEF implementation
+   (signature identity), so e.g. Requiem's own Fortify Unarmed MGEF (23 items) is
+   the one our Pugilist gem points at.
+2. **Extend** the catalog with qualifying mod enchant families → freeze-aware
+   extension ESP + runtime JSON; the DLL loads the extension catalog at
+   kDataLoaded (revisits "no runtime JSON in the DLL").
+
+Decisions (Marth): **inclusion = threshold ≥4 wearable items + a maintained
+blacklist** (drops the 1–2-item artifact tail automatically; blacklists MGEFs
+that duplicate effects we already cover, e.g. Requiem's tier-2 fortifies).
+**Packaging = standalone Mutagen CLI** (self-contained .exe, any mod manager, we
+own the UX; not a Synthesis patcher). `tools/scan_loadorder.py` is the python
+executable spec / recon prototype for this tool (no dotnet on the dev machine —
+prototype in python, build the C#/Mutagen tool via CI).
+
 ## 3. Levels, XP, birthing
 
 - Gems are MISC items, one form per type × level: `MEO_Gem<Type><1..5>`.
@@ -346,6 +365,27 @@ NOTHING magnitude-related is baked into MGEF/ENCH records.
 - Per-gem [base, max] anchors ship as DATA (the P1 sourcing task, S2), chosen by
   the FOMOD baseline; the MCM never edits them individually, it scales them.
   Sane knob count, yet any load order can land an appropriate absolute range.
+
+### Gem spawns into the world — rates & rarity curve (v0.15.0)
+
+MEO seeds gems without touching leveled lists (§7): a player/follower kill rolls
+a lootable corpse gem, and world weapon references roll a pre-socketed gem on
+cell attach. Rates are `MEO.ini` keys (code defaults in parens), portable per
+DYNAMIC_OR_DROP:
+
+- `fGemDropChance` (0.03) — chance a kill drops a corpse gem.
+- `fWorldSocketChance` (0.05) — chance a world weapon ref is born socketed
+  (deterministic per-refID hash: a given reference decides once, forever).
+- `fGemLevel2Chance` (0.02) — a spawned gem is born **level II** instead of I;
+  applies to both corpse drops and world sockets. (Vanilla-loot *conversion* per
+  §1 is still always level I — this is only MEO's own spawns.)
+
+**Which gem** is weighted by `power_tier`: each gem gets `spawnWeight` copies in
+the spawn pool (`gen_catalog_header.py` `SPAWN_WEIGHT`: S=1, A=3, B=5), so rarer
+= stronger. On the 14 lootable weapon gems that lands S-tier (Absorb Health,
+Chaos, Stagger) at ~2.4% each, A-tier elementals ~7% each, B-tier control
+effects ~12% each. Single-level gems (Soul Trap) never spawn. The weighted pool
+keeps the DLL's pick uniform — only pool construction changes.
 
 ## 4. Sockets and the Gem Pouch
 

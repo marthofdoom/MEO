@@ -182,9 +182,14 @@ void ResolveCatalog() {
         }
         g_gems.push_back(rg);
     }
+    // Weighted spawn pool: each gem is pushed spawnWeight times so the uniform
+    // pick in RollCorpseGem / MaybeStampWorldWeapon becomes a tier rarity curve
+    // (S rarest, B common — see gen_catalog_header.py SPAWN_WEIGHT).
     for (std::size_t i = 0; i < g_gems.size(); ++i) {
         if (g_gems[i].mgef && !g_gems[i].def->singleLevel) {
-            g_lootableGems.push_back(static_cast<int>(i));
+            for (int w = 0, n = std::max<int>(g_gems[i].def->spawnWeight, 1); w < n; ++w) {
+                g_lootableGems.push_back(static_cast<int>(i));
+            }
         }
     }
     // M3d forms. Skyrim.esm forms are unconditional; Dawnguard gates Mentor.
@@ -347,8 +352,9 @@ float NextThreshold(const meo::GemDef* a_def, int a_level) {
 // FX-mod redraw lag — the real effect applies/removes instantly, verified
 // M4b); full version also blocks it in combat. Known issues until then.
 float g_xpPerKill = 1.0f;         // [Dev] fXPPerKill in SKSE/Plugins/MEO.ini
-float g_gemDropChance = 0.05f;    // [Loot] fGemDropChance — corpse gem on player kill
-float g_worldSocketChance = 0.08f;// [Loot] fWorldSocketChance — world weapon born socketed
+float g_gemDropChance = 0.03f;    // [Loot] fGemDropChance — corpse gem on player kill
+float g_worldSocketChance = 0.05f;// [Loot] fWorldSocketChance — world weapon born socketed
+float g_gemLevel2Chance = 0.02f;  // [Loot] fGemLevel2Chance — spawned gem is level II not I
 float g_bossXPMult = 10.0f;       // [XP] fBossXPMult — boss/dragon kill multiplier
 bool  g_xpNotify = true;          // [UI] bXPNotify — "Gem XP +N" on kills (MCM later)
 
@@ -373,6 +379,8 @@ void ReadConfig() {
             g_gemDropChance = val;
         } else if (key == "fWorldSocketChance") {
             g_worldSocketChance = val;
+        } else if (key == "fGemLevel2Chance") {
+            g_gemLevel2Chance = val;
         } else if (key == "fBossXPMult") {
             g_bossXPMult = val;
         } else if (key == "bXPNotify") {
@@ -382,8 +390,8 @@ void ReadConfig() {
     if (g_xpPerKill != 1.0f) {
         spdlog::warn("DEV: fXPPerKill={} (MEO.ini override)", g_xpPerKill);
     }
-    spdlog::info("config: fGemDropChance={:.2f} fWorldSocketChance={:.2f}",
-                 g_gemDropChance, g_worldSocketChance);
+    spdlog::info("config: fGemDropChance={:.2f} fWorldSocketChance={:.2f} fGemLevel2Chance={:.2f}",
+                 g_gemDropChance, g_worldSocketChance, g_gemLevel2Chance);
 }
 
 // Add Gem XP to one socketed worn instance; handles the level-up re-stamp,
@@ -612,12 +620,15 @@ void BuildMenuSnapshot() {
                     if (!xl) {
                         continue;
                     }
-                    instances += std::max(xl->GetCount(), 1);
+                    const std::int32_t cnt = std::max(xl->GetCount(), 1);
                     auto* xid = xl->GetByType<RE::ExtraUniqueID>();
                     MenuItemRow row;
                     row.base = obj->GetFormID();
                     row.worn = IsWornXList(xl);
                     if (xl->HasType(RE::ExtraDataType::kEnchantment)) {
+                        // Enchanted units are distinct (can't stack with plain
+                        // ones), so they always leave the plain socketable pool.
+                        instances += cnt;
                         if (!xid) {
                             continue;  // enchanted, never stamped by us
                         }
@@ -642,6 +653,14 @@ void BuildMenuSnapshot() {
                         if (!eligible) {
                             continue;
                         }
+                        // A stack sharing one extraList (count > 1) must NOT become
+                        // a single instance row: stamping that xList would enchant
+                        // every unit for one gem. Leave the units in the plain pool
+                        // (below) — MenuSocket peels exactly one off via drop/pickup.
+                        if (cnt > 1) {
+                            continue;
+                        }
+                        instances += cnt;  // a genuine singleton instance
                         if (!xid) {
                             xid = new RE::ExtraUniqueID(obj->GetFormID(), g_nextUID++);
                             xl->Add(xid);
@@ -1227,9 +1246,12 @@ void RollCorpseGem(RE::Actor* a_victim) {
     }
     const auto& rg = g_gems[g_lootableGems[
         std::uniform_int_distribution<std::size_t>(0, g_lootableGems.size() - 1)(g_rng)]];
-    if (rg.items[0]) {
-        a_victim->AddObjectToContainer(rg.items[0], nullptr, 1, nullptr);
-        spdlog::info("[loot] corpse gem '{}' I on {:08X}", rg.def->gid, a_victim->GetFormID());
+    const int lvl = (std::uniform_real_distribution<float>(0.0f, 1.0f)(g_rng) < g_gemLevel2Chance)
+                        ? 2 : 1;
+    if (auto* item = rg.items[lvl - 1]) {
+        a_victim->AddObjectToContainer(item, nullptr, 1, nullptr);
+        spdlog::info("[loot] corpse gem '{}' {} on {:08X}", rg.def->gid, meo::kRoman[lvl - 1],
+                     a_victim->GetFormID());
     }
 }
 
@@ -1259,7 +1281,9 @@ void MaybeStampWorldWeapon(RE::TESObjectREFR* a_ref) {
         return;
     }
     const int gemIdx = g_lootableGems[HashU32(h) % g_lootableGems.size()];
-    const int level = (HashU32(h ^ 0x5A5A5A5Au) % 100) < 85 ? 1 : 2;  // mostly I, some II
+    // Deterministic level roll: fGemLevel2Chance of these are born level II.
+    const std::uint32_t l2cut = static_cast<std::uint32_t>(g_gemLevel2Chance * 10000.0f);
+    const int level = (HashU32(h ^ 0x5A5A5A5Au) % 10000) < l2cut ? 2 : 1;
     if (StampInstance(base, &xList, gemIdx, level)) {
         spdlog::info("[world] ref {:08X} born socketed: {} {} {}", a_ref->GetFormID(),
                      g_gems[gemIdx].def->name, meo::kRoman[level - 1], base->GetName());
@@ -1533,7 +1557,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESCellAttachDetachEvent>(CellAttachSink::GetSingleton());
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.14.0 (M6b Sun gem + final curves) loaded");
+            console->Print("MEO native v0.15.0 (M7 rarity curve + stack-dup fix) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -1555,7 +1579,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.14.0 (M6b: Sun gem + final balance curves) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.15.0 (M7: tier rarity curve + loot rates + stack-dup fix) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
