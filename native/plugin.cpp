@@ -303,13 +303,19 @@ std::uint16_t StampInstance(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
                       rg.def->isArmor ? "Armor" : "Weapon", rg.def->gid);
         return 0;
     }
+    // Gems never drain (DESIGN §6). AddWeaponEnchantment auto-computes a per-use
+    // charge cost from magnitude; with the power scale + Attunement pushing
+    // magnitude up, that cost outran the fixed 500 charge, so the weapon showed
+    // the enchant but had too little charge to ever fire it. Force cost 0.
+    ench->data.costOverride = 0;
+    ench->data.flags.set(RE::EnchantmentItem::EnchantmentFlag::kCostOverride);
     // Replace any previous instance enchantment (level-up path re-stamps).
     if (auto* xEnch = a_xList->GetByType<RE::ExtraEnchantment>()) {
         xEnch->enchantment = ench;
-        xEnch->charge = 500;
+        xEnch->charge = 0xFFFF;
         xEnch->removeOnUnequip = false;
     } else {
-        a_xList->Add(new RE::ExtraEnchantment(ench, 500, false));
+        a_xList->Add(new RE::ExtraEnchantment(ench, 0xFFFF, false));
     }
 
     g_sockets[MakeKey(a_base->GetFormID(), uid)] =
@@ -373,12 +379,12 @@ bool IsSocketableArmorBase(const RE::TESObjectARMO* a_armo) {
         a_armo->HasKeywordString("MagicDisallowEnchanting")) {
         return false;
     }
+    // NB: HasPartOf() is .all() (every bit must match), so it must be called
+    // per-slot and OR'd — a combined mask would demand one piece fill all slots.
     using S = RE::BGSBipedObjectForm::BipedObjectSlot;
-    const auto mask = static_cast<S>(
-        std::to_underlying(S::kHead) | std::to_underlying(S::kBody) |
-        std::to_underlying(S::kHands) | std::to_underlying(S::kAmulet) |
-        std::to_underlying(S::kRing));
-    return a_armo->HasPartOf(mask);
+    return a_armo->HasPartOf(S::kHead) || a_armo->HasPartOf(S::kBody) ||
+           a_armo->HasPartOf(S::kHands) || a_armo->HasPartOf(S::kAmulet) ||
+           a_armo->HasPartOf(S::kRing);
 }
 
 // Re-apply a socketed instance's ability to an already-worn item after a
@@ -1884,7 +1890,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.19.0 (M11 perks a) loaded");
+            console->Print("MEO native v0.20.0 (M12 fixes) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -1906,7 +1912,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.19.0 (M11: perk effects - attunement, gem cutter, soul feeder, enchant XP) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.20.0 (M12: enchant charge fix + armor slot fix) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
