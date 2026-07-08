@@ -597,4 +597,8 @@ Open engineering risks (validate in P0, per guide philosophy):
    FOMOD runs it at install time when possible; manual run documented.
 5. **P4 uniques**: curated unique gems from artifact families.
 6. **Post-release**: follower/companion gem testing at scale (mechanics
-   shipped in v0.10.0-m3d but deep testing deferred — Marth, 2026-07-07).
+   shipped in v0.10.0-m3d but deep testing deferred — Marth, 2026-07-07);
+   gamepad support for the gem menu (Marth, 2026-07-07: pinned post-release
+   — basic dpad+A/B nav shipped in v0.12.0-m6, but full stick navigation,
+   button hints, and feel-polish wait; mouse+keyboard is the supported
+   input until then).
