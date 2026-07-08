@@ -118,7 +118,8 @@ struct ResolvedGem {
 std::vector<ResolvedGem>                          g_gems;
 std::unordered_map<RE::FormID, std::pair<int, int>> g_gemByItem;  // item -> {gemIdx, level}
 std::unordered_map<std::string_view, int>         g_gemByGid;
-std::vector<int>                                  g_lootableGems;  // resolved, levelable
+std::vector<int>                                  g_lootableGems;  // weapon-domain, world-weapon stamps
+std::vector<int>                                  g_corpseGems;    // weapon+armor, corpse drops
 RE::SpellItem*                                    g_pouchSpell = nullptr;
 float g_magnitudeMult = 1.0f;  // [XP] fMagnitudeMult master power scale; used by StampInstance below, set by ReadConfig (MCM)
 
@@ -163,7 +164,7 @@ void ResolveCatalog() {
         spdlog::error("Gem Pouch power not found in {} — is the ESP enabled?", kPluginName);
     }
     int ok = 0;
-    for (const auto& def : meo::kWeaponGems) {
+    for (const auto& def : meo::kGems) {
         ResolvedGem rg;
         rg.def = &def;
         rg.mgef = dh->LookupForm<RE::EffectSetting>(def.mgefID, def.plugin);
@@ -171,11 +172,15 @@ void ResolveCatalog() {
             spdlog::warn("gem '{}' disabled: MGEF {:06X} not found in {}", def.gid, def.mgefID, def.plugin);
         }
         const int levels = def.singleLevel ? 1 : 5;
+        RE::TESObjectMISC* prev = nullptr;
         for (int lv = 0; lv < levels; ++lv) {
             rg.items[lv] = dh->LookupForm<RE::TESObjectMISC>(def.gemItem[lv], kPluginName);
-            if (rg.items[lv] && rg.mgef) {
+            // Short-curve gems (e.g. Muffle) pad higher levels with the top
+            // form; map each distinct form to its FIRST level only.
+            if (rg.items[lv] && rg.mgef && rg.items[lv] != prev) {
                 g_gemByItem[rg.items[lv]->GetFormID()] = { static_cast<int>(g_gems.size()), lv + 1 };
             }
+            prev = rg.items[lv];
         }
         g_gemByGid[def.gid] = static_cast<int>(g_gems.size());
         if (rg.mgef) {
@@ -183,13 +188,16 @@ void ResolveCatalog() {
         }
         g_gems.push_back(rg);
     }
-    // Weighted spawn pool: each gem is pushed spawnWeight times so the uniform
-    // pick in RollCorpseGem / MaybeStampWorldWeapon becomes a tier rarity curve
-    // (S rarest, B common — see gen_catalog_header.py SPAWN_WEIGHT).
+    // Weighted spawn pools: each gem is pushed spawnWeight times so a uniform
+    // pick becomes a tier rarity curve (S rarest — see SPAWN_WEIGHT). Corpse
+    // drops pull weapon+armor; world-weapon stamps pull weapon-domain only.
     for (std::size_t i = 0; i < g_gems.size(); ++i) {
         if (g_gems[i].mgef && !g_gems[i].def->singleLevel) {
             for (int w = 0, n = std::max<int>(g_gems[i].def->spawnWeight, 1); w < n; ++w) {
-                g_lootableGems.push_back(static_cast<int>(i));
+                g_corpseGems.push_back(static_cast<int>(i));
+                if (!g_gems[i].def->isArmor) {
+                    g_lootableGems.push_back(static_cast<int>(i));
+                }
             }
         }
     }
@@ -204,9 +212,9 @@ void ResolveCatalog() {
     g_bossRefType = dh->LookupForm<RE::BGSLocationRefType>(kBossLocRefTypeID, "Skyrim.esm");
     g_dragonKeyword = dh->LookupForm<RE::BGSKeyword>(kDragonKeywordID, "Skyrim.esm");
     g_reusableSoulGemKW = dh->LookupForm<RE::BGSKeyword>(kReusableSoulGemKW, "Skyrim.esm");
-    spdlog::info("catalog resolved: {}/{} weapon gems live, {} socketable gem items, pouch={}, "
+    spdlog::info("catalog resolved: {}/{} gems live (weapon+armor), {} socketable gem items, pouch={}, "
                  "mentor={}, soulCairn={}, bossType={}",
-                 ok, std::size(meo::kWeaponGems), g_gemByItem.size(),
+                 ok, std::size(meo::kGems), g_gemByItem.size(),
                  g_pouchSpell ? "ok" : "MISSING", g_mentorGem ? "ok" : "MISSING",
                  g_soulCairn ? "ok" : "absent", g_bossRefType ? "ok" : "MISSING");
 }
@@ -261,9 +269,15 @@ std::uint16_t StampInstance(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     eff.effectItem.duration = static_cast<std::uint32_t>(rg.def->duration);
     eff.baseEffect = rg.mgef;
     eff.cost = 0.0f;
-    auto* ench = RE::BGSCreatedObjectManager::GetSingleton()->AddWeaponEnchantment(effects);
+    // Armor gems are constant self-target enchantments; weapon gems are
+    // fire-and-forget contact. The created-object manager sets the enchant
+    // type from the effect's MGEF (Constant/Self vs FireForget/Contact).
+    auto* com = RE::BGSCreatedObjectManager::GetSingleton();
+    auto* ench = rg.def->isArmor ? com->AddArmorEnchantment(effects)
+                                 : com->AddWeaponEnchantment(effects);
     if (!ench) {
-        spdlog::error("AddWeaponEnchantment returned null for '{}'", rg.def->gid);
+        spdlog::error("Add{}Enchantment returned null for '{}'",
+                      rg.def->isArmor ? "Armor" : "Weapon", rg.def->gid);
         return 0;
     }
     // Replace any previous instance enchantment (level-up path re-stamps).
@@ -326,6 +340,36 @@ bool IsSocketableWeaponBase(const RE::TESObjectWEAP* a_weap) {
     return a_weap && !a_weap->formEnchanting && a_weap->GetPlayable() &&
            !a_weap->IsHandToHandMelee() && !a_weap->IsBound() &&
            !a_weap->HasKeywordString("MagicDisallowEnchanting");
+}
+
+// Armor-base eligibility (M8b armor gems). Socketable slots per DESIGN §4:
+// head, body, hands, amulet, ring — boots (kFeet) get no socket. Same
+// engine verdicts as weapons (playable, not base-enchanted, table allows it).
+bool IsSocketableArmorBase(const RE::TESObjectARMO* a_armo) {
+    if (!a_armo || a_armo->formEnchanting || !a_armo->GetPlayable() ||
+        a_armo->HasKeywordString("MagicDisallowEnchanting")) {
+        return false;
+    }
+    using S = RE::BGSBipedObjectForm::BipedObjectSlot;
+    const auto mask = static_cast<S>(
+        std::to_underlying(S::kHead) | std::to_underlying(S::kBody) |
+        std::to_underlying(S::kHands) | std::to_underlying(S::kAmulet) |
+        std::to_underlying(S::kRing));
+    return a_armo->HasPartOf(mask);
+}
+
+// Re-apply a socketed instance's ability to an already-worn item after a
+// (re-)stamp. Weapons take a hand; worn armor uses the slotless call.
+void ApplyWornAbility(RE::Actor* a_owner, RE::TESBoundObject* a_base,
+                      RE::ExtraDataList* a_xList, bool a_left) {
+    if (!a_owner || !a_base) {
+        return;
+    }
+    if (a_base->Is(RE::FormType::Armor)) {
+        a_owner->UpdateArmorAbility(a_base, a_xList);
+    } else {
+        a_owner->UpdateWeaponAbility(a_base, a_xList, a_left);
+    }
 }
 
 // ── M4b: every unique gem owns its own Gem XP pool (DESIGN §3) ────────
@@ -451,7 +495,7 @@ bool GrantGemXP(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataLis
     const int   newLevel = a_rec.level + 1;
     const float carriedXP = a_rec.xp;
     StampInstance(a_base, a_xList, a_gemIdx, newLevel, carriedXP);
-    a_owner->UpdateWeaponAbility(a_base, a_xList, a_left);
+    ApplyWornAbility(a_owner, a_base, a_xList, a_left);
     const bool isPlayer = a_owner->IsPlayerRef();
     const char* who = a_owner->GetName();
     Notify(isPlayer
@@ -488,7 +532,8 @@ void AwardKillXP(RE::Actor* a_owner, float a_ap) {
     }
     int awarded = 0;
     for (auto* entry : *changes->entryList) {
-        if (!entry || !entry->object || !entry->object->Is(RE::FormType::Weapon) || !entry->extraLists) {
+        if (!entry || !entry->object || !entry->extraLists ||
+            !(entry->object->Is(RE::FormType::Weapon) || entry->object->Is(RE::FormType::Armor))) {
             continue;
         }
         for (auto* xList : *entry->extraLists) {
@@ -602,12 +647,14 @@ struct MenuItemRow {
     std::uint16_t uid = 0;       // 0 = plain stack (xList materialized on socket)
     bool          worn = false;
     bool          socketed = false;
+    bool          isArmor = false;  // gates which gems can socket into it
     std::string   gemLabel;      // socketed gem, e.g. "Fire II (250/900)"
 };
 struct MenuGemRow {
     std::string   label;
     RE::FormID    base = 0;
     std::uint16_t uid = 0;       // instance with banked XP, else 0
+    bool          isArmor = false;
 };
 struct MenuState {
     std::mutex               lock;
@@ -636,16 +683,21 @@ void BuildMenuSnapshot() {
     std::vector<MenuItemRow> items;
     std::vector<MenuGemRow>  gems;
     auto inv = player->GetInventory([](RE::TESBoundObject& o) {
-        return o.Is(RE::FormType::Weapon) || o.Is(RE::FormType::Misc);
+        return o.Is(RE::FormType::Weapon) || o.Is(RE::FormType::Armor) ||
+               o.Is(RE::FormType::Misc);
     });
     for (const auto& [obj, data] : inv) {
         if (data.first <= 0) {
             continue;
         }
-        if (obj->Is(RE::FormType::Weapon)) {
+        const bool isWeap = obj->Is(RE::FormType::Weapon);
+        const bool isArmor = obj->Is(RE::FormType::Armor);
+        if (isWeap || isArmor) {
             // Ineligible bases are hidden — but an instance that already
             // holds one of our gems stays listed so the gem can come back.
-            const bool eligible = IsSocketableWeaponBase(obj->As<RE::TESObjectWEAP>());
+            const bool eligible = isWeap
+                ? IsSocketableWeaponBase(obj->As<RE::TESObjectWEAP>())
+                : IsSocketableArmorBase(obj->As<RE::TESObjectARMO>());
             const char* baseName = obj->GetName();
             if (!baseName || !*baseName) {
                 continue;
@@ -660,6 +712,7 @@ void BuildMenuSnapshot() {
                     auto* xid = xl->GetByType<RE::ExtraUniqueID>();
                     MenuItemRow row;
                     row.base = obj->GetFormID();
+                    row.isArmor = isArmor;
                     row.worn = IsWornXList(xl);
                     if (xl->HasType(RE::ExtraDataType::kEnchantment)) {
                         // Enchanted units are distinct (can't stack with plain
@@ -717,6 +770,7 @@ void BuildMenuSnapshot() {
             if (eligible && data.first - instances > 0) {
                 MenuItemRow row;
                 row.base = obj->GetFormID();
+                row.isArmor = isArmor;
                 row.label = baseName;
                 if (data.first - instances > 1) {
                     row.label += std::format("  x{}", data.first - instances);
@@ -745,6 +799,7 @@ void BuildMenuSnapshot() {
                     const auto& rg = g_gems[it->second.first];
                     MenuGemRow  row;
                     row.base = obj->GetFormID();
+                    row.isArmor = rg.def->isArmor;
                     row.uid = xid->uniqueID;
                     row.label = std::format("{} ({:.0f}/{:.0f})", obj->GetName(), recIt->second.xp,
                                             NextThreshold(rg.def, recIt->second.level));
@@ -754,6 +809,7 @@ void BuildMenuSnapshot() {
             if (plain > 0) {
                 MenuGemRow row;
                 row.base = obj->GetFormID();
+                row.isArmor = g_gems[it->second.first].def->isArmor;
                 row.label = obj->GetName();
                 if (plain > 1) {
                     row.label += std::format("  x{}", plain);
@@ -799,7 +855,7 @@ void MenuUnsocket(RE::FormID a_base, std::uint16_t a_uid) {
     xl->RemoveByType(RE::ExtraDataType::kEnchantment);
     xl->RemoveByType(RE::ExtraDataType::kTextDisplayData);
     if (IsWornXList(xl)) {
-        player->UpdateWeaponAbility(form, xl, xl->HasType(RE::ExtraDataType::kWornLeft));
+        ApplyWornAbility(player, form, xl, xl->HasType(RE::ExtraDataType::kWornLeft));
     }
     spdlog::info("[menu] unsocketed {:08X}/{}: '{}' L{} xp={:.0f}", a_base, a_uid, rec.gid,
                  rec.level, rec.xp);
@@ -815,6 +871,11 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
     auto* gemForm = RE::TESForm::LookupByID<RE::TESObjectMISC>(a_gemBase);
     auto  gemMapIt = g_gemByItem.find(a_gemBase);
     if (!player || !itemForm || !gemForm || gemMapIt == g_gemByItem.end()) {
+        return;
+    }
+    // Weapon gems only fit weapons; armor gems only fit armor.
+    if (g_gems[gemMapIt->second.first].def->isArmor != itemForm->Is(RE::FormType::Armor)) {
+        Notify("That gem doesn't fit that kind of gear.");
         return;
     }
     RE::ExtraDataList* xl = nullptr;
@@ -887,7 +948,7 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
         return;
     }
     if (IsWornXList(xl)) {
-        player->UpdateWeaponAbility(itemForm, xl, xl->HasType(RE::ExtraDataType::kWornLeft));
+        ApplyWornAbility(player, itemForm, xl, xl->HasType(RE::ExtraDataType::kWornLeft));
     }
     player->RemoveItem(gemForm, 1, RE::ITEM_REMOVE_REASON::kRemove, gemXL, nullptr);
     const auto& rg = g_gems[gemIdx];
@@ -1025,8 +1086,13 @@ namespace menuhook {
                 ImGui::PopStyleColor();
                 ImGui::Separator();
             }
+            int shown = 0;
             for (int i = 0; i < static_cast<int>(g_menu.gems.size()); ++i) {
                 const auto gem = g_menu.gems[i];  // copy for the closure
+                if (gem.isArmor != sel.isArmor) {
+                    continue;  // weapon gems only fit weapons; armor only armor
+                }
+                ++shown;
                 const std::string lbl = gem.label + std::format("##gem{}", i);
                 if (ImGui::Selectable(lbl.c_str())) {
                     QueueMenuTask([sel, gem]() {
@@ -1034,8 +1100,8 @@ namespace menuhook {
                     });
                 }
             }
-            if (g_menu.gems.empty()) {
-                ImGui::TextDisabled("No loose gems.");
+            if (shown == 0) {
+                ImGui::TextDisabled(sel.isArmor ? "No loose armor gems." : "No loose weapon gems.");
             }
         } else {
             ImGui::TextDisabled("Select an item.");
@@ -1274,14 +1340,14 @@ std::uint32_t HashU32(std::uint32_t x) {
 }
 
 void RollCorpseGem(RE::Actor* a_victim) {
-    if (g_lootableGems.empty() || g_gemDropChance <= 0.0f) {
+    if (g_corpseGems.empty() || g_gemDropChance <= 0.0f) {
         return;
     }
     if (std::uniform_real_distribution<float>(0.0f, 1.0f)(g_rng) >= g_gemDropChance) {
         return;
     }
-    const auto& rg = g_gems[g_lootableGems[
-        std::uniform_int_distribution<std::size_t>(0, g_lootableGems.size() - 1)(g_rng)]];
+    const auto& rg = g_gems[g_corpseGems[
+        std::uniform_int_distribution<std::size_t>(0, g_corpseGems.size() - 1)(g_rng)]];
     const int lvl = (std::uniform_real_distribution<float>(0.0f, 1.0f)(g_rng) < g_gemLevel2Chance)
                         ? 2 : 1;
     if (auto* item = rg.items[lvl - 1]) {
@@ -1594,7 +1660,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.16.0 (M8 MCM) loaded");
+            console->Print("MEO native v0.17.0 (M9 armor gems) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -1616,7 +1682,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.16.0 (M8: MCM Helper config) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.17.0 (M9: armor gems) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
