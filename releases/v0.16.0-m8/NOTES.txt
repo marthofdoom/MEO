@@ -1,0 +1,2 @@
+Real MCM via MCM Helper: loot/XP/power tunables, INI-paired, live re-read
+built from native run 28954883818
