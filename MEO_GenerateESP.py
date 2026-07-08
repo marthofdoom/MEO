@@ -36,6 +36,7 @@ FID_FLST_ALL       = OWN | 0x805
 FID_FLST_WEAPON    = OWN | 0x806
 FID_FLST_ARMOR     = OWN | 0x807
 FID_MCM_QUEST      = OWN | 0x808   # MCM Helper config quest (attaches MEO_MCM); FROZEN
+FID_PERK_BASE      = OWN | 0x810   # MEO perks 0x810.. (DESIGN §6); FROZEN
 FID_POUCH_CONT     = OWN | 0x8FE   # hidden Gem Pouch container (M5 ContainerMenu UI); FROZEN
 FID_MENTOR_GEM     = OWN | 0x8FF   # unique support gem (M3d); FROZEN, outside the sequential range
 FID_GEM_BASE       = OWN | 0x900   # MISC gems allocated sequentially from here
@@ -193,6 +194,28 @@ def make_mcm_quest():
 def make_qust():
     return group('QUST',make_startup_quest()+make_mcm_quest())
 
+# MEO perks (DESIGN §6). Minimal marker perks — no entry points; the DLL reads
+# HasPerk and applies effects. Order/index FROZEN (co-save-independent, but the
+# DLL looks them up by these local FormIDs). The C# installer wires these into
+# the load order's enchanting tree; interim the DLL auto-grants them by skill.
+MEO_PERKS = [
+    ("MEO_Perk_Attunement1", "Gem Attunement", "Socketed gems are 8% more potent."),
+    ("MEO_Perk_Attunement2", "Gem Attunement", "Socketed gems are 16% more potent."),
+    ("MEO_Perk_Attunement3", "Gem Attunement", "Socketed gems are 24% more potent."),
+    ("MEO_Perk_Attunement4", "Gem Attunement", "Socketed gems are 32% more potent."),
+    ("MEO_Perk_Attunement5", "Gem Attunement", "Socketed gems are 40% more potent."),
+    ("MEO_Perk_GemCutter",   "Gem Cutter",     "Socketed gems earn 50% more Gem XP."),
+    ("MEO_Perk_SoulFeeder",  "Soul Feeder",    "Soul gems fed to gems at an enchanting station are twice as potent."),
+]
+def make_perks():
+    out=BytesIO()
+    data=struct.pack('<BBBBB',0,0,1,1,0)  # trait0 level0 ranks1 playable1 hidden0
+    for i,(edid,name,desc) in enumerate(MEO_PERKS):
+        body =subrec('EDID',zstr(edid))+subrec('FULL',zstr(name))+subrec('DESC',zstr(desc))
+        body+=subrec('DATA',data)
+        out.write(record('PERK',FID_PERK_BASE+i,0,body))
+    return group('PERK',out.getvalue())
+
 def write_runtime_json(out_dir, gem_form_map):
     """Per-gem runtime data the socket script reads via JsonUtil. Lives under
     Data/SKSE/Plugins/MEO/ so JsonUtil resolves 'MEO/meo_runtime.json'."""
@@ -290,6 +313,7 @@ def main():
           +make_flst(FID_FLST_WEAPON,"MEO_WeaponGems",weapon_fids)
           +make_flst(FID_FLST_ARMOR,"MEO_ArmorGems",armor_fids))
     esp.write(group('FLST',flsts))
+    esp.write(make_perks())
     esp.write(make_qust())
     data=esp.getvalue()
     with open(os.path.join(out_dir,"MEO.esp"),'wb') as f: f.write(data)

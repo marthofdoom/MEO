@@ -144,6 +144,18 @@ constexpr float kSoulFeedXP[5] = { 5.0f, 12.0f, 25.0f, 60.0f, 200.0f };
 constexpr RE::FormID kFilledSoulGemIDs[5] = { 0x02E4E3, 0x02E4E5, 0x02E4F3, 0x02E4FB, 0x02E4FF };
 RE::TESSoulGem*      g_filledSoulGems[5] = {};
 
+// MEO perks (DESIGN §6). MEO.esp-local FormIDs 0x810.. — see MEO_GenerateESP.
+constexpr RE::FormID kPerkAttuneBase = 0x810;  // 0x810..0x814 = Attunement 1..5
+constexpr RE::FormID kPerkGemCutter  = 0x815;
+constexpr RE::FormID kPerkSoulFeeder = 0x816;
+RE::BGSPerk* g_perkAttune[5] = {};
+RE::BGSPerk* g_perkGemCutter = nullptr;
+RE::BGSPerk* g_perkSoulFeeder = nullptr;
+// Cached from the player's perks (refreshed on load + menu close).
+int  g_attuneRank = 0;      // 0..5 → +8% gem magnitude per rank
+bool g_hasGemCutter = false;  // +50% Gem XP
+bool g_hasSoulFeeder = false; // soul feeding is twice as potent
+
 void SetupLog() {
     auto logDir = SKSE::log::log_directory();
     if (!logDir) {
@@ -218,7 +230,10 @@ void ResolveCatalog() {
     g_reusableSoulGemKW = dh->LookupForm<RE::BGSKeyword>(kReusableSoulGemKW, "Skyrim.esm");
     for (int i = 0; i < 5; ++i) {
         g_filledSoulGems[i] = dh->LookupForm<RE::TESSoulGem>(kFilledSoulGemIDs[i], "Skyrim.esm");
+        g_perkAttune[i] = dh->LookupForm<RE::BGSPerk>(kPerkAttuneBase + i, kPluginName);
     }
+    g_perkGemCutter = dh->LookupForm<RE::BGSPerk>(kPerkGemCutter, kPluginName);
+    g_perkSoulFeeder = dh->LookupForm<RE::BGSPerk>(kPerkSoulFeeder, kPluginName);
     spdlog::info("catalog resolved: {}/{} gems live (weapon+armor), {} socketable gem items, pouch={}, "
                  "mentor={}, soulCairn={}, bossType={}",
                  ok, std::size(meo::kGems), g_gemByItem.size(),
@@ -269,9 +284,10 @@ std::uint16_t StampInstance(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     RE::BSTArray<RE::Effect> effects;
     effects.resize(1);
     auto& eff = effects[0];
-    // Master power scale (MCM fMagnitudeMult); existing sockets pick it up on
-    // their next re-stamp (level-up or re-socket), like any balance change.
-    eff.effectItem.magnitude = rg.def->magnitude[lvIdx] * g_magnitudeMult;
+    // Master power scale (MCM fMagnitudeMult) × Gem Attunement (+8%/rank,
+    // DESIGN §6). Existing sockets pick both up on their next re-stamp.
+    eff.effectItem.magnitude =
+        rg.def->magnitude[lvIdx] * g_magnitudeMult * (1.0f + 0.08f * g_attuneRank);
     eff.effectItem.area = 0;
     eff.effectItem.duration = static_cast<std::uint32_t>(rg.def->duration);
     eff.baseEffect = rg.mgef;
@@ -461,6 +477,41 @@ void ReadConfig() {
                  g_bossXPMult, g_magnitudeMult, g_xpNotify);
 }
 
+// DESIGN §6 perks. Until the C# installer replaces the load order's enchanting
+// tree with MEO's, auto-grant MEO perks by the player's Enchanting skill
+// (Attunement 1..5 at 0/20/40/60/80, Gem Cutter at 20, Soul Feeder at 40),
+// then cache what the player actually holds. Effects live in StampInstance
+// (magnitude), AwardKillXP (Gem Cutter) and FeedSoulToGem (Soul Feeder).
+void RefreshPerks() {
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    auto* avo = player ? player->AsActorValueOwner() : nullptr;
+    if (!player || !avo) {
+        return;
+    }
+    const float skill = avo->GetBaseActorValue(RE::ActorValue::kEnchanting);
+    auto grant = [&](RE::BGSPerk* p, bool want) {
+        if (p && want && !player->HasPerk(p)) {
+            player->AddPerk(p, 1);
+        }
+    };
+    const int rank = 1 + (skill >= 20) + (skill >= 40) + (skill >= 60) + (skill >= 80);
+    for (int i = 0; i < 5; ++i) {
+        grant(g_perkAttune[i], i < rank);
+    }
+    grant(g_perkGemCutter, skill >= 20.0f);
+    grant(g_perkSoulFeeder, skill >= 40.0f);
+    g_attuneRank = 0;
+    for (int i = 0; i < 5; ++i) {
+        if (g_perkAttune[i] && player->HasPerk(g_perkAttune[i])) {
+            ++g_attuneRank;
+        }
+    }
+    g_hasGemCutter = g_perkGemCutter && player->HasPerk(g_perkGemCutter);
+    g_hasSoulFeeder = g_perkSoulFeeder && player->HasPerk(g_perkSoulFeeder);
+    spdlog::info("[perks] enchanting={:.0f} attuneRank={} gemCutter={} soulFeeder={}",
+                 skill, g_attuneRank, g_hasGemCutter, g_hasSoulFeeder);
+}
+
 // Menu snapshot rows + shared state (declared here so MenuSink can read
 // g_menu.station; the menu is built/drawn much further down).
 struct MenuItemRow {
@@ -511,6 +562,7 @@ public:
         }
         if (!a_event->opening && a_event->menuName == RE::JournalMenu::MENU_NAME) {
             ReadConfig();
+            RefreshPerks();  // pick up Enchanting skill-ups (interim auto-grant)
         } else if (!a_event->opening && a_event->menuName == RE::CraftingMenu::MENU_NAME) {
             if (g_menu.station.load()) {
                 SKSE::GetTaskInterface()->AddTask([]() { CloseGemMenu(); });
@@ -591,6 +643,15 @@ void AwardKillXP(RE::Actor* a_owner, float a_ap) {
                 break;
             }
         }
+    }
+    // DESIGN §6: the carrier's Enchanting skill (incl. Fortify Enchanting from
+    // gear/potions) scales Gem XP gain — x(1 + AV/100). Enchanting now grows a
+    // gem, so investing in it pays off directly.
+    if (auto* avo = a_owner->AsActorValueOwner()) {
+        xp *= 1.0f + std::max(0.0f, avo->GetActorValue(RE::ActorValue::kEnchanting)) / 100.0f;
+    }
+    if (g_hasGemCutter && a_owner->IsPlayerRef()) {  // Gem Cutter: +50% Gem XP
+        xp *= 1.5f;
     }
     int awarded = 0;
     for (auto* entry : *changes->entryList) {
@@ -1092,7 +1153,7 @@ void FeedSoulToGem(RE::FormID a_itemBase, std::uint16_t a_uid) {
         return;
     }
     const int   idx = std::clamp(bestSoul, 1, 5) - 1;
-    const float xp = kSoulFeedXP[idx];  // Soul Feeder perk x2 arrives with the perk stage
+    const float xp = kSoulFeedXP[idx] * (g_hasSoulFeeder ? 2.0f : 1.0f);  // Soul Feeder: x2
     player->RemoveItem(bestGem, 1, RE::ITEM_REMOVE_REASON::kRemove, bestXL, nullptr);
     auto gemIt = g_gemByGid.find(recIt->second.gid);
     if (gemIt == g_gemByGid.end()) {
@@ -1823,14 +1884,14 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.18.0 (M10 enchanting stations) loaded");
+            console->Print("MEO native v0.19.0 (M11 perks a) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
     case SKSE::MessagingInterface::kPostLoadGame:
     case SKSE::MessagingInterface::kNewGame:
         // After LoadCallback/Revert — co-save flags are current here.
-        SKSE::GetTaskInterface()->AddTask([]() { EnsurePlayerSetup(); });
+        SKSE::GetTaskInterface()->AddTask([]() { EnsurePlayerSetup(); RefreshPerks(); });
         break;
     default:
         break;
@@ -1845,7 +1906,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.18.0 (M10: enchanting stations - soul feed + destroy) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.19.0 (M11: perk effects - attunement, gem cutter, soul feeder, enchant XP) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
