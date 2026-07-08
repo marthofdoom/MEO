@@ -454,10 +454,14 @@ void ReadConfig() {
                  g_bossXPMult, g_magnitudeMult, g_xpNotify);
 }
 
+void OpenGemMenu(bool a_station = false);  // defined with the render hooks below
+void CloseGemMenu();
+
 // Live MCM apply: SkyUI's Mod Configuration menu is hosted in the Journal
 // (pause) menu, and MCM Helper persists ModSettings to MEO.ini when it closes.
 // Re-reading the INI on that close makes slider/toggle changes take effect
-// immediately (loot/XP knobs at once; gem power on the next re-stamp).
+// immediately. Also: opening an ENCHANTING station's Crafting Menu opens the
+// gem menu in station mode (soul feeding / destruction, DESIGN §3).
 class MenuSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
 public:
     static MenuSink* GetSingleton() {
@@ -466,13 +470,33 @@ public:
     }
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event,
                                           RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
-        if (a_event && !a_event->opening &&
-            a_event->menuName == RE::JournalMenu::MENU_NAME) {
+        if (!a_event) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        if (!a_event->opening && a_event->menuName == RE::JournalMenu::MENU_NAME) {
             ReadConfig();
+        } else if (!a_event->opening && a_event->menuName == RE::CraftingMenu::MENU_NAME) {
+            if (g_menu.station.load()) {
+                SKSE::GetTaskInterface()->AddTask([]() { CloseGemMenu(); });
+            }
+        } else if (a_event->opening && a_event->menuName == RE::CraftingMenu::MENU_NAME) {
+            SKSE::GetTaskInterface()->AddTask([]() {
+                auto* player = RE::PlayerCharacter::GetSingleton();
+                auto  furn = player ? player->GetOccupiedFurniture() : RE::ObjectRefHandle{};
+                auto  ref = furn.get();
+                auto* base = ref ? ref->GetBaseObject() : nullptr;
+                auto* f = base ? base->As<RE::TESFurniture>() : nullptr;
+                using BT = RE::TESFurniture::WorkBenchData::BenchType;
+                if (f && f->workBenchData.benchType == BT::kEnchanting) {
+                    OpenGemMenu(true);
+                }
+            });
         }
         return RE::BSEventNotifyControl::kContinue;
     }
 };
+
+bool IsWornXList(const RE::ExtraDataList* a_xl);  // defined below
 
 // Add Gem XP to one socketed worn instance; handles the level-up re-stamp,
 // notifications (named for followers), and mastered births. a_rec must be
@@ -495,7 +519,9 @@ bool GrantGemXP(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataLis
     const int   newLevel = a_rec.level + 1;
     const float carriedXP = a_rec.xp;
     StampInstance(a_base, a_xList, a_gemIdx, newLevel, carriedXP);
-    ApplyWornAbility(a_owner, a_base, a_xList, a_left);
+    if (IsWornXList(a_xList)) {  // non-worn (fed at a station) re-applies on equip
+        ApplyWornAbility(a_owner, a_base, a_xList, a_left);
+    }
     const bool isPlayer = a_owner->IsPlayerRef();
     const char* who = a_owner->GetName();
     Notify(isPlayer
@@ -661,6 +687,7 @@ struct MenuState {
     std::atomic<bool>        open{ false };
     std::atomic<bool>        busy{ false };      // an action task is in flight
     std::atomic<bool>        wantClose{ false }; // set by input, consumed by draw
+    std::atomic<bool>        station{ false };   // opened at an enchanting station (feed/destroy)
     std::vector<MenuItemRow> items;
     std::vector<MenuGemRow>  gems;
     int                      selItem = 0;
@@ -956,6 +983,82 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
                        itemForm->GetName()));
 }
 
+// M10 (stage 2a): consume the smallest filled, non-reusable soul gem and
+// grant its Gem XP (DESIGN §3) to one socketed gem. Enchanting-station only.
+void FeedSoulToGem(RE::FormID a_itemBase, std::uint16_t a_uid) {
+    static const char* kSoulNames[5] = { "petty", "lesser", "common", "greater", "grand" };
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    auto* itemForm = RE::TESForm::LookupByID<RE::TESBoundObject>(a_itemBase);
+    if (!player || !itemForm) {
+        return;
+    }
+    auto recIt = g_sockets.find(MakeKey(a_itemBase, a_uid));
+    if (recIt == g_sockets.end()) {
+        Notify("That gem is no longer socketed.");
+        return;
+    }
+    auto* xl = FindInstanceXList(player, itemForm, a_uid);
+    if (!xl) {
+        Notify("That item is no longer in your inventory.");
+        return;
+    }
+    // Smallest filled soul gem wins (fuel efficiency); Azura's Star etc. skipped.
+    auto* changes = player->GetInventoryChanges();
+    RE::TESSoulGem*    bestGem = nullptr;
+    RE::ExtraDataList* bestXL = nullptr;
+    int                bestSoul = 99;
+    auto consider = [&](RE::TESSoulGem* sg, RE::ExtraDataList* xs, int soul) {
+        if (soul >= 1 && soul < bestSoul) {
+            bestSoul = soul; bestGem = sg; bestXL = xs;
+        }
+    };
+    if (changes && changes->entryList) {
+        for (auto* entry : *changes->entryList) {
+            if (!entry || !entry->object) {
+                continue;
+            }
+            auto* sg = entry->object->As<RE::TESSoulGem>();
+            if (!sg || (g_reusableSoulGemKW && sg->HasKeyword(g_reusableSoulGemKW))) {
+                continue;
+            }
+            const int baseSoul = static_cast<int>(sg->GetContainedSoul());
+            bool hadInstance = false;
+            if (entry->extraLists) {
+                for (auto* xs : *entry->extraLists) {
+                    if (!xs) {
+                        continue;
+                    }
+                    hadInstance = true;
+                    int s = baseSoul;
+                    if (auto* es = xs->GetByType<RE::ExtraSoul>()) {
+                        s = static_cast<int>(es->GetContainedSoul());
+                    }
+                    consider(sg, xs, s);
+                }
+            }
+            if (!hadInstance) {
+                consider(sg, nullptr, baseSoul);
+            }
+        }
+    }
+    if (!bestGem || bestSoul < 1) {
+        Notify("You have no filled soul gems to feed.");
+        return;
+    }
+    const int   idx = std::clamp(bestSoul, 1, 5) - 1;
+    const float xp = kSoulFeedXP[idx];  // Soul Feeder perk x2 arrives with the perk stage
+    player->RemoveItem(bestGem, 1, RE::ITEM_REMOVE_REASON::kRemove, bestXL, nullptr);
+    auto gemIt = g_gemByGid.find(recIt->second.gid);
+    if (gemIt == g_gemByGid.end()) {
+        return;
+    }
+    const bool left = xl->HasType(RE::ExtraDataType::kWornLeft);
+    const bool grew = GrantGemXP(player, itemForm, xl, left, recIt->second, gemIt->second, xp, a_uid);
+    Notify(grew ? std::format("Fed a {} soul (+{:.0f} Gem XP).", kSoulNames[idx], xp)
+                : "That gem is already mastered — the soul is spent for nothing.");
+    spdlog::info("[feed] {} soul -> {}/{} : +{:.0f} xp", kSoulNames[idx], a_itemBase, a_uid, xp);
+}
+
 void QueueMenuTask(std::function<void()> a_fn) {
     g_menu.busy = true;
     SKSE::GetTaskInterface()->AddTask([fn = std::move(a_fn)]() {
@@ -970,7 +1073,7 @@ void CloseGemMenu() {
     g_menu.wantClose = false;
 }
 
-void OpenGemMenu();  // needs the render-hook init flag below
+void OpenGemMenu(bool a_station);  // declared earlier; defined after the render hooks
 
 // ── Render + input hooks (Wheeler pattern, IDs verified from source) ──
 namespace menuhook {
@@ -1084,6 +1187,14 @@ namespace menuhook {
                     QueueMenuTask([sel]() { MenuUnsocket(sel.base, sel.uid); });
                 }
                 ImGui::PopStyleColor();
+                if (g_menu.station.load()) {
+                    // Enchanting-station action: feed the smallest filled soul gem.
+                    if (ImGui::Button("Feed Soul Gem")) {
+                        QueueMenuTask([sel]() { FeedSoulToGem(sel.base, sel.uid); });
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(smallest soul first)");
+                }
                 ImGui::Separator();
             }
             int shown = 0;
@@ -1306,7 +1417,7 @@ namespace menuhook {
 
 }  // namespace menuhook
 
-void OpenGemMenu() {
+void OpenGemMenu(bool a_station) {
     if (!menuhook::g_d3dReady.load()) {
         spdlog::error("[menu] open requested but ImGui never initialized");
         Notify("The Gem Pouch menu is unavailable — see MEO.log.");
@@ -1318,8 +1429,10 @@ void OpenGemMenu() {
     BuildMenuSnapshot();
     g_menu.selItem = 0;
     g_menu.wantClose = false;
+    g_menu.station = a_station;
     g_menu.open = true;
-    spdlog::info("[menu] opened: {} item(s), {} gem(s)", g_menu.items.size(), g_menu.gems.size());
+    spdlog::info("[menu] opened ({}): {} item(s), {} gem(s)", a_station ? "station" : "pouch",
+                 g_menu.items.size(), g_menu.gems.size());
 }
 
 // ── M3c: gems enter the world — corpse drops + weapons born socketed ──
@@ -1660,7 +1773,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.17.0 (M9 armor gems) loaded");
+            console->Print("MEO native v0.18.0 (M10 soul feeding) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -1682,7 +1795,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.17.0 (M9: armor gems) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.18.0 (M10: enchanting-station soul feeding) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
