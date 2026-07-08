@@ -591,11 +591,11 @@
     "weap": 0,
     "armo": 2,
     "curve": [
-      12,
-      22,
-      32,
-      42,
-      50
+      8,
+      13,
+      17,
+      21,
+      25
     ],
     "note": "FLAG: % resist, cap-aware curve (decide target)"
   },
@@ -611,11 +611,11 @@
     "weap": 0,
     "armo": 5,
     "curve": [
-      12,
-      22,
-      32,
-      42,
-      50
+      8,
+      13,
+      17,
+      21,
+      25
     ],
     "note": "FLAG: % resist, cap-aware curve (decide target)"
   },
@@ -656,7 +656,10 @@
     "vanilla_durs": [],
     "weap": 0,
     "armo": 23,
-    "curve": "single-level (no scaling)",
+    "curve": [
+      0.5,
+      1.0
+    ],
     "note": "FLAG: utility on/off; does it level at all? (decide)"
   },
   "EnchWaterbreathingConstantSelf": {
@@ -686,11 +689,11 @@
     "weap": 0,
     "armo": 126,
     "curve": [
-      12,
-      22,
-      32,
-      42,
-      50
+      8,
+      13,
+      17,
+      21,
+      25
     ],
     "note": "FLAG: % resist, cap-aware curve (decide target)"
   },
@@ -709,11 +712,11 @@
     "weap": 0,
     "armo": 126,
     "curve": [
-      12,
-      22,
-      32,
-      42,
-      50
+      8,
+      13,
+      17,
+      21,
+      25
     ],
     "note": "FLAG: % resist, cap-aware curve (decide target)"
   },
@@ -732,11 +735,11 @@
     "weap": 0,
     "armo": 124,
     "curve": [
-      12,
-      22,
-      32,
-      42,
-      50
+      8,
+      13,
+      17,
+      21,
+      25
     ],
     "note": "FLAG: % resist, cap-aware curve (decide target)"
   },
@@ -1079,7 +1082,14 @@
       25,
       40
     ],
-    "note": "FLAG: affected-level; scales what it works on (decide)"
+    "note": "FLAG: affected-level; scales what it works on (decide)",
+    "curve": [
+      6,
+      10,
+      15,
+      22,
+      30
+    ]
   },
   "EnchMagickaDamageFFContact": {
     "class": "LINEAR",
@@ -1158,7 +1168,14 @@
       25,
       40
     ],
-    "note": "FLAG: affected-level; scales what it works on (decide)"
+    "note": "FLAG: affected-level; scales what it works on (decide)",
+    "curve": [
+      6,
+      10,
+      15,
+      22,
+      30
+    ]
   },
   "EnchAbsorbStaminaFFContact": {
     "class": "ABSORB",
@@ -1225,7 +1242,14 @@
       25,
       40
     ],
-    "note": "FLAG: affected-level; scales what it works on (decide)"
+    "note": "FLAG: affected-level; scales what it works on (decide)",
+    "curve": [
+      6,
+      10,
+      15,
+      22,
+      30
+    ]
   },
   "DLC2EnchDragonAbsorbFake": {
     "class": "ABSORB",

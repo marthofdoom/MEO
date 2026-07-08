@@ -591,11 +591,11 @@
     "weap": 0,
     "armo": 2,
     "curve": [
-      10,
-      15,
-      20,
-      25,
-      30
+      8,
+      13,
+      17,
+      21,
+      25
     ],
     "note": "resist %, V=30; stacking is the payoff"
   },
@@ -611,11 +611,11 @@
     "weap": 0,
     "armo": 5,
     "curve": [
-      10,
-      15,
-      20,
-      25,
-      30
+      8,
+      13,
+      17,
+      21,
+      25
     ],
     "note": "resist %, V=30; stacking is the payoff"
   },
@@ -657,7 +657,10 @@
     "weap": 0,
     "armo": 23,
     "single_level": true,
-    "curve": "Level 1 only",
+    "curve": [
+      0.5,
+      1.0
+    ],
     "note": "utility: no leveling, no birth, one flat socketed benefit"
   },
   "EnchWaterbreathingConstantSelf": {
@@ -688,11 +691,11 @@
     "weap": 0,
     "armo": 126,
     "curve": [
-      10,
-      15,
-      20,
-      25,
-      30
+      8,
+      13,
+      17,
+      21,
+      25
     ],
     "note": "resist %, V=30; stacking is the payoff"
   },
@@ -711,11 +714,11 @@
     "weap": 0,
     "armo": 126,
     "curve": [
-      10,
-      15,
-      20,
-      25,
-      30
+      8,
+      13,
+      17,
+      21,
+      25
     ],
     "note": "resist %, V=30; stacking is the payoff"
   },
@@ -734,11 +737,11 @@
     "weap": 0,
     "armo": 124,
     "curve": [
-      10,
-      15,
-      20,
-      25,
-      30
+      8,
+      13,
+      17,
+      21,
+      25
     ],
     "note": "resist %, V=30; stacking is the payoff"
   },
@@ -1081,7 +1084,14 @@
       25,
       40
     ],
-    "note": "affected-creature level (Fear/Banish/Turn Undead)"
+    "note": "affected-creature level (Fear/Banish/Turn Undead)",
+    "curve": [
+      6,
+      10,
+      15,
+      22,
+      30
+    ]
   },
   "EnchMagickaDamageFFContact": {
     "class": "LINEAR",
@@ -1160,7 +1170,14 @@
       25,
       40
     ],
-    "note": "affected-creature level (Fear/Banish/Turn Undead)"
+    "note": "affected-creature level (Fear/Banish/Turn Undead)",
+    "curve": [
+      6,
+      10,
+      15,
+      22,
+      30
+    ]
   },
   "EnchAbsorbStaminaFFContact": {
     "class": "ABSORB",
@@ -1207,7 +1224,14 @@
       0.9,
       1.0
     ],
-    "note": "REPLACED paralyze -> on-hit stagger magnitude; no perma-CC"
+    "note": "REPLACED paralyze -> on-hit stagger magnitude; no perma-CC",
+    "curve": [
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.75
+    ]
   },
   "EnchBanishFFContact": {
     "class": "CONTROL",
@@ -1228,7 +1252,14 @@
       25,
       40
     ],
-    "note": "affected-creature level (Fear/Banish/Turn Undead)"
+    "note": "affected-creature level (Fear/Banish/Turn Undead)",
+    "curve": [
+      6,
+      10,
+      15,
+      22,
+      30
+    ]
   },
   "DLC2EnchDragonAbsorbFake": {
     "class": "ABSORB",

@@ -31,18 +31,23 @@ Applies as-is to: Fire, Frost, Shock, Damage Magicka/Stamina, Fortify
 Health/Magicka/Stamina, the three Regen effects, Carry Weight, and (per-hit)
 Absorb Health/Magicka/Stamina.
 
-## The effect classes that need a human decision
+## Per-class decisions (Marth, 2026-07-08 — full 50-gem review)
 
-×3.5 is wrong for these; each is a balance call, not a formula:
+×3.5 was wrong for these; each was a balance call, now made. Investment
+multipliers (×1.40 perks, ×1.50 CSF) apply to ALL of these unless noted —
+the spreads below were reviewed with that in mind.
 
-| Class | Gems | Why ×3.5 fails | Draft proposal (pending decision) |
-|---|---|---|---|
-| RESIST (%) | Fire/Frost/Shock/Magic/Poison/Disease resist | 30% × 3.5 = 105% → past the resist cap; dual-socket chest = double | Single-gem V well below cap so stacking is the payoff, not one gem |
-| SKILL fortify | the 18 fortify-skill gems | +42 skill ≈ 2× Requiem's own ceiling | Cap at/near vanilla max, or deliberately exceed it |
-| PARALYZE | Paralyze | duration, not magnitude; 4s paralyze is very strong | Keep V short |
-| CONTROL | Fear, Banish, Turn Undead | magnitude = affected creature *level*, duration-based | Scales *what* it works on, not damage |
-| SOULTRAP | Soul Trap | only needs to outlast the kill | Near-fixed short duration |
-| BINARY | Muffle, Waterbreathing, Waterwalking | no magnitude to scale | Do they level at all? |
+| Class | Decision |
+|---|---|
+| RESIST (%) elemental/poison/disease | `[8,13,17,21,25]` — invested V = 53%; capping (75) takes a second gem or another source |
+| RESIST (%) magic | keep `[6,9,12,16,20]` — scarcest stat in Requiem, invested V = 42% |
+| SKILL fortify (21 gems) | keep drafts, V≈32 — already conservative vs vanilla ~40; deliberately NOT given the -15% pass |
+| STAGGER (was Paralyze) | `[0.3,0.4,0.5,0.6,0.75]` — V capped below full stagger to avoid Requiem stunlock loops |
+| CONTROL (Banish/Fear/Turn Undead) | `[6,10,15,22,30]` (max creature level) — invested V ≈ 63; stays off bosses |
+| SOULTRAP | single level, fixed 5 s — only needs to outlast the kill |
+| Muffle | **two levels**: 0.5 → 1.0; level II priced at the normal level-III cumulative total (`xp_mult 2.25`, `max_level 2`) — full silence is earned |
+| Fortify Carry | now levels: `[17,27.2,38.2,49.3,59.5]`, health-family anchors, A-tier |
+| Waterbreathing | binary, single level, unchanged |
 
 Excluded (leaked into the single-effect scan but are soulbound/artifact/junk,
 not gems): Draugr weapon streaks, dragon-priest mask effects, Bloodskal,
@@ -50,9 +55,13 @@ DLC2 stagger ballista, generic StaggerAttack, DLC2 fake dragon-absorb.
 
 ## Status
 
-Model locked for LINEAR/ABSORB. The six classes above await Marth's calls;
-once decided, finalize the numbers here and freeze the default data set for the
-generator. Per-gem `[base,max]` for non-Requiem FOMOD baselines is a later pass.
+**All 50 gems decided (2026-07-08).** LINEAR/ABSORB: model ×3.5 then the
+global -15% (= ×2.975). The special classes: table above. Default data set
+is frozen for the generator; future changes are deliberate balance patches,
+not open questions. Per-gem `[base,max]` for non-Requiem FOMOD baselines is
+a later pass. Weapon-side changes (Stagger, the three CONTROL gems) ride
+the next DLL build; armor-side numbers activate with the armor-gem
+milestone.
 
 ## Content budget — how the level thresholds were derived (2026-07-07)
 

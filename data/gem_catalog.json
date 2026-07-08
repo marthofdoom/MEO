@@ -89,10 +89,10 @@
     "class": "CONTROL",
     "curve": [
       6,
-      12,
-      18,
-      25,
-      40
+      10,
+      15,
+      22,
+      30
     ],
     "single_level": false,
     "power_tier": "B",
@@ -298,11 +298,18 @@
     ],
     "domain": "armor",
     "class": "LINEAR",
-    "curve": "Level 1 only",
-    "single_level": true,
-    "power_tier": "U",
-    "xp_mult": 0.0,
-    "type_index": 12
+    "curve": [
+      17.0,
+      27.2,
+      38.2,
+      49.3,
+      59.5
+    ],
+    "single_level": false,
+    "power_tier": "A",
+    "xp_mult": 1.0,
+    "type_index": 12,
+    "note": "Marth 2026-07-08: levels like the health family (same anchors)."
   },
   "fortifyconjuration": {
     "name": "Fortify Conjuration",
@@ -874,10 +881,10 @@
     "class": "CONTROL",
     "curve": [
       6,
-      12,
-      18,
-      25,
-      40
+      10,
+      15,
+      22,
+      30
     ],
     "single_level": false,
     "power_tier": "B",
@@ -922,11 +929,16 @@
     ],
     "domain": "armor",
     "class": "BINARY",
-    "curve": "Level 1 only",
-    "single_level": true,
-    "power_tier": "U",
-    "xp_mult": 0.0,
-    "type_index": 37
+    "curve": [
+      0.5,
+      1.0
+    ],
+    "single_level": false,
+    "power_tier": "A",
+    "xp_mult": 2.25,
+    "type_index": 37,
+    "max_level": 2,
+    "note": "Marth 2026-07-08: two levels only. II = full silence, priced at the normal level-III cumulative total (400*2.25=900 Gem XP)."
   },
   "paralysis": {
     "name": "Stagger",
@@ -942,11 +954,11 @@
     "domain": "weapon",
     "class": "STAGGER",
     "curve": [
+      0.3,
+      0.4,
       0.5,
       0.6,
-      0.75,
-      0.9,
-      1.0
+      0.75
     ],
     "single_level": false,
     "power_tier": "S",
@@ -967,11 +979,11 @@
     "domain": "armor",
     "class": "RESIST",
     "curve": [
-      10,
-      15,
-      20,
-      25,
-      30
+      8,
+      13,
+      17,
+      21,
+      25
     ],
     "single_level": false,
     "power_tier": "A",
@@ -992,11 +1004,11 @@
     "domain": "armor",
     "class": "RESIST",
     "curve": [
-      10,
-      15,
-      20,
-      25,
-      30
+      8,
+      13,
+      17,
+      21,
+      25
     ],
     "single_level": false,
     "power_tier": "A",
@@ -1017,11 +1029,11 @@
     "domain": "armor",
     "class": "RESIST",
     "curve": [
-      10,
-      15,
-      20,
-      25,
-      30
+      8,
+      13,
+      17,
+      21,
+      25
     ],
     "single_level": false,
     "power_tier": "A",
@@ -1067,11 +1079,11 @@
     "domain": "armor",
     "class": "RESIST",
     "curve": [
-      10,
-      15,
-      20,
-      25,
-      30
+      8,
+      13,
+      17,
+      21,
+      25
     ],
     "single_level": false,
     "power_tier": "A",
@@ -1092,11 +1104,11 @@
     "domain": "armor",
     "class": "RESIST",
     "curve": [
-      10,
-      15,
-      20,
-      25,
-      30
+      8,
+      13,
+      17,
+      21,
+      25
     ],
     "single_level": false,
     "power_tier": "A",
@@ -1187,10 +1199,10 @@
     "class": "CONTROL",
     "curve": [
       6,
-      12,
-      18,
-      25,
-      40
+      10,
+      15,
+      22,
+      30
     ],
     "single_level": false,
     "power_tier": "B",
