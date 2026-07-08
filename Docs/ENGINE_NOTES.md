@@ -65,15 +65,25 @@ the item card but applies **no effect**. The working flow (from SKSE64
    BSTArray<RE::Effect>&)` (SKSE name:
    `PersistentFormManager::CreateOffensiveEnchantment`). Created forms get
    FF-prefix runtime FormIDs and are engine-persisted in the save.
-2. Attach: `xList->Add(new RE::ExtraEnchantment(ench, charge, false))`.
+2. **Make it free** — `AddWeaponEnchantment` auto-computes a per-hit CHARGE
+   COST from magnitude, which `ExtraEnchantment.charge` (a `uint16`, max
+   `0xFFFF`) must cover per swing. Force cost 0 so it never drains:
+   `ench->data.costOverride = 0;`
+   `ench->data.flags.set(RE::EnchantmentItem::EnchantmentFlag::kCostOverride);`
+   Then attach with max charge:
+   `xList->Add(new RE::ExtraEnchantment(ench, 0xFFFF, false))`.
 3. If the item is currently equipped:
    `actor->UpdateWeaponAbility(baseForm, xList, leftHand)`
    (`RELOCATION_ID(37803, 38752)`) — activates the magic caster. Skipping
    it = description with no effect.
 
 `RE::Effect` fields: `effectItem{magnitude, area, duration}`, `baseEffect`
-(the `EffectSetting*`), `cost`. Real weapon enchants bring the engine charge
-bar with them (charge/maxCharge + recharge UX); it is not repurposable.
+(the `EffectSetting*`), `cost` (the effect's cost — NOT the enchant's; the
+enchant recomputes its own, hence step 2). **Charge state gates BOTH damage
+and the elemental visual** (v0.20.0-m12): a charge-starved enchant shows its
+description but does no damage and needs a sheathe/redraw to reconcile the
+glow. A free enchant (cost 0, full charge) is permanently active, so damage
+and FX apply immediately on stamp — see §8.
 
 ## 4. Event sinks — hook-free triggers (all validated)
 
@@ -138,15 +148,19 @@ The `- 4` offset on the callback message is the trap everyone hits.
 
 ## 8. Known issues — external or by design (validated 2026-07-07, v0.8.0)
 
-- **Enchant-visual mods lag until sheathe/redraw.** The enchantment itself
-  is live the instant we stamp/re-stamp (`UpdateWeaponAbility` applies the
-  ability immediately — confirmed: the final level-up's effect worked at
-  once). Removal is equally immediate: after M4b unsocket the actual damage
-  is gone even while drawn; only the FX mod's visual lingers. Their timing,
-  not ours. Planned cosmetic fix (MCM, not yet built): option to block
-  socket/unsocket while the weapon is drawn; the full version should also
-  block it in combat. Until MCM exists these are known issues — note in the
-  mod description.
+- **~~Enchant-visual mods lag until sheathe/redraw.~~ FIXED in v0.20.0-m12.**
+  We long treated the FX lag as an external FX-mod timing quirk. It was
+  actually ours: the created enchant carried a magnitude-scaled per-hit charge
+  cost against a fixed 500 charge, so it lived in a "chargeable / depletes with
+  use" state the engine only reconciles on equip — hence the redraw was needed
+  to refresh the elemental glow (and at high magnitude the cost outran the
+  charge, so it never fired at all — the m11 bug report). Forcing the enchant
+  free (cost 0 + `0xFFFF` charge, §3 step 2) makes it permanently active, so
+  socket/unsocket/level changes — damage AND visual — apply immediately in all
+  cases, drawn or not, no sheathe/redraw. Marth confirmed in-game 2026-07-08.
+  (Confidence: the cost/charge change is definitely the cause — it's the only
+  weapon-side change; the exact charge→shader gating path is inferred, not
+  instrumented. Revisit here if it ever regresses.)
 - **Weapons in containers, on racks/displays, or in NPC inventories are NOT
   born socketed.** `TESCellAttachDetachEvent` fires per *world reference*;
   container contents and carried items are inventory entries, not refs, and
