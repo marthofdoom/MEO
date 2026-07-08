@@ -1252,5 +1252,31 @@
     "power_tier": "U",
     "xp_mult": 0.0,
     "type_index": 50
+  },
+  "sundamage": {
+    "name": "Sun Damage",
+    "mgefs": [
+      "DLC1EnchSunDamage"
+    ],
+    "mgef_refs": [
+      {
+        "plugin": "Dawnguard.esm",
+        "fid": "0x015719"
+      }
+    ],
+    "domain": "weapon",
+    "class": "LINEAR",
+    "curve": [
+      8.5,
+      13.6,
+      18.7,
+      24.6,
+      29.8
+    ],
+    "single_level": false,
+    "power_tier": "A",
+    "xp_mult": 1.0,
+    "type_index": 51,
+    "note": "Marth 2026-07-08: fire-equal curve; undead-only, unresisted. Artifact-only in vanilla (Auriel's Bow) so absent from the ench scan; MEO builds the ENCH from the MGEF directly."
   }
 }

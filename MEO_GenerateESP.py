@@ -113,14 +113,33 @@ def make_mgefs():
     return group('MGEF',out.getvalue())
 
 # ── MISC gems from catalog: assign FormIDs, build display names, record the map ──
+def load_frozen_forms():
+    """FormID FREEZE: every (gid, level) -> fid pair in the previously
+    generated runtime map is immutable (co-saves store gem baseFormIDs).
+    New gems or newly added levels get fresh fids after the frozen max."""
+    path=os.path.join('out','SKSE','Plugins','MEO','meo_runtime.json')
+    frozen={}
+    if os.path.exists(path):
+        for gid,g in json.load(open(path)).items():
+            if isinstance(g,dict) and 'forms' in g:
+                frozen[gid]={int(l):OWN|int(f,16) for l,f in g['forms'].items()}
+    return frozen
+
 def allocate_gems():
     """Return (misc_records_bytes, gem_form_map, weapon_fids, armor_fids).
-    gem_form_map[gid] = {level: fid}. FormIDs stable via sorted gid + type_index order."""
-    out=BytesIO(); fid=FID_GEM_BASE; gem_form_map={}; weapon_fids=[]; armor_fids=[]
+    Frozen (shipped) fids are reused verbatim; only never-shipped gem x level
+    pairs allocate new fids. Level count follows the curve length (Muffle=2)."""
+    frozen=load_frozen_forms()
+    next_fid=max([FID_GEM_BASE-1]+[f for m in frozen.values() for f in m.values()])+1
+    out=BytesIO(); gem_form_map={}; weapon_fids=[]; armor_fids=[]
     for gid in sorted(CATALOG, key=lambda g: CATALOG[g]['type_index']):
-        g=CATALOG[gid]; levels=1 if g['single_level'] else 5
+        g=CATALOG[gid]
+        levels=1 if g['single_level'] else min(5,len(g['curve']))
         gem_form_map[gid]={}
         for lvl in range(1,levels+1):
+            fid=frozen.get(gid,{}).get(lvl)
+            if fid is None:
+                fid=next_fid; next_fid+=1
             name=g['name'] if levels==1 else f"{g['name']} {ROMAN[lvl]}"
             body =subrec('EDID',zstr(f"MEO_Gem_{gid}_{lvl}"))
             body+=subrec('OBND',b'\x00'*12)+subrec('FULL',zstr(f"{name} Gem" if levels==1 else name))
@@ -128,8 +147,7 @@ def allocate_gems():
             out.write(record('MISC',fid,0,body))
             gem_form_map[gid][lvl]=fid
             (weapon_fids if g['domain']=='weapon' else armor_fids).append(fid)
-            fid+=1
-    return out.getvalue(), gem_form_map, weapon_fids, armor_fids, fid
+    return out.getvalue(), gem_form_map, weapon_fids, armor_fids, next_fid
 
 def make_flst(fid,edid,member_fids):
     body=subrec('EDID',zstr(edid))

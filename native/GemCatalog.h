@@ -33,6 +33,7 @@ inline constexpr GemDef kWeaponGems[] = {
     { "shockdamage", "Shock", "Skyrim.esm", 0x04605C, { 8.5f, 13.6f, 18.7f, 24.6f, 29.8f }, 0.0f, 1.0f, false, { 0x0009D4, 0x0009D5, 0x0009D6, 0x0009D7, 0x0009D8 } },
     { "soultrap", "Soul Trap", "Skyrim.esm", 0x05B452, { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, 5.0f, 0.0f, true, { 0x0009D9, 0x0009D9, 0x0009D9, 0x0009D9, 0x0009D9 } },
     { "staminadamage", "Stamina", "Skyrim.esm", 0x05B450, { 8.5f, 13.6f, 18.7f, 24.6f, 29.8f }, 0.0f, 1.0f, false, { 0x0009DA, 0x0009DB, 0x0009DC, 0x0009DD, 0x0009DE } },
+    { "sundamage", "Sun", "Dawnguard.esm", 0x015719, { 8.5f, 13.6f, 18.7f, 24.6f, 29.8f }, 0.0f, 1.0f, false, { 0x0009EF, 0x0009F0, 0x0009F1, 0x0009F2, 0x0009F3 } },
     { "turnundead", "Turn Undead", "Skyrim.esm", 0x05B46B, { 6.0f, 10.0f, 15.0f, 22.0f, 30.0f }, 30.0f, 0.6f, false, { 0x0009DF, 0x0009E0, 0x0009E1, 0x0009E2, 0x0009E3 } },
 };
 
