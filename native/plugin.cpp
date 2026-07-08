@@ -761,18 +761,18 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
     if (a_itemUid) {
         xl = FindInstanceXList(player, itemForm, a_itemUid);
     } else {
-        // A never-touched plain stack: give one unit its own extra list
-        // (engine-heap ExtraDataList; the Wheeler/iEquip pattern).
-        auto* changes = player->GetInventoryChanges();
-        if (changes && changes->entryList) {
-            for (auto* entry : *changes->entryList) {
-                if (entry && entry->object == itemForm) {
-                    xl = new RE::ExtraDataList();
-                    entry->AddExtraList(xl);
-                    spdlog::info("[menu] materialized xList on plain stack {:08X}", a_itemBase);
-                    break;
-                }
-            }
+        // A never-touched plain stack: run one unit through the proven
+        // drop-stamp-pickup flow so the ENGINE mints its extra list (NG 3.7
+        // declares but does not export the ExtraDataList constructor, and
+        // hand-building one would break the engine-flows rule anyway).
+        const auto dropped = player->RemoveItem(itemForm, 1, RE::ITEM_REMOVE_REASON::kDropping,
+                                                nullptr, nullptr);
+        if (auto ref = dropped.get()) {
+            const std::uint16_t uid = g_nextUID++;
+            ref->extraList.Add(new RE::ExtraUniqueID(a_itemBase, uid));
+            player->PickUpObject(ref.get(), 1, false, false);
+            xl = FindInstanceXList(player, itemForm, uid);
+            spdlog::info("[menu] minted instance {:08X}/{} via drop/pickup", a_itemBase, uid);
         }
     }
     if (!xl) {
