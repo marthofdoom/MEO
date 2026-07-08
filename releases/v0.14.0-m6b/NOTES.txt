@@ -1,0 +1,2 @@
+M6b: Sun gem (15th weapon gem, Dawnguard MGEF), final balance curves (Stagger 0.75, control V=30), freeze-aware ESP generator (244 gem forms)
+built from native run 28917187131
