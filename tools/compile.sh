@@ -24,7 +24,7 @@ mkdir -p out/Scripts
 
 scripts=("$@")
 if [[ "${1:-}" == "all" ]]; then
-    scripts=(MEO_StartupQuest MEO_PouchScript)
+    scripts=(MEO_StartupQuest MEO_PouchScript MEO_MCM)
 fi
 [[ ${#scripts[@]} -gt 0 ]] || { echo "usage: tools/compile.sh <ScriptName>... | all" >&2; exit 1; }
 

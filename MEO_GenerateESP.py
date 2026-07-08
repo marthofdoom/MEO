@@ -35,6 +35,7 @@ FID_STARTUP_QUEST  = OWN | 0x804
 FID_FLST_ALL       = OWN | 0x805
 FID_FLST_WEAPON    = OWN | 0x806
 FID_FLST_ARMOR     = OWN | 0x807
+FID_MCM_QUEST      = OWN | 0x808   # MCM Helper config quest (attaches MEO_MCM); FROZEN
 FID_POUCH_CONT     = OWN | 0x8FE   # hidden Gem Pouch container (M5 ContainerMenu UI); FROZEN
 FID_MENTOR_GEM     = OWN | 0x8FF   # unique support gem (M3d); FROZEN, outside the sequential range
 FID_GEM_BASE       = OWN | 0x900   # MISC gems allocated sequentially from here
@@ -171,12 +172,26 @@ def make_cont():
     body+=subrec('FULL',zstr("Gem Pouch"))+subrec('DATA',struct.pack('<Bf',0,0.0))
     return group('CONT',record('CONT',FID_POUCH_CONT,0,body))
 
-def qust_dnam(): return struct.pack('<B',20)+b'\x01\x00\xff'+struct.pack('<HHI',0x0001|0x0004,0,0)
-def make_qust():
+# DNAM flags: 0x0001 = Start Game Enabled, 0x0004 = Run Once (layout verified
+# against MRO's shipped, in-game-proven MCM quest — flags live at offset 4).
+def qust_dnam(flags=0x0001|0x0004): return struct.pack('<B',20)+b'\x01\x00\xff'+struct.pack('<HHI',flags,0,0)
+def make_startup_quest():
     vmad=VMADBuilder(); vmad.add_script("MEO_StartupQuest",[("PlayerRef",prop_obj(FREF_PLAYER)),("GemPouchPower",prop_obj(FID_POUCH_SPELL))])
     body =subrec('EDID',zstr("MEO_StartupQuest"))+subrec('FULL',zstr("MEO Startup"))+subrec('VMAD',vmad.build())
     body+=subrec('DNAM',qust_dnam())+subrec('NEXT',b'')+subrec('ANAM',struct.pack('<I',0))
-    return group('QUST',record('QUST',FID_STARTUP_QUEST,0,body))
+    return record('QUST',FID_STARTUP_QUEST,0,body)
+def make_mcm_quest():
+    # Start-game-enabled (not run-once) quest whose only job is to carry the
+    # MEO_MCM script (extends MCM Helper's MCM_ConfigBase). Zero VMAD properties:
+    # MCM Helper renders from Data/MCM/Config/MEO/config.json and persists to
+    # Data/MCM/Settings/MEO.ini; the DLL reads that INI. modName is derived by
+    # MCM Helper from this quest's plugin stem ("MEO"), so no property needed.
+    vmad=VMADBuilder(); vmad.add_script("MEO_MCM",[])
+    body =subrec('EDID',zstr("MEO_MCMQuest"))+subrec('FULL',zstr("MEO MCM"))+subrec('VMAD',vmad.build())
+    body+=subrec('DNAM',qust_dnam(0x0001))+subrec('NEXT',b'')+subrec('ANAM',struct.pack('<I',0))
+    return record('QUST',FID_MCM_QUEST,0,body)
+def make_qust():
+    return group('QUST',make_startup_quest()+make_mcm_quest())
 
 def write_runtime_json(out_dir, gem_form_map):
     """Per-gem runtime data the socket script reads via JsonUtil. Lives under
@@ -192,6 +207,71 @@ def write_runtime_json(out_dir, gem_form_map):
         }
     d=os.path.join(out_dir,'SKSE','Plugins','MEO'); os.makedirs(d,exist_ok=True)
     json.dump(rt,open(os.path.join(d,'meo_runtime.json'),'w'),indent=1)
+
+# ── MCM (MCM Helper): config.json + default settings INI ──
+# Single source of truth for the user-facing tunables. Each key's DEFAULT must
+# match the matching g_* default in native/plugin.cpp so a fresh install (no
+# INI yet) and the INI agree. section = MCM Helper INI section (the DLL ignores
+# section headers; keys are globally unique). type: 'f' float slider, 'b' toggle.
+MCM_TUNABLES=[
+    # (page, section, key, label, help, type, default, min, max, step, fmt)
+    ("Loot & Spawns","Loot","fGemDropChance","Gem drop chance per kill",
+     "Chance that killing an actor drops a lootable gem on the corpse.",
+     'f',0.03,0.0,0.25,0.005,"{2}"),
+    ("Loot & Spawns","Loot","fWorldSocketChance","World weapon socket chance",
+     "Chance that a weapon found in the world is already socketed with a gem.",
+     'f',0.05,0.0,0.25,0.005,"{2}"),
+    ("Loot & Spawns","Loot","fGemLevel2Chance","Level II spawn chance",
+     "Chance that a spawned gem (corpse drop or world socket) is born at level II instead of I.",
+     'f',0.02,0.0,0.20,0.005,"{2}"),
+    ("XP & Balance","XP","fXPPerKill","Gem XP rate",
+     "Multiplier on the Gem XP your socketed gems earn from each kill.",
+     'f',1.0,0.25,5.0,0.25,"{2}"),
+    ("XP & Balance","XP","fBossXPMult","Boss / dragon XP multiplier",
+     "Extra Gem XP multiplier applied to boss and dragon kills.",
+     'f',10.0,1.0,25.0,1.0,"{0}"),
+    ("XP & Balance","XP","fMagnitudeMult","Gem power scale",
+     "Master multiplier on every gem's effect magnitude, applied when a gem is socketed or levels up. Existing sockets update on their next re-stamp.",
+     'f',1.0,0.5,2.0,0.05,"{2}"),
+    ("XP & Balance","UI","bXPNotify","Show Gem XP notifications",
+     "Show a corner message when your gems gain Gem XP on a kill.",
+     'b',1,None,None,None,None),
+]
+
+def write_mcm_files(out_dir):
+    """config.json (Data/MCM/Config/MEO/) + default settings INI
+    (Data/MCM/Settings/MEO.ini). MCM Helper reads the config, persists user
+    choices to the INI; the DLL reads the INI (and re-reads it on menu close)."""
+    pages={}
+    for page,section,key,label,help_,typ,dflt,mn,mx,step,fmt in MCM_TUNABLES:
+        pages.setdefault(page,[])
+        if typ=='f':
+            ctrl={"id":f"{key}:{section}","text":label,"type":"slider","help":help_,
+                  "valueOptions":{"min":mn,"max":mx,"step":step,"formatString":fmt,
+                                  "sourceType":"ModSettingFloat","defaultValue":dflt}}
+        else:
+            ctrl={"id":f"{key}:{section}","text":label,"type":"toggle","help":help_,
+                  "valueOptions":{"sourceType":"ModSettingBool","defaultValue":bool(dflt)}}
+        pages[page].append(ctrl)
+    config={"modName":"MEO","displayName":"Marth's Enchanting Overhaul",
+            "minMcmVersion":9,"cursorFillMode":"topToBottom",
+            "pages":[{"pageDisplayName":p,"cursorFillMode":"topToBottom",
+                      "content":[{"text":p,"type":"header"}]+ctrls}
+                     for p,ctrls in pages.items()]}
+    cdir=os.path.join(out_dir,'MCM','Config','MEO'); os.makedirs(cdir,exist_ok=True)
+    json.dump(config,open(os.path.join(cdir,'config.json'),'w'),indent='\t')
+    # Default settings INI (MCM Helper format: BOM + [Section] + key = value).
+    by_sec={}
+    for _,section,key,_l,_h,typ,dflt,*_ in MCM_TUNABLES:
+        by_sec.setdefault(section,[]).append((key,dflt,typ))
+    lines=[]
+    for section,items in by_sec.items():
+        lines.append(f"[{section}]")
+        for key,dflt,typ in items:
+            lines.append(f"{key} = {int(dflt)}" if typ=='b' else f"{key} = {float(dflt):.6f}")
+    sdir=os.path.join(out_dir,'MCM','Settings'); os.makedirs(sdir,exist_ok=True)
+    with open(os.path.join(sdir,'MEO.ini'),'w',encoding='utf-8-sig') as f:
+        f.write("\n".join(lines)+"\n")
 
 def main():
     out_dir=sys.argv[1] if len(sys.argv)>1 else "out"; os.makedirs(out_dir,exist_ok=True)
@@ -214,9 +294,11 @@ def main():
     data=esp.getvalue()
     with open(os.path.join(out_dir,"MEO.esp"),'wb') as f: f.write(data)
     write_runtime_json(out_dir, gem_form_map)
+    write_mcm_files(out_dir)
     ngems=len(CATALOG); nmisc=len(weapon_fids)+len(armor_fids)
     print(f"Written: {out_dir}/MEO.esp ({len(data):,} bytes)")
-    print(f"  MGEF x3  (marker contact+self, pouch)   CONT x1  SPEL x1  QUST x1  FLST x3")
+    print(f"  MGEF x3  (marker contact+self, pouch)   CONT x1  SPEL x1  QUST x2 (startup+MCM)  FLST x3")
+    print(f"  MCM: {out_dir}/MCM/Config/MEO/config.json + {out_dir}/MCM/Settings/MEO.ini ({len(MCM_TUNABLES)} tunables)")
     print(f"  MISC x{nmisc}  ({ngems} gems: {len(weapon_fids)} weapon-domain + {len(armor_fids)} armor-domain forms)")
     print(f"Written: {out_dir}/SKSE/Plugins/{RUNTIME_REL} ({ngems} gems)")
 

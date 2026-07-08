@@ -70,10 +70,17 @@ if [[ "$WITH_JSON" == 1 ]]; then
     cp out/SKSE/Plugins/MEO/meo_runtime.json "$STAGE/SKSE/Plugins/MEO/"
 fi
 
-# Optional ESP (only builds that ship forms).
+# Optional ESP (only builds that ship forms). Carries the MCM config +
+# compiled MCM shim script, which are generated alongside the ESP.
 if [[ "$WITH_ESP" == 1 ]]; then
     [[ -f out/MEO.esp ]] || python3 MEO_GenerateESP.py out
     cp out/MEO.esp "$STAGE/"
+    if [[ -d out/MCM ]]; then
+        mkdir -p "$STAGE/MCM"; cp -r out/MCM/. "$STAGE/MCM/"
+    fi
+    if [[ -f out/Scripts/MEO_MCM.pex ]]; then
+        mkdir -p "$STAGE/Scripts"; cp out/Scripts/MEO_MCM.pex "$STAGE/Scripts/"
+    fi
 fi
 
 mkdir -p "$DEST"

@@ -120,6 +120,7 @@ std::unordered_map<RE::FormID, std::pair<int, int>> g_gemByItem;  // item -> {ge
 std::unordered_map<std::string_view, int>         g_gemByGid;
 std::vector<int>                                  g_lootableGems;  // resolved, levelable
 RE::SpellItem*                                    g_pouchSpell = nullptr;
+float g_magnitudeMult = 1.0f;  // [XP] fMagnitudeMult master power scale; used by StampInstance below, set by ReadConfig (MCM)
 
 // ── M3d forms (all IDs extracted from the real Lorerim masters) ───────
 constexpr RE::FormID kPouchContID = 0x8FE;        // MEO.esp CONT (frozen) — M5 Gem Pouch menu
@@ -253,7 +254,9 @@ std::uint16_t StampInstance(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     RE::BSTArray<RE::Effect> effects;
     effects.resize(1);
     auto& eff = effects[0];
-    eff.effectItem.magnitude = rg.def->magnitude[lvIdx];
+    // Master power scale (MCM fMagnitudeMult); existing sockets pick it up on
+    // their next re-stamp (level-up or re-socket), like any balance change.
+    eff.effectItem.magnitude = rg.def->magnitude[lvIdx] * g_magnitudeMult;
     eff.effectItem.area = 0;
     eff.effectItem.duration = static_cast<std::uint32_t>(rg.def->duration);
     eff.baseEffect = rg.mgef;
@@ -356,43 +359,76 @@ float g_gemDropChance = 0.03f;    // [Loot] fGemDropChance — corpse gem on pla
 float g_worldSocketChance = 0.05f;// [Loot] fWorldSocketChance — world weapon born socketed
 float g_gemLevel2Chance = 0.02f;  // [Loot] fGemLevel2Chance — spawned gem is level II not I
 float g_bossXPMult = 10.0f;       // [XP] fBossXPMult — boss/dragon kill multiplier
-bool  g_xpNotify = true;          // [UI] bXPNotify — "Gem XP +N" on kills (MCM later)
+bool  g_xpNotify = true;          // [UI] bXPNotify — "Gem XP +N" on kills
+// g_magnitudeMult [XP] fMagnitudeMult is declared up top (StampInstance uses it)
 
-void ReadConfig() {
-    std::ifstream ini("Data/SKSE/Plugins/MEO.ini");
-    std::string   line;
+// Apply one INI file's key=value lines onto the config globals. Tolerates the
+// MCM Helper format: a leading UTF-8 BOM and [Section] headers (no '=' → skipped;
+// keys are globally unique so sections are informational only).
+static void ApplyIniFile(const char* a_path) {
+    std::ifstream ini(a_path);
+    if (!ini) {
+        return;
+    }
     auto trim = [](std::string s) {
         s.erase(0, s.find_first_not_of(" \t\r"));
         s.erase(s.find_last_not_of(" \t\r") + 1);
         return s;
     };
+    std::string line;
     while (std::getline(ini, line)) {
+        if (line.rfind("\xEF\xBB\xBF", 0) == 0) {
+            line.erase(0, 3);  // UTF-8 BOM (MCM Helper writes one)
+        }
         const auto eq = line.find('=');
         if (eq == std::string::npos) {
             continue;
         }
         const std::string key = trim(line.substr(0, eq));
         const float       val = std::strtof(trim(line.substr(eq + 1)).c_str(), nullptr);
-        if (key == "fXPPerKill") {
-            g_xpPerKill = val;
-        } else if (key == "fGemDropChance") {
-            g_gemDropChance = val;
-        } else if (key == "fWorldSocketChance") {
-            g_worldSocketChance = val;
-        } else if (key == "fGemLevel2Chance") {
-            g_gemLevel2Chance = val;
-        } else if (key == "fBossXPMult") {
-            g_bossXPMult = val;
-        } else if (key == "bXPNotify") {
-            g_xpNotify = val != 0.0f;
-        }
+        if (key == "fXPPerKill")              g_xpPerKill = val;
+        else if (key == "fGemDropChance")     g_gemDropChance = val;
+        else if (key == "fWorldSocketChance") g_worldSocketChance = val;
+        else if (key == "fGemLevel2Chance")   g_gemLevel2Chance = val;
+        else if (key == "fBossXPMult")        g_bossXPMult = val;
+        else if (key == "fMagnitudeMult")     g_magnitudeMult = val;
+        else if (key == "bXPNotify")          g_xpNotify = val != 0.0f;
     }
-    if (g_xpPerKill != 1.0f) {
-        spdlog::warn("DEV: fXPPerKill={} (MEO.ini override)", g_xpPerKill);
-    }
-    spdlog::info("config: fGemDropChance={:.2f} fWorldSocketChance={:.2f} fGemLevel2Chance={:.2f}",
-                 g_gemDropChance, g_worldSocketChance, g_gemLevel2Chance);
 }
+
+// Legacy SKSE/Plugins/MEO.ini is a dev/seed file; the MCM's own settings file
+// (written by MCM Helper) is read last so it wins. Called at load and re-called
+// live on menu close (ReloadConfigIfChanged) so MCM edits apply immediately.
+void ReadConfig() {
+    ApplyIniFile("Data/SKSE/Plugins/MEO.ini");
+    ApplyIniFile("Data/MCM/Settings/MEO.ini");
+    if (g_xpPerKill != 1.0f) {
+        spdlog::warn("DEV: fXPPerKill={} override", g_xpPerKill);
+    }
+    spdlog::info("config: drop={:.3f} world={:.3f} lvl2={:.3f} xp={:.2f} boss={:.1f} mag={:.2f} notify={}",
+                 g_gemDropChance, g_worldSocketChance, g_gemLevel2Chance, g_xpPerKill,
+                 g_bossXPMult, g_magnitudeMult, g_xpNotify);
+}
+
+// Live MCM apply: SkyUI's Mod Configuration menu is hosted in the Journal
+// (pause) menu, and MCM Helper persists ModSettings to MEO.ini when it closes.
+// Re-reading the INI on that close makes slider/toggle changes take effect
+// immediately (loot/XP knobs at once; gem power on the next re-stamp).
+class MenuSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
+public:
+    static MenuSink* GetSingleton() {
+        static MenuSink singleton;
+        return &singleton;
+    }
+    RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event,
+                                          RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
+        if (a_event && !a_event->opening &&
+            a_event->menuName == RE::JournalMenu::MENU_NAME) {
+            ReadConfig();
+        }
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
 
 // Add Gem XP to one socketed worn instance; handles the level-up re-stamp,
 // notifications (named for followers), and mastered births. a_rec must be
@@ -1556,8 +1592,9 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESDeathEvent>(DeathSink::GetSingleton());
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESCellAttachDetachEvent>(CellAttachSink::GetSingleton());
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
+        RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.15.0 (M7 rarity curve + stack-dup fix) loaded");
+            console->Print("MEO native v0.16.0 (M8 MCM) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -1579,7 +1616,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.15.0 (M7: tier rarity curve + loot rates + stack-dup fix) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.16.0 (M8: MCM Helper config) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
