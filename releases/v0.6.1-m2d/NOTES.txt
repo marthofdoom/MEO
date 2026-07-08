@@ -1,2 +1,0 @@
-M2d: force display name — the engine pre-creates name data on tempered items, so add-if-absent silently skipped; now reuses/overwrites the record (SKSE force semantics) and logs pre-existing name data for diagnosis. Test on the same dagger is fine for the NAME (it will log what it finds), but the enchant-skip still applies to already-socketed instances.
-built from native run 28820961349

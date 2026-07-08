@@ -1,2 +1,0 @@
-M2f: temper-synced display name (temperFactor == ExtraHealth), from the M2e gold-standard diff. Full test: equip fresh weapon -> [MEO] name + burn; drop -> activate prompt; pick up -> notification; container; save/reload.
-built from native run 28826372182

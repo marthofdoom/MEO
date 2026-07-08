@@ -1,2 +1,0 @@
-M2b: real socket state. Equip an unenchanted weapon -> full bundle stamped: ExtraUniqueID (persisted), [MEO] name, REAL ExtraEnchantment (EnchWeaponFireDamage01, charge 500) + co-save record uid->{Fire,1,0}. Test: hits burn; drop -> crosshair AND pickup prompt names; save/reload -> uid record restored; no stacking with plain copies. Skips vanilla-enchanted gear. No code hooks.
-built from native run 28800022441

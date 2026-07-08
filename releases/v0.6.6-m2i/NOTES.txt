@@ -1,2 +1,0 @@
-M2i: bracket-free display name (MEO <base>); Lorerim UI strips [.] tags from rollover
-built from native run 28837317933

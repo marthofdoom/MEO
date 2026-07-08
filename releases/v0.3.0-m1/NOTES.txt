@@ -1,2 +1,0 @@
-M1: co-save per-instance gem index. Serializes map<instanceID->{type,level,xp}> via SKSE Save/Load/Revert. DLL-only self-test: seeds a synthetic record per save; save/reload restores the map, New Game reverts it. No hooks.
-built from native run 28772568678

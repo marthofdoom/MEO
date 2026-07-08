@@ -1,2 +1,0 @@
-M2a.1: stamp ExtraUniqueID on the worn instance before renaming, so the [MEO] name survives DROPPING (plain uniqueID=0 items lose extra data on drop). Test: equip -> drop -> ground shows the name. Validates our own per-instance identity (engine gives plain items uniqueID=0).
-built from native run 28776291842
