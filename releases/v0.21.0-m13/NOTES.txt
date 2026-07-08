@@ -1,0 +1,2 @@
+Multi-socket (stage 3b-1): items hold up to 2 gems; gloves dual by default
+built from native run 28972803827
