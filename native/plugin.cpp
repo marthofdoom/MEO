@@ -93,10 +93,13 @@ struct SocketRecord {
     std::uint8_t level;  // 1..5
     float        xp;
 };
-// key = (baseFormID << 16) | uniqueID  — see save-safety rule 3.
+// key = (baseFormID << 24) | (uniqueID << 8) | slot  — multi-socket (m13):
+// one item instance (base,uid) can hold up to kMaxSockets gems, one per slot.
+// Loose gem records always use slot 0. See save-safety rule 3.
+constexpr int kMaxSockets = 2;
 using InstKey = std::uint64_t;
-constexpr InstKey MakeKey(RE::FormID a_base, std::uint16_t a_uid) {
-    return (static_cast<InstKey>(a_base) << 16) | a_uid;
+constexpr InstKey MakeKey(RE::FormID a_base, std::uint16_t a_uid, std::uint8_t a_slot = 0) {
+    return (static_cast<InstKey>(a_base) << 24) | (static_cast<InstKey>(a_uid) << 8) | a_slot;
 }
 std::unordered_map<InstKey, SocketRecord> g_sockets;
 std::uint16_t g_nextUID = 0x9000;  // our range, clear of engine-assigned ids
@@ -104,7 +107,7 @@ bool          g_starterGranted = false;
 
 constexpr std::uint32_t kSerID = 'MEO1';
 constexpr std::uint32_t kRecGems = 'GEMS';
-constexpr std::uint32_t kSerVersion = 4;  // v4: + mentorGranted flag (v3 reader kept forever)
+constexpr std::uint32_t kSerVersion = 5;  // v5: + per-socket slot (multi-socket). v3/v4 → slot 0
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -241,29 +244,87 @@ void ResolveCatalog() {
                  g_soulCairn ? "ok" : "absent", g_bossRefType ? "ok" : "MISSING");
 }
 
-// ── The stamp: paint one socket onto one instance (engine flows only) ─
-// Returns the uid used, or 0 on failure. Caller handles UpdateWeaponAbility
-// (worn items) and gem-item consumption. a_xp carries accumulated XP through
-// a level-up re-stamp (fresh sockets pass 0).
-std::uint16_t StampInstance(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList,
-                            int a_gemIdx, int a_level, float a_xp = 0.0f) {
-    const auto& rg = g_gems[a_gemIdx];
-    if (!rg.mgef || !a_base || !a_xList) {
-        return 0;
+// Sockets an item can hold (m13 multi-socket). Boots are excluded upstream
+// (ineligible). Gloves are dual by default; chest/weapon 2nd sockets arrive
+// with the socket perks (3b-2). Everything else is single.
+int SocketCapacity(RE::TESBoundObject* a_obj) {
+    if (auto* armo = a_obj ? a_obj->As<RE::TESObjectARMO>() : nullptr) {
+        if (armo->HasPartOf(RE::BGSBipedObjectForm::BipedObjectSlot::kHands)) {
+            return 2;  // gloves
+        }
+        return 1;
     }
-    const int lvIdx = std::clamp(a_level, 1, 5) - 1;
+    return 1;  // weapons
+}
 
-    std::uint16_t uid = 0;
-    if (auto* xid = a_xList->GetByType<RE::ExtraUniqueID>()) {
-        uid = xid->uniqueID;  // engine-assigned is fine: key includes baseID
+// Rebuild an instance's SINGLE combined enchantment from ALL its filled socket
+// slots. One created enchant carries one Effect per gem; the name lists them.
+// No filled slots -> strip the enchant + name. Caller applies the worn ability.
+// This is the multi-socket core: every socket/unsocket/level-up rebuilds here.
+void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList) {
+    auto* xid = a_xList ? a_xList->GetByType<RE::ExtraUniqueID>() : nullptr;
+    if (!a_base || !xid) {
+        return;
+    }
+    const std::uint16_t uid = xid->uniqueID;
+    const bool          isArmor = a_base->Is(RE::FormType::Armor);
+
+    struct Filled { const ResolvedGem* rg; int lvIdx; };
+    std::vector<Filled> filled;
+    for (int slot = 0; slot < kMaxSockets; ++slot) {
+        auto it = g_sockets.find(MakeKey(a_base->GetFormID(), uid, static_cast<std::uint8_t>(slot)));
+        if (it == g_sockets.end()) {
+            continue;
+        }
+        auto gemIt = g_gemByGid.find(it->second.gid);
+        if (gemIt == g_gemByGid.end() || !g_gems[gemIt->second].mgef) {
+            continue;
+        }
+        filled.push_back({ &g_gems[gemIt->second], std::clamp<int>(it->second.level, 1, 5) - 1 });
+    }
+    if (filled.empty()) {  // last gem removed — return the item to plain
+        a_xList->RemoveByType(RE::ExtraDataType::kEnchantment);
+        a_xList->RemoveByType(RE::ExtraDataType::kTextDisplayData);
+        return;
+    }
+
+    RE::BSTArray<RE::Effect> effects;
+    effects.resize(filled.size());
+    std::string namePart;
+    for (std::size_t i = 0; i < filled.size(); ++i) {
+        auto& eff = effects[i];
+        // Master power scale (MCM) × Gem Attunement (+8%/rank, DESIGN §6).
+        eff.effectItem.magnitude =
+            filled[i].rg->def->magnitude[filled[i].lvIdx] * g_magnitudeMult *
+            (1.0f + 0.08f * g_attuneRank);
+        eff.effectItem.area = 0;
+        eff.effectItem.duration = static_cast<std::uint32_t>(filled[i].rg->def->duration);
+        eff.baseEffect = filled[i].rg->mgef;
+        eff.cost = 0.0f;
+        if (!namePart.empty()) {
+            namePart += " + ";
+        }
+        namePart += std::format("{} {}", filled[i].rg->def->name, meo::kRoman[filled[i].lvIdx]);
+    }
+    auto* com = RE::BGSCreatedObjectManager::GetSingleton();
+    auto* ench = isArmor ? com->AddArmorEnchantment(effects) : com->AddWeaponEnchantment(effects);
+    if (!ench) {
+        spdlog::error("[rebuild] Add{}Enchantment null on {:08X}/{}",
+                      isArmor ? "Armor" : "Weapon", a_base->GetFormID(), uid);
+        return;
+    }
+    ench->data.costOverride = 0;  // gems never drain (ENGINE_NOTES §3/§8)
+    ench->data.flags.set(RE::EnchantmentItem::EnchantmentFlag::kCostOverride);
+    if (auto* xEnch = a_xList->GetByType<RE::ExtraEnchantment>()) {
+        xEnch->enchantment = ench;
+        xEnch->charge = 0xFFFF;
+        xEnch->removeOnUnequip = false;
     } else {
-        uid = g_nextUID++;
-        a_xList->Add(new RE::ExtraUniqueID(a_base->GetFormID(), uid));
+        a_xList->Add(new RE::ExtraEnchantment(ench, 0xFFFF, false));
     }
-
-    // Forced name + engine reconcile (M2d/M2h). No brackets (M2i).
+    // Forced name + engine reconcile (M2d/M2h; no brackets M2i).
     const char*       baseName = a_base->GetName();
-    const std::string newName = std::format("{} {} {}", rg.def->name, meo::kRoman[lvIdx],
+    const std::string newName = std::format("{} {}", namePart,
                                             (baseName && *baseName) ? baseName : "Item");
     auto* xText = a_xList->GetByType<RE::ExtraTextDisplayData>();
     if (xText) {
@@ -278,51 +339,30 @@ std::uint16_t StampInstance(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     if (auto* xHealth = a_xList->GetByType<RE::ExtraHealth>()) {
         health = xHealth->health;
     }
-    xText->GetDisplayName(a_base, health);  // engine builder reconciles the record
+    xText->GetDisplayName(a_base, health);
+    spdlog::info("[rebuild] {:08X}/{}: '{}' ({} gem(s))", a_base->GetFormID(), uid, newName,
+                 filled.size());
+}
 
-    // Created enchantment at the catalog magnitude (M2c recipe).
-    RE::BSTArray<RE::Effect> effects;
-    effects.resize(1);
-    auto& eff = effects[0];
-    // Master power scale (MCM fMagnitudeMult) × Gem Attunement (+8%/rank,
-    // DESIGN §6). Existing sockets pick both up on their next re-stamp.
-    eff.effectItem.magnitude =
-        rg.def->magnitude[lvIdx] * g_magnitudeMult * (1.0f + 0.08f * g_attuneRank);
-    eff.effectItem.area = 0;
-    eff.effectItem.duration = static_cast<std::uint32_t>(rg.def->duration);
-    eff.baseEffect = rg.mgef;
-    eff.cost = 0.0f;
-    // Armor gems are constant self-target enchantments; weapon gems are
-    // fire-and-forget contact. The created-object manager sets the enchant
-    // type from the effect's MGEF (Constant/Self vs FireForget/Contact).
-    auto* com = RE::BGSCreatedObjectManager::GetSingleton();
-    auto* ench = rg.def->isArmor ? com->AddArmorEnchantment(effects)
-                                 : com->AddWeaponEnchantment(effects);
-    if (!ench) {
-        spdlog::error("Add{}Enchantment returned null for '{}'",
-                      rg.def->isArmor ? "Armor" : "Weapon", rg.def->gid);
+// Socket one gem into slot a_slot, then rebuild the instance's combined enchant.
+// Returns the uid (minted if absent), or 0 on failure. Caller does the worn
+// ability + gem consumption. a_xp carries banked XP through a level-up re-stamp.
+std::uint16_t StampInstance(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList,
+                            int a_gemIdx, int a_level, std::uint8_t a_slot = 0, float a_xp = 0.0f) {
+    if (a_gemIdx < 0 || !a_base || !a_xList || !g_gems[a_gemIdx].mgef) {
         return 0;
     }
-    // Gems never drain (DESIGN §6). AddWeaponEnchantment auto-computes a per-use
-    // charge cost from magnitude; with the power scale + Attunement pushing
-    // magnitude up, that cost outran the fixed 500 charge, so the weapon showed
-    // the enchant but had too little charge to ever fire it. Force cost 0.
-    ench->data.costOverride = 0;
-    ench->data.flags.set(RE::EnchantmentItem::EnchantmentFlag::kCostOverride);
-    // Replace any previous instance enchantment (level-up path re-stamps).
-    if (auto* xEnch = a_xList->GetByType<RE::ExtraEnchantment>()) {
-        xEnch->enchantment = ench;
-        xEnch->charge = 0xFFFF;
-        xEnch->removeOnUnequip = false;
+    std::uint16_t uid = 0;
+    if (auto* xid = a_xList->GetByType<RE::ExtraUniqueID>()) {
+        uid = xid->uniqueID;  // engine-assigned is fine: key includes baseID
     } else {
-        a_xList->Add(new RE::ExtraEnchantment(ench, 0xFFFF, false));
+        uid = g_nextUID++;
+        a_xList->Add(new RE::ExtraUniqueID(a_base->GetFormID(), uid));
     }
-
-    g_sockets[MakeKey(a_base->GetFormID(), uid)] =
-        SocketRecord{ rg.def->gid, static_cast<std::uint8_t>(lvIdx + 1), a_xp };
-    spdlog::info("STAMP {:08X}/{}: '{}' gem={} L{} mag={} ench={:08X}; index {} record(s)",
-                 a_base->GetFormID(), uid, newName, rg.def->gid, lvIdx + 1,
-                 rg.def->magnitude[lvIdx], ench->GetFormID(), g_sockets.size());
+    const int lvIdx = std::clamp(a_level, 1, 5) - 1;
+    g_sockets[MakeKey(a_base->GetFormID(), uid, a_slot)] =
+        SocketRecord{ g_gems[a_gemIdx].def->gid, static_cast<std::uint8_t>(lvIdx + 1), a_xp };
+    RebuildInstanceEnchant(a_base, a_xList);
     return uid;
 }
 
@@ -525,9 +565,9 @@ struct MenuItemRow {
     RE::FormID    base = 0;
     std::uint16_t uid = 0;       // 0 = plain stack (xList materialized on socket)
     bool          worn = false;
-    bool          socketed = false;
-    bool          isArmor = false;  // gates which gems can socket into it
-    std::string   gemLabel;      // socketed gem, e.g. "Fire II (250/900)"
+    bool          isArmor = false;    // gates which gems can socket into it
+    int           capacity = 1;       // socket slots this item has (1 or 2)
+    std::string   slotGem[2];         // per-slot gem label; empty = empty slot
 };
 struct MenuGemRow {
     std::string   label;
@@ -610,9 +650,11 @@ bool GrantGemXP(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataLis
     if (a_rec.xp < need) {
         return true;
     }
-    const int   newLevel = a_rec.level + 1;
-    const float carriedXP = a_rec.xp;
-    StampInstance(a_base, a_xList, a_gemIdx, newLevel, carriedXP);
+    const int newLevel = a_rec.level + 1;
+    // a_rec is the live g_sockets slot entry; bump its level (xp stays cumulative)
+    // and rebuild the instance's combined enchant from all slots.
+    a_rec.level = static_cast<std::uint8_t>(newLevel);
+    RebuildInstanceEnchant(a_base, a_xList);
     if (IsWornXList(a_xList)) {  // non-worn (fed at a station) re-applies on equip
         ApplyWornAbility(a_owner, a_base, a_xList, a_left);
     }
@@ -678,17 +720,21 @@ void AwardKillXP(RE::Actor* a_owner, float a_ap) {
             if (!xid) {
                 continue;
             }
-            auto it = g_sockets.find(MakeKey(entry->object->GetFormID(), xid->uniqueID));
-            if (it == g_sockets.end()) {
-                continue;
-            }
-            auto gemIt = g_gemByGid.find(it->second.gid);
-            if (gemIt == g_gemByGid.end()) {
-                continue;
-            }
-            if (GrantGemXP(a_owner, entry->object, xList, left, it->second, gemIt->second, xp,
-                           xid->uniqueID)) {
-                ++awarded;
+            // Feed every filled socket slot on this worn item.
+            for (int slot = 0; slot < kMaxSockets; ++slot) {
+                auto it = g_sockets.find(MakeKey(entry->object->GetFormID(), xid->uniqueID,
+                                                 static_cast<std::uint8_t>(slot)));
+                if (it == g_sockets.end()) {
+                    continue;
+                }
+                auto gemIt = g_gemByGid.find(it->second.gid);
+                if (gemIt == g_gemByGid.end()) {
+                    continue;
+                }
+                if (GrantGemXP(a_owner, entry->object, xList, left, it->second, gemIt->second, xp,
+                               xid->uniqueID)) {
+                    ++awarded;
+                }
             }
         }
     }
@@ -819,37 +865,31 @@ void BuildMenuSnapshot() {
                     row.isArmor = isArmor;
                     row.worn = IsWornXList(xl);
                     if (xl->HasType(RE::ExtraDataType::kEnchantment)) {
-                        // Enchanted units are distinct (can't stack with plain
-                        // ones), so they always leave the plain socketable pool.
+                        // Enchanted units are distinct — never part of the plain pool.
                         instances += cnt;
                         if (!xid) {
                             continue;  // enchanted, never stamped by us
                         }
-                        auto it = g_sockets.find(MakeKey(row.base, xid->uniqueID));
-                        if (it == g_sockets.end()) {
-                            continue;  // player-enchanted at a table — not socketable
-                        }
-                        row.socketed = true;
-                        if (auto gemIt = g_gemByGid.find(it->second.gid);
-                            gemIt != g_gemByGid.end()) {
-                            const auto& rg = g_gems[gemIt->second];
-                            const float need = NextThreshold(rg.def, it->second.level);
-                            row.gemLabel = std::format("{} {}", rg.def->name,
-                                                       meo::kRoman[it->second.level - 1]);
-                            if (need > 0.0f) {
-                                row.gemLabel += std::format(" ({:.0f}/{:.0f})", it->second.xp, need);
+                        // Ours only if at least one socket slot has a record;
+                        // otherwise it's a player/base enchant — not socketable.
+                        bool ours = false;
+                        for (int s = 0; s < kMaxSockets; ++s) {
+                            if (g_sockets.contains(MakeKey(row.base, xid->uniqueID,
+                                                           static_cast<std::uint8_t>(s)))) {
+                                ours = true;
+                                break;
                             }
-                        } else {
-                            row.gemLabel = "gem from a missing master";
+                        }
+                        if (!ours) {
+                            continue;
                         }
                     } else {
                         if (!eligible) {
                             continue;
                         }
                         // A stack sharing one extraList (count > 1) must NOT become
-                        // a single instance row: stamping that xList would enchant
-                        // every unit for one gem. Leave the units in the plain pool
-                        // (below) — MenuSocket peels exactly one off via drop/pickup.
+                        // a single instance row: stamping it would enchant every unit
+                        // for one gem. Leave those in the plain pool (below).
                         if (cnt > 1) {
                             continue;
                         }
@@ -860,11 +900,26 @@ void BuildMenuSnapshot() {
                         }
                     }
                     row.uid = xid->uniqueID;
-                    const char* dn = nullptr;
-                    if (auto* xt = xl->GetByType<RE::ExtraTextDisplayData>()) {
-                        dn = xt->displayName.c_str();
+                    row.capacity = SocketCapacity(obj);
+                    for (int s = 0; s < row.capacity && s < kMaxSockets; ++s) {
+                        auto it = g_sockets.find(MakeKey(row.base, xid->uniqueID,
+                                                         static_cast<std::uint8_t>(s)));
+                        if (it == g_sockets.end()) {
+                            continue;
+                        }
+                        if (auto gemIt = g_gemByGid.find(it->second.gid); gemIt != g_gemByGid.end()) {
+                            const auto& rg = g_gems[gemIt->second];
+                            const float need = NextThreshold(rg.def, it->second.level);
+                            row.slotGem[s] = std::format("{} {}", rg.def->name,
+                                                         meo::kRoman[it->second.level - 1]);
+                            if (need > 0.0f) {
+                                row.slotGem[s] += std::format(" ({:.0f}/{:.0f})", it->second.xp, need);
+                            }
+                        } else {
+                            row.slotGem[s] = "gem from a missing master";
+                        }
                     }
-                    row.label = (dn && *dn) ? dn : baseName;
+                    row.label = baseName;
                     if (row.worn) {
                         row.label += "  (worn)";
                     }
@@ -875,6 +930,7 @@ void BuildMenuSnapshot() {
                 MenuItemRow row;
                 row.base = obj->GetFormID();
                 row.isArmor = isArmor;
+                row.capacity = SocketCapacity(obj);
                 row.label = baseName;
                 if (data.first - instances > 1) {
                     row.label += std::format("  x{}", data.first - instances);
@@ -939,13 +995,13 @@ void BuildMenuSnapshot() {
 }
 
 // ── Menu actions (SKSE tasks — main thread; all M4b-proven flows) ─────
-void MenuUnsocket(RE::FormID a_base, std::uint16_t a_uid) {
+void MenuUnsocket(RE::FormID a_base, std::uint16_t a_uid, std::uint8_t a_slot) {
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* form = RE::TESForm::LookupByID<RE::TESBoundObject>(a_base);
-    auto  it = g_sockets.find(MakeKey(a_base, a_uid));
+    auto  it = g_sockets.find(MakeKey(a_base, a_uid, a_slot));
     auto* xl = form ? FindInstanceXList(player, form, a_uid) : nullptr;
     if (!player || it == g_sockets.end() || !xl) {
-        spdlog::warn("[menu] unsocket failed: {:08X}/{} rec={} xl={}", a_base, a_uid,
+        spdlog::warn("[menu] unsocket failed: {:08X}/{}[{}] rec={} xl={}", a_base, a_uid, a_slot,
                      it != g_sockets.end(), xl != nullptr);
         return;
     }
@@ -956,13 +1012,13 @@ void MenuUnsocket(RE::FormID a_base, std::uint16_t a_uid) {
         return;
     }
     g_sockets.erase(it);
-    xl->RemoveByType(RE::ExtraDataType::kEnchantment);
-    xl->RemoveByType(RE::ExtraDataType::kTextDisplayData);
+    // Rebuild from whatever slots remain (strips the enchant + name if none).
+    RebuildInstanceEnchant(form, xl);
     if (IsWornXList(xl)) {
         ApplyWornAbility(player, form, xl, xl->HasType(RE::ExtraDataType::kWornLeft));
     }
-    spdlog::info("[menu] unsocketed {:08X}/{}: '{}' L{} xp={:.0f}", a_base, a_uid, rec.gid,
-                 rec.level, rec.xp);
+    spdlog::info("[menu] unsocketed {:08X}/{}[{}]: '{}' L{} xp={:.0f}", a_base, a_uid, a_slot,
+                 rec.gid, rec.level, rec.xp);
     GiveGemInstance(gemIt->second, rec.level, rec.xp);
     const auto& rg = g_gems[gemIt->second];
     Notify(std::format("{} {} returned to your pouch.", rg.def->name, meo::kRoman[rec.level - 1]));
@@ -971,11 +1027,11 @@ void MenuUnsocket(RE::FormID a_base, std::uint16_t a_uid) {
 // M10 (stage 2b): destroy a socketed gem at a station, reclaiming 1/10 of its
 // banked Gem XP as the largest filled soul gem it affords (the only investment
 // sink that recovers anything). The gem itself is gone — not returned.
-void DestroyGem(RE::FormID a_base, std::uint16_t a_uid) {
+void DestroyGem(RE::FormID a_base, std::uint16_t a_uid, std::uint8_t a_slot) {
     static const char* kSoulNames[5] = { "petty", "lesser", "common", "greater", "grand" };
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* form = RE::TESForm::LookupByID<RE::TESBoundObject>(a_base);
-    auto  it = g_sockets.find(MakeKey(a_base, a_uid));
+    auto  it = g_sockets.find(MakeKey(a_base, a_uid, a_slot));
     auto* xl = form ? FindInstanceXList(player, form, a_uid) : nullptr;
     if (!player || it == g_sockets.end() || !xl) {
         return;
@@ -989,8 +1045,7 @@ void DestroyGem(RE::FormID a_base, std::uint16_t a_uid) {
         }
     }
     g_sockets.erase(it);
-    xl->RemoveByType(RE::ExtraDataType::kEnchantment);
-    xl->RemoveByType(RE::ExtraDataType::kTextDisplayData);
+    RebuildInstanceEnchant(form, xl);  // rebuild from remaining slots (or strip)
     if (IsWornXList(xl)) {
         ApplyWornAbility(player, form, xl, xl->HasType(RE::ExtraDataType::kWornLeft));
     }
@@ -1040,15 +1095,26 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
         Notify("That item is no longer in your inventory.");
         return;
     }
-    // Swap: our gem comes out first (returned to inventory), atomically
-    // within this task. A non-MEO enchantment blocks socketing.
-    if (auto* xid = xl->GetByType<RE::ExtraUniqueID>()) {
-        if (g_sockets.contains(MakeKey(a_itemBase, xid->uniqueID))) {
-            MenuUnsocket(a_itemBase, xid->uniqueID);
+    // Multi-socket: fill the next free slot (up to this item's capacity). Our
+    // own combined enchant doesn't block — only a foreign (player/base) one.
+    auto* itemXid = xl->GetByType<RE::ExtraUniqueID>();
+    const std::uint16_t uid = itemXid ? itemXid->uniqueID : 0;
+    const int cap = SocketCapacity(itemForm);
+    int  freeSlot = -1;
+    bool ourSockets = false;
+    for (int s = 0; s < cap; ++s) {
+        if (g_sockets.contains(MakeKey(a_itemBase, uid, static_cast<std::uint8_t>(s)))) {
+            ourSockets = true;
+        } else if (freeSlot < 0) {
+            freeSlot = s;
         }
     }
-    if (xl->HasType(RE::ExtraDataType::kEnchantment)) {
-        Notify("That weapon is already enchanted.");
+    if (xl->HasType(RE::ExtraDataType::kEnchantment) && !ourSockets) {
+        Notify("That item is already enchanted.");
+        return;
+    }
+    if (freeSlot < 0) {
+        Notify(cap > 1 ? "Every socket is already filled." : "That item's socket is filled.");
         return;
     }
     const auto [gemIdx, itemLevel] = gemMapIt->second;
@@ -1081,7 +1147,7 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
             return;
         }
     }
-    if (!StampInstance(itemForm, xl, gemIdx, level, xp)) {
+    if (!StampInstance(itemForm, xl, gemIdx, level, static_cast<std::uint8_t>(freeSlot), xp)) {
         if (hadRec) {
             g_sockets[MakeKey(a_gemBase, a_gemUid)] = saved;
         }
@@ -1098,14 +1164,14 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
 
 // M10 (stage 2a): consume the smallest filled, non-reusable soul gem and
 // grant its Gem XP (DESIGN §3) to one socketed gem. Enchanting-station only.
-void FeedSoulToGem(RE::FormID a_itemBase, std::uint16_t a_uid) {
+void FeedSoulToGem(RE::FormID a_itemBase, std::uint16_t a_uid, std::uint8_t a_slot) {
     static const char* kSoulNames[5] = { "petty", "lesser", "common", "greater", "grand" };
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* itemForm = RE::TESForm::LookupByID<RE::TESBoundObject>(a_itemBase);
     if (!player || !itemForm) {
         return;
     }
-    auto recIt = g_sockets.find(MakeKey(a_itemBase, a_uid));
+    auto recIt = g_sockets.find(MakeKey(a_itemBase, a_uid, a_slot));
     if (recIt == g_sockets.end()) {
         Notify("That gem is no longer socketed.");
         return;
@@ -1275,8 +1341,9 @@ namespace menuhook {
         for (int i = 0; i < static_cast<int>(g_menu.items.size()); ++i) {
             const auto& row = g_menu.items[i];
             std::string label = row.label;
-            if (row.socketed) {
-                label += "  *";
+            const int filled = (!row.slotGem[0].empty()) + (!row.slotGem[1].empty());
+            if (filled > 0) {
+                label += (filled == row.capacity) ? "  **" : "  *";  // * = partly, ** = full
             }
             label += std::format("##item{}", i);
             if (ImGui::Selectable(label.c_str(), g_menu.selItem == i)) {
@@ -1291,45 +1358,62 @@ namespace menuhook {
         ImGui::BeginChild("gems", ImVec2(0, -footer), true);
         if (g_menu.selItem >= 0 && g_menu.selItem < static_cast<int>(g_menu.items.size())) {
             const auto sel = g_menu.items[g_menu.selItem];  // copy: queue may rebuild
-            ImGui::TextDisabled("%s", sel.label.c_str());
+            ImGui::TextDisabled("%s%s", sel.label.c_str(),
+                                sel.capacity > 1 ? "  [2 linked sockets]" : "");
             ImGui::Separator();
-            if (sel.socketed) {
+            // One line per socket slot. Filled = select to remove (+ station
+            // feed/destroy per slot); empty = a free slot for the gem list below.
+            int freeSlots = 0;
+            for (int s = 0; s < sel.capacity && s < 2; ++s) {
+                if (sel.slotGem[s].empty()) {
+                    ++freeSlots;
+                    ImGui::TextDisabled("Socket %d: empty", s + 1);
+                    continue;
+                }
+                ImGui::PushID(s);
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.35f, 1.0f));
-                const std::string lbl = "* " + sel.gemLabel + "  — socketed, select to remove";
+                const std::string lbl =
+                    std::format("Socket {}: {}  — select to remove", s + 1, sel.slotGem[s]);
                 if (ImGui::Selectable(lbl.c_str())) {
-                    QueueMenuTask([sel]() { MenuUnsocket(sel.base, sel.uid); });
+                    const std::uint8_t slot = static_cast<std::uint8_t>(s);
+                    QueueMenuTask([sel, slot]() { MenuUnsocket(sel.base, sel.uid, slot); });
                 }
                 ImGui::PopStyleColor();
                 if (g_menu.station.load()) {
-                    // Enchanting-station actions: feed a soul, or destroy for reclaim.
-                    if (ImGui::Button("Feed Soul Gem")) {
-                        QueueMenuTask([sel]() { FeedSoulToGem(sel.base, sel.uid); });
+                    if (ImGui::SmallButton("Feed Soul")) {
+                        const std::uint8_t slot = static_cast<std::uint8_t>(s);
+                        QueueMenuTask([sel, slot]() { FeedSoulToGem(sel.base, sel.uid, slot); });
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button("Destroy Gem")) {
-                        QueueMenuTask([sel]() { DestroyGem(sel.base, sel.uid); });
+                    if (ImGui::SmallButton("Destroy")) {
+                        const std::uint8_t slot = static_cast<std::uint8_t>(s);
+                        QueueMenuTask([sel, slot]() { DestroyGem(sel.base, sel.uid, slot); });
                     }
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("(feed: smallest soul; destroy: reclaim 1/10)");
                 }
-                ImGui::Separator();
+                ImGui::PopID();
             }
-            int shown = 0;
-            for (int i = 0; i < static_cast<int>(g_menu.gems.size()); ++i) {
-                const auto gem = g_menu.gems[i];  // copy for the closure
-                if (gem.isArmor != sel.isArmor) {
-                    continue;  // weapon gems only fit weapons; armor only armor
+            ImGui::Separator();
+            if (freeSlots <= 0) {
+                ImGui::TextDisabled(sel.capacity > 1 ? "Both sockets filled — remove one to swap."
+                                                     : "Socket filled — select it above to remove.");
+            } else {
+                int shown = 0;
+                for (int i = 0; i < static_cast<int>(g_menu.gems.size()); ++i) {
+                    const auto gem = g_menu.gems[i];  // copy for the closure
+                    if (gem.isArmor != sel.isArmor) {
+                        continue;  // weapon gems only fit weapons; armor only armor
+                    }
+                    ++shown;
+                    const std::string lbl = gem.label + std::format("##gem{}", i);
+                    if (ImGui::Selectable(lbl.c_str())) {
+                        QueueMenuTask([sel, gem]() {
+                            MenuSocket(sel.base, sel.uid, gem.base, gem.uid);
+                        });
+                    }
                 }
-                ++shown;
-                const std::string lbl = gem.label + std::format("##gem{}", i);
-                if (ImGui::Selectable(lbl.c_str())) {
-                    QueueMenuTask([sel, gem]() {
-                        MenuSocket(sel.base, sel.uid, gem.base, gem.uid);
-                    });
+                if (shown == 0) {
+                    ImGui::TextDisabled(sel.isArmor ? "No loose armor gems." : "No loose weapon gems.");
                 }
-            }
-            if (shown == 0) {
-                ImGui::TextDisabled(sel.isArmor ? "No loose armor gems." : "No loose weapon gems.");
             }
         } else {
             ImGui::TextDisabled("Select an item.");
@@ -1806,10 +1890,12 @@ void SaveCallback(SKSE::SerializationInterface* a_intfc) {
     const std::uint32_t count = static_cast<std::uint32_t>(g_sockets.size());
     a_intfc->WriteRecordData(count);
     for (const auto& [key, rec] : g_sockets) {
-        const std::uint32_t baseID = static_cast<std::uint32_t>(key >> 16);
-        const std::uint16_t uid = static_cast<std::uint16_t>(key & 0xFFFF);
+        const std::uint32_t baseID = static_cast<std::uint32_t>(key >> 24);
+        const std::uint16_t uid = static_cast<std::uint16_t>((key >> 8) & 0xFFFF);
+        const std::uint8_t  slot = static_cast<std::uint8_t>(key & 0xFF);
         a_intfc->WriteRecordData(baseID);
         a_intfc->WriteRecordData(uid);
+        a_intfc->WriteRecordData(slot);   // v5
         a_intfc->WriteRecordData(rec.level);
         a_intfc->WriteRecordData(rec.xp);
         const std::uint16_t len = static_cast<std::uint16_t>(rec.gid.size());
@@ -1854,16 +1940,20 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
         for (std::uint32_t i = 0; i < count; ++i) {
             std::uint32_t baseID = 0;
             std::uint16_t uid = 0;
+            std::uint8_t  slot = 0;
             SocketRecord  rec{};
             std::uint16_t len = 0;
             a_intfc->ReadRecordData(baseID);
             a_intfc->ReadRecordData(uid);
+            if (version >= 5) {  // v5: per-socket slot; v3/v4 records are all slot 0
+                a_intfc->ReadRecordData(slot);
+            }
             a_intfc->ReadRecordData(rec.level);
             a_intfc->ReadRecordData(rec.xp);
             a_intfc->ReadRecordData(len);
             rec.gid.resize(len);
             a_intfc->ReadRecordData(rec.gid.data(), len);
-            g_sockets[MakeKey(baseID, uid)] = std::move(rec);
+            g_sockets[MakeKey(baseID, uid, slot)] = std::move(rec);
         }
     }
     spdlog::info("[load] {} socket record(s), nextUID=0x{:X}, starter={}, mentor={}",
@@ -1890,7 +1980,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.20.0 (M12 fixes) loaded");
+            console->Print("MEO native v0.21.0 (M13 multi-socket) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -1912,7 +2002,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.20.0 (M12: enchant charge fix + armor slot fix) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.21.0 (M13: multi-socket - gloves dual by default) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
