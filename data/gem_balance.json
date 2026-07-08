@@ -1,1260 +1,1260 @@
 {
- "EnchFortifyBlockConstantSelf": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   10.0,
-   13.0,
-   15.0,
-   20.0,
-   25.0,
-   30.0,
-   35.0,
-   40.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 64,
-  "curve": [
-   13,
-   18,
-   22,
-   27,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchResistMagicConstantSelf": {
-  "class": "RESIST",
-  "domain": "armor",
-  "vanilla_mags": [
-   8.0,
-   10.0,
-   12.0,
-   15.0,
-   17.0,
-   20.0,
-   22.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 66,
-  "curve": [
-   6,
-   9,
-   12,
-   16,
-   20
-  ],
-  "note": "magic resist %, V=20 (lower; resists all)"
- },
- "EnchFortifyStaminaConstantSelf": {
-  "class": "LINEAR",
-  "domain": "armor",
-  "vanilla_mags": [
-   10.0,
-   15.0,
-   20.0,
-   30.0,
-   40.0,
-   50.0,
-   60.0,
-   70.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 75,
-  "base": 15.0,
-  "curve": [
-   15,
-   24,
-   34,
-   43,
-   52
-  ],
-  "note": "base=tier2, V=basex3.5"
- },
- "EnchFortifySneakConstantSelf": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   13.0,
-   15.0,
-   20.0,
-   25.0,
-   30.0,
-   35.0,
-   40.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 54,
-  "curve": [
-   15,
-   19,
-   24,
-   28,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchFortifyLockpickingConstantSelf": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   13.0,
-   15.0,
-   20.0,
-   25.0,
-   30.0,
-   35.0,
-   40.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 50,
-  "curve": [
-   15,
-   19,
-   24,
-   28,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchFortifyPickpocketConstantSelf": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   13.0,
-   15.0,
-   20.0,
-   25.0,
-   30.0,
-   35.0,
-   40.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 49,
-  "curve": [
-   15,
-   19,
-   24,
-   28,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchFortifyOneHandedConstantSelf": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   13.0,
-   15.0,
-   20.0,
-   25.0,
-   30.0,
-   35.0,
-   40.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 79,
-  "curve": [
-   15,
-   19,
-   24,
-   28,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchFortifyStaminaRateConstantSelf": {
-  "class": "LINEAR",
-  "domain": "armor",
-  "vanilla_mags": [
-   10.0,
-   20.0,
-   30.0,
-   40.0,
-   50.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 32,
-  "base": 20.0,
-  "curve": [
-   20,
-   32,
-   45,
-   58,
-   70
-  ],
-  "note": "base=tier2, V=basex3.5"
- },
- "EnchFortifyHealRateConstantSelf": {
-  "class": "LINEAR",
-  "domain": "armor",
-  "vanilla_mags": [
-   10.0,
-   20.0,
-   30.0,
-   40.0,
-   50.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 32,
-  "base": 20.0,
-  "curve": [
-   20,
-   32,
-   45,
-   58,
-   70
-  ],
-  "note": "base=tier2, V=basex3.5"
- },
- "EnchFortifyMagickaConstantSelf": {
-  "class": "LINEAR",
-  "domain": "armor",
-  "vanilla_mags": [
-   10.0,
-   20.0,
-   25.0,
-   30.0,
-   40.0,
-   50.0,
-   60.0,
-   70.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 106,
-  "base": 20.0,
-  "curve": [
-   20,
-   32,
-   45,
-   58,
-   70
-  ],
-  "note": "base=tier2, V=basex3.5"
- },
- "EnchFortifySpeechcraftConstantSelf": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   8.0,
-   10.0,
-   12.0,
-   15.0,
-   17.0,
-   20.0,
-   22.0,
-   25.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 15,
-  "curve": [
-   10,
-   16,
-   21,
-   26,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchFortifyAlchemyConstantSelf": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   8.0,
-   12.0,
-   15.0,
-   17.0,
-   20.0,
-   22.0,
-   25.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 146,
-  "curve": [
-   12,
-   17,
-   22,
-   27,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchFortifyLightArmorConstantSelf": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   8.0,
-   12.0,
-   15.0,
-   17.0,
-   20.0,
-   22.0,
-   25.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 51,
-  "curve": [
-   12,
-   17,
-   22,
-   27,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchFortifyHeavyArmorConstantSelf": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   8.0,
-   12.0,
-   15.0,
-   17.0,
-   20.0,
-   22.0,
-   25.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 51,
-  "curve": [
-   12,
-   17,
-   22,
-   27,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchFortifySmithingConstantSelf": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   8.0,
-   12.0,
-   15.0,
-   17.0,
-   20.0,
-   22.0,
-   25.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 80,
-  "curve": [
-   12,
-   17,
-   22,
-   27,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchFortifyTwoHandedConstantSelf": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   13.0,
-   15.0,
-   20.0,
-   25.0,
-   30.0,
-   35.0,
-   40.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 80,
-  "curve": [
-   15,
-   19,
-   24,
-   28,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchFortifyRestorationConstantSelf": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   8.0,
-   10.0,
-   12.0,
-   15.0,
-   17.0,
-   20.0,
-   22.0,
-   25.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 138,
-  "curve": [
-   10,
-   16,
-   21,
-   26,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchFortifyIllusionConstantSelf": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   8.0,
-   12.0,
-   15.0,
-   17.0,
-   20.0,
-   22.0,
-   25.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 144,
-  "curve": [
-   12,
-   17,
-   22,
-   27,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchFortifyDestructionConstantSelf": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   8.0,
-   12.0,
-   15.0,
-   17.0,
-   20.0,
-   22.0,
-   25.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 158,
-  "curve": [
-   12,
-   17,
-   22,
-   27,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchFortifyConjurationConstantSelf": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   8.0,
-   12.0,
-   15.0,
-   17.0,
-   20.0,
-   22.0,
-   25.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 150,
-  "curve": [
-   12,
-   17,
-   22,
-   27,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchFortifyAlterationConstantSelf": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   8.0,
-   12.0,
-   15.0,
-   17.0,
-   20.0,
-   22.0,
-   25.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 152,
-  "curve": [
-   12,
-   17,
-   22,
-   27,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchFortifyMagickaRateConstantSelf": {
-  "class": "LINEAR",
-  "domain": "armor",
-  "vanilla_mags": [
-   20.0,
-   25.0,
-   40.0,
-   50.0,
-   60.0,
-   75.0,
-   80.0,
-   100.0,
-   125.0,
-   150.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 77,
-  "base": 25.0,
-  "curve": [
-   25,
-   41,
-   56,
-   72,
-   88
-  ],
-  "note": "base=tier2, V=basex3.5"
- },
- "AbFortifyUnarmedDamage": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   5.0,
-   10.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 1,
-  "curve": [
-   10,
-   16,
-   21,
-   26,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchFortifyArcheryConstantSelf": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   13.0,
-   15.0,
-   20.0,
-   25.0,
-   30.0,
-   35.0,
-   40.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 144,
-  "curve": [
-   15,
-   19,
-   24,
-   28,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchResistDiseaseConstantSelf": {
-  "class": "RESIST",
-  "domain": "armor",
-  "vanilla_mags": [
-   25.0,
-   50.0,
-   100.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 2,
-  "curve": [
-   10,
-   15,
-   20,
-   25,
-   30
-  ],
-  "note": "resist %, V=30; stacking is the payoff"
- },
- "EnchResistPoisonConstantSelf": {
-  "class": "RESIST",
-  "domain": "armor",
-  "vanilla_mags": [
-   15.0,
-   50.0,
-   100.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 5,
-  "curve": [
-   10,
-   15,
-   20,
-   25,
-   30
-  ],
-  "note": "resist %, V=30; stacking is the payoff"
- },
- "EnchFortifyHealthConstantSelf": {
-  "class": "LINEAR",
-  "domain": "armor",
-  "vanilla_mags": [
-   10.0,
-   20.0,
-   30.0,
-   40.0,
-   50.0,
-   60.0,
-   70.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 94,
-  "base": 20.0,
-  "curve": [
-   20,
-   32,
-   45,
-   58,
-   70
-  ],
-  "note": "base=tier2, V=basex3.5"
- },
- "EnchMuffleConstantSelf": {
-  "class": "BINARY",
-  "domain": "armor",
-  "vanilla_mags": [
-   0.25,
-   0.5,
-   20.0,
-   35.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 23,
-  "single_level": true,
-  "curve": "Level 1 only",
-  "note": "utility: no leveling, no birth, one flat socketed benefit"
- },
- "EnchWaterbreathingConstantSelf": {
-  "class": "BINARY",
-  "domain": "armor",
-  "vanilla_mags": [
-   1.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 18,
-  "single_level": true,
-  "curve": "Level 1 only",
-  "note": "utility: no leveling, no birth, one flat socketed benefit"
- },
- "EnchResistShocktConstantSelf": {
-  "class": "RESIST",
-  "domain": "armor",
-  "vanilla_mags": [
-   15.0,
-   30.0,
-   40.0,
-   50.0,
-   60.0,
-   70.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 126,
-  "curve": [
-   10,
-   15,
-   20,
-   25,
-   30
-  ],
-  "note": "resist %, V=30; stacking is the payoff"
- },
- "EnchResistFrostConstantSelf": {
-  "class": "RESIST",
-  "domain": "armor",
-  "vanilla_mags": [
-   15.0,
-   30.0,
-   40.0,
-   50.0,
-   60.0,
-   70.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 126,
-  "curve": [
-   10,
-   15,
-   20,
-   25,
-   30
-  ],
-  "note": "resist %, V=30; stacking is the payoff"
- },
- "EnchResistFireConstantSelf": {
-  "class": "RESIST",
-  "domain": "armor",
-  "vanilla_mags": [
-   15.0,
-   30.0,
-   40.0,
-   50.0,
-   60.0,
-   70.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 124,
-  "curve": [
-   10,
-   15,
-   20,
-   25,
-   30
-  ],
-  "note": "resist %, V=30; stacking is the payoff"
- },
- "EnchFortifyArticulation": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   4.0,
-   10.0,
-   12.0,
-   15.0,
-   17.0,
-   20.0,
-   22.0,
-   25.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 7,
-  "curve": [
-   10,
-   16,
-   21,
-   26,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchFortifyShoutTimerConstantSelf": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   0.2
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 3,
-  "curve": [
-   0,
-   8,
-   16,
-   24,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchFortifyCarryConstantSelf": {
-  "class": "LINEAR",
-  "domain": "armor",
-  "vanilla_mags": [
-   15.0,
-   20.0,
-   25.0,
-   30.0,
-   35.0,
-   40.0,
-   45.0,
-   50.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 74,
-  "base": 20.0,
-  "curve": [
-   20,
-   32,
-   45,
-   58,
-   70
-  ],
-  "note": "base=tier2, V=basex3.5"
- },
- "EnchDragonPriestUltraMaskEffect": {
-  "class": "LINEAR",
-  "domain": "armor",
-  "vanilla_mags": [],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 1,
-  "note": "no vanilla magnitude data; manual"
- },
- "EnchDragonPriestWoodMaskEffect": {
-  "class": "LINEAR",
-  "domain": "armor",
-  "vanilla_mags": [
-   1.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 1,
-  "base": 1.0,
-  "curve": [
-   1,
-   2,
-   2,
-   3,
-   4
-  ],
-  "note": "base=tier2, V=basex3.5"
- },
- "EnchFortifyPersuasionConstantSelf": {
-  "class": "SKILL",
-  "domain": "armor",
-  "vanilla_mags": [
-   15.0
-  ],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 1,
-  "curve": [
-   15,
-   19,
-   24,
-   28,
-   32
-  ],
-  "note": "skill fortify: I=tier2, V=32 (decided)"
- },
- "EnchFireDamageFFContact": {
-  "class": "LINEAR",
-  "domain": "weapon",
-  "vanilla_mags": [
-   5.0,
-   10.0,
-   15.0,
-   20.0,
-   25.0,
-   30.0
-  ],
-  "vanilla_durs": [],
-  "weap": 235,
-  "armo": 0,
-  "base": 10.0,
-  "curve": [
-   10,
-   16,
-   22,
-   29,
-   35
-  ],
-  "note": "base=tier2, V=basex3.5"
- },
- "DraugrMagicBowStreak": {
-  "class": "LINEAR",
-  "domain": "weapon",
-  "vanilla_mags": [
-   15.0
-  ],
-  "vanilla_durs": [],
-  "weap": 1,
-  "armo": 0,
-  "base": 15.0,
-  "curve": [
-   15,
-   24,
-   34,
-   43,
-   52
-  ],
-  "note": "base=tier2, V=basex3.5"
- },
- "DraugrMagicAxeStreak": {
-  "class": "LINEAR",
-  "domain": "weapon",
-  "vanilla_mags": [
-   15.0
-  ],
-  "vanilla_durs": [],
-  "weap": 1,
-  "armo": 0,
-  "base": 15.0,
-  "curve": [
-   15,
-   24,
-   34,
-   43,
-   52
-  ],
-  "note": "base=tier2, V=basex3.5"
- },
- "DraugrMagicSwordStreak": {
-  "class": "LINEAR",
-  "domain": "weapon",
-  "vanilla_mags": [
-   15.0
-  ],
-  "vanilla_durs": [
-   1
-  ],
-  "weap": 1,
-  "armo": 0,
-  "base": 15.0,
-  "curve": [
-   15,
-   24,
-   34,
-   43,
-   52
-  ],
-  "note": "base=tier2, V=basex3.5"
- },
- "EnchAbsorbMagickaFFContact": {
-  "class": "ABSORB",
-  "domain": "weapon",
-  "vanilla_mags": [
-   10.0,
-   15.0,
-   20.0,
-   25.0,
-   30.0
-  ],
-  "vanilla_durs": [
-   1
-  ],
-  "weap": 173,
-  "armo": 0,
-  "base": 15.0,
-  "curve": [
-   15,
-   24,
-   34,
-   43,
-   52
-  ],
-  "note": "per-hit; x3.5"
- },
- "EnchAbsorbHealthFFContact": {
-  "class": "ABSORB",
-  "domain": "weapon",
-  "vanilla_mags": [
-   5.0,
-   8.0,
-   10.0,
-   15.0,
-   20.0,
-   25.0
-  ],
-  "vanilla_durs": [
-   1
-  ],
-  "weap": 175,
-  "armo": 0,
-  "base": 8.0,
-  "curve": [
-   8,
-   13,
-   18,
-   23,
-   28
-  ],
-  "note": "per-hit; x3.5"
- },
- "EnchStaminaDamageFFContact": {
-  "class": "LINEAR",
-  "domain": "weapon",
-  "vanilla_mags": [
-   5.0,
-   10.0,
-   15.0,
-   20.0,
-   25.0,
-   30.0
-  ],
-  "vanilla_durs": [],
-  "weap": 245,
-  "armo": 0,
-  "base": 10.0,
-  "curve": [
-   10,
-   16,
-   22,
-   29,
-   35
-  ],
-  "note": "base=tier2, V=basex3.5"
- },
- "StaggerAttackFFContact": {
-  "class": "LINEAR",
-  "domain": "weapon",
-  "vanilla_mags": [
-   100.0
-  ],
-  "vanilla_durs": [],
-  "weap": 1,
-  "armo": 0,
-  "base": 100.0,
-  "curve": [
-   100,
-   162,
-   225,
-   288,
-   350
-  ],
-  "note": "base=tier2, V=basex3.5"
- },
- "EnchSoulTrapFFContact": {
-  "class": "SOULTRAP",
-  "domain": "weapon",
-  "vanilla_mags": [],
-  "vanilla_durs": [
-   3,
-   4,
-   5,
-   7,
-   10,
-   15,
-   20
-  ],
-  "weap": 249,
-  "armo": 0,
-  "curve_dur": [
-   3,
-   4,
-   5,
-   6,
-   8
-  ],
-  "note": "duration s; only needs to outlast the kill"
- },
- "EnchInfluenceConfDownFFContactLow": {
-  "class": "CONTROL",
-  "domain": "weapon",
-  "vanilla_mags": [
-   5.0,
-   7.0,
-   10.0,
-   13.0,
-   16.0,
-   20.0
-  ],
-  "vanilla_durs": [
-   30
-  ],
-  "weap": 243,
-  "armo": 0,
-  "curve_level": [
-   6,
-   12,
-   18,
-   25,
-   40
-  ],
-  "note": "affected-creature level (Fear/Banish/Turn Undead)"
- },
- "EnchMagickaDamageFFContact": {
-  "class": "LINEAR",
-  "domain": "weapon",
-  "vanilla_mags": [
-   10.0,
-   15.0,
-   20.0,
-   30.0,
-   40.0,
-   50.0,
-   60.0
-  ],
-  "vanilla_durs": [],
-  "weap": 246,
-  "armo": 0,
-  "base": 15.0,
-  "curve": [
-   15,
-   24,
-   34,
-   43,
-   52
-  ],
-  "note": "base=tier2, V=basex3.5"
- },
- "EnchShockDamageFFContact": {
-  "class": "LINEAR",
-  "domain": "weapon",
-  "vanilla_mags": [
-   5.0,
-   10.0,
-   15.0,
-   20.0,
-   25.0,
-   30.0,
-   40.0,
-   75.0
-  ],
-  "vanilla_durs": [
-   1
-  ],
-  "weap": 250,
-  "armo": 0,
-  "base": 10.0,
-  "curve": [
-   10,
-   16,
-   22,
-   29,
-   35
-  ],
-  "note": "base=tier2, V=basex3.5"
- },
- "EnchTurnUndeadFFContact": {
-  "class": "CONTROL",
-  "domain": "weapon",
-  "vanilla_mags": [
-   3.0,
-   7.0,
-   10.0,
-   13.0,
-   21.0,
-   30.0,
-   40.0
-  ],
-  "vanilla_durs": [
-   30
-  ],
-  "weap": 249,
-  "armo": 0,
-  "curve_level": [
-   6,
-   12,
-   18,
-   25,
-   40
-  ],
-  "note": "affected-creature level (Fear/Banish/Turn Undead)"
- },
- "EnchAbsorbStaminaFFContact": {
-  "class": "ABSORB",
-  "domain": "weapon",
-  "vanilla_mags": [
-   10.0,
-   15.0,
-   20.0,
-   25.0,
-   30.0,
-   50.0
-  ],
-  "vanilla_durs": [
-   1
-  ],
-  "weap": 170,
-  "armo": 0,
-  "base": 15.0,
-  "curve": [
-   15,
-   24,
-   34,
-   43,
-   52
-  ],
-  "note": "per-hit; x3.5"
- },
- "EnchParalysisFFContact": {
-  "class": "STAGGER",
-  "domain": "weapon",
-  "vanilla_mags": [],
-  "vanilla_durs": [
-   2,
-   4,
-   6
-  ],
-  "weap": 122,
-  "armo": 0,
-  "renamed_from": "Paralyze",
-  "curve_stagger": [
-   0.5,
-   0.6,
-   0.75,
-   0.9,
-   1.0
-  ],
-  "note": "REPLACED paralyze -> on-hit stagger magnitude; no perma-CC"
- },
- "EnchBanishFFContact": {
-  "class": "CONTROL",
-  "domain": "weapon",
-  "vanilla_mags": [
-   10.0,
-   12.0,
-   20.0,
-   36.0
-  ],
-  "vanilla_durs": [],
-  "weap": 120,
-  "armo": 0,
-  "curve_level": [
-   6,
-   12,
-   18,
-   25,
-   40
-  ],
-  "note": "affected-creature level (Fear/Banish/Turn Undead)"
- },
- "DLC2EnchDragonAbsorbFake": {
-  "class": "ABSORB",
-  "domain": "armor",
-  "vanilla_mags": [],
-  "vanilla_durs": [],
-  "weap": 0,
-  "armo": 2,
-  "note": "no vanilla magnitude data; manual"
- },
- "DLC2StaggerBallistaFFContact50": {
-  "class": "LINEAR",
-  "domain": "weapon",
-  "vanilla_mags": [],
-  "vanilla_durs": [],
-  "weap": 3,
-  "armo": 0,
-  "note": "no vanilla magnitude data; manual"
- },
- "DLC2BloodskalEnchGlowEffect": {
-  "class": "LINEAR",
-  "domain": "weapon",
-  "vanilla_mags": [],
-  "vanilla_durs": [],
-  "weap": 1,
-  "armo": 0,
-  "note": "no vanilla magnitude data; manual"
- }
+  "EnchFortifyBlockConstantSelf": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      10.0,
+      13.0,
+      15.0,
+      20.0,
+      25.0,
+      30.0,
+      35.0,
+      40.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 64,
+    "curve": [
+      13,
+      18,
+      22,
+      27,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchResistMagicConstantSelf": {
+    "class": "RESIST",
+    "domain": "armor",
+    "vanilla_mags": [
+      8.0,
+      10.0,
+      12.0,
+      15.0,
+      17.0,
+      20.0,
+      22.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 66,
+    "curve": [
+      6,
+      9,
+      12,
+      16,
+      20
+    ],
+    "note": "magic resist %, V=20 (lower; resists all)"
+  },
+  "EnchFortifyStaminaConstantSelf": {
+    "class": "LINEAR",
+    "domain": "armor",
+    "vanilla_mags": [
+      10.0,
+      15.0,
+      20.0,
+      30.0,
+      40.0,
+      50.0,
+      60.0,
+      70.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 75,
+    "base": 15.0,
+    "curve": [
+      12.8,
+      20.4,
+      28.9,
+      36.5,
+      44.2
+    ],
+    "note": "base=tier2, V=basex3.5"
+  },
+  "EnchFortifySneakConstantSelf": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      13.0,
+      15.0,
+      20.0,
+      25.0,
+      30.0,
+      35.0,
+      40.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 54,
+    "curve": [
+      15,
+      19,
+      24,
+      28,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchFortifyLockpickingConstantSelf": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      13.0,
+      15.0,
+      20.0,
+      25.0,
+      30.0,
+      35.0,
+      40.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 50,
+    "curve": [
+      15,
+      19,
+      24,
+      28,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchFortifyPickpocketConstantSelf": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      13.0,
+      15.0,
+      20.0,
+      25.0,
+      30.0,
+      35.0,
+      40.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 49,
+    "curve": [
+      15,
+      19,
+      24,
+      28,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchFortifyOneHandedConstantSelf": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      13.0,
+      15.0,
+      20.0,
+      25.0,
+      30.0,
+      35.0,
+      40.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 79,
+    "curve": [
+      15,
+      19,
+      24,
+      28,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchFortifyStaminaRateConstantSelf": {
+    "class": "LINEAR",
+    "domain": "armor",
+    "vanilla_mags": [
+      10.0,
+      20.0,
+      30.0,
+      40.0,
+      50.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 32,
+    "base": 20.0,
+    "curve": [
+      17.0,
+      27.2,
+      38.2,
+      49.3,
+      59.5
+    ],
+    "note": "base=tier2, V=basex3.5"
+  },
+  "EnchFortifyHealRateConstantSelf": {
+    "class": "LINEAR",
+    "domain": "armor",
+    "vanilla_mags": [
+      10.0,
+      20.0,
+      30.0,
+      40.0,
+      50.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 32,
+    "base": 20.0,
+    "curve": [
+      17.0,
+      27.2,
+      38.2,
+      49.3,
+      59.5
+    ],
+    "note": "base=tier2, V=basex3.5"
+  },
+  "EnchFortifyMagickaConstantSelf": {
+    "class": "LINEAR",
+    "domain": "armor",
+    "vanilla_mags": [
+      10.0,
+      20.0,
+      25.0,
+      30.0,
+      40.0,
+      50.0,
+      60.0,
+      70.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 106,
+    "base": 20.0,
+    "curve": [
+      17.0,
+      27.2,
+      38.2,
+      49.3,
+      59.5
+    ],
+    "note": "base=tier2, V=basex3.5"
+  },
+  "EnchFortifySpeechcraftConstantSelf": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      8.0,
+      10.0,
+      12.0,
+      15.0,
+      17.0,
+      20.0,
+      22.0,
+      25.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 15,
+    "curve": [
+      10,
+      16,
+      21,
+      26,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchFortifyAlchemyConstantSelf": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      8.0,
+      12.0,
+      15.0,
+      17.0,
+      20.0,
+      22.0,
+      25.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 146,
+    "curve": [
+      12,
+      17,
+      22,
+      27,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchFortifyLightArmorConstantSelf": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      8.0,
+      12.0,
+      15.0,
+      17.0,
+      20.0,
+      22.0,
+      25.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 51,
+    "curve": [
+      12,
+      17,
+      22,
+      27,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchFortifyHeavyArmorConstantSelf": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      8.0,
+      12.0,
+      15.0,
+      17.0,
+      20.0,
+      22.0,
+      25.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 51,
+    "curve": [
+      12,
+      17,
+      22,
+      27,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchFortifySmithingConstantSelf": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      8.0,
+      12.0,
+      15.0,
+      17.0,
+      20.0,
+      22.0,
+      25.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 80,
+    "curve": [
+      12,
+      17,
+      22,
+      27,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchFortifyTwoHandedConstantSelf": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      13.0,
+      15.0,
+      20.0,
+      25.0,
+      30.0,
+      35.0,
+      40.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 80,
+    "curve": [
+      15,
+      19,
+      24,
+      28,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchFortifyRestorationConstantSelf": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      8.0,
+      10.0,
+      12.0,
+      15.0,
+      17.0,
+      20.0,
+      22.0,
+      25.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 138,
+    "curve": [
+      10,
+      16,
+      21,
+      26,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchFortifyIllusionConstantSelf": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      8.0,
+      12.0,
+      15.0,
+      17.0,
+      20.0,
+      22.0,
+      25.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 144,
+    "curve": [
+      12,
+      17,
+      22,
+      27,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchFortifyDestructionConstantSelf": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      8.0,
+      12.0,
+      15.0,
+      17.0,
+      20.0,
+      22.0,
+      25.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 158,
+    "curve": [
+      12,
+      17,
+      22,
+      27,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchFortifyConjurationConstantSelf": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      8.0,
+      12.0,
+      15.0,
+      17.0,
+      20.0,
+      22.0,
+      25.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 150,
+    "curve": [
+      12,
+      17,
+      22,
+      27,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchFortifyAlterationConstantSelf": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      8.0,
+      12.0,
+      15.0,
+      17.0,
+      20.0,
+      22.0,
+      25.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 152,
+    "curve": [
+      12,
+      17,
+      22,
+      27,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchFortifyMagickaRateConstantSelf": {
+    "class": "LINEAR",
+    "domain": "armor",
+    "vanilla_mags": [
+      20.0,
+      25.0,
+      40.0,
+      50.0,
+      60.0,
+      75.0,
+      80.0,
+      100.0,
+      125.0,
+      150.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 77,
+    "base": 25.0,
+    "curve": [
+      21.2,
+      34.9,
+      47.6,
+      61.2,
+      74.8
+    ],
+    "note": "base=tier2, V=basex3.5"
+  },
+  "AbFortifyUnarmedDamage": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      5.0,
+      10.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 1,
+    "curve": [
+      10,
+      16,
+      21,
+      26,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchFortifyArcheryConstantSelf": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      13.0,
+      15.0,
+      20.0,
+      25.0,
+      30.0,
+      35.0,
+      40.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 144,
+    "curve": [
+      15,
+      19,
+      24,
+      28,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchResistDiseaseConstantSelf": {
+    "class": "RESIST",
+    "domain": "armor",
+    "vanilla_mags": [
+      25.0,
+      50.0,
+      100.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 2,
+    "curve": [
+      10,
+      15,
+      20,
+      25,
+      30
+    ],
+    "note": "resist %, V=30; stacking is the payoff"
+  },
+  "EnchResistPoisonConstantSelf": {
+    "class": "RESIST",
+    "domain": "armor",
+    "vanilla_mags": [
+      15.0,
+      50.0,
+      100.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 5,
+    "curve": [
+      10,
+      15,
+      20,
+      25,
+      30
+    ],
+    "note": "resist %, V=30; stacking is the payoff"
+  },
+  "EnchFortifyHealthConstantSelf": {
+    "class": "LINEAR",
+    "domain": "armor",
+    "vanilla_mags": [
+      10.0,
+      20.0,
+      30.0,
+      40.0,
+      50.0,
+      60.0,
+      70.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 94,
+    "base": 20.0,
+    "curve": [
+      17.0,
+      27.2,
+      38.2,
+      49.3,
+      59.5
+    ],
+    "note": "base=tier2, V=basex3.5"
+  },
+  "EnchMuffleConstantSelf": {
+    "class": "BINARY",
+    "domain": "armor",
+    "vanilla_mags": [
+      0.25,
+      0.5,
+      20.0,
+      35.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 23,
+    "single_level": true,
+    "curve": "Level 1 only",
+    "note": "utility: no leveling, no birth, one flat socketed benefit"
+  },
+  "EnchWaterbreathingConstantSelf": {
+    "class": "BINARY",
+    "domain": "armor",
+    "vanilla_mags": [
+      1.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 18,
+    "single_level": true,
+    "curve": "Level 1 only",
+    "note": "utility: no leveling, no birth, one flat socketed benefit"
+  },
+  "EnchResistShocktConstantSelf": {
+    "class": "RESIST",
+    "domain": "armor",
+    "vanilla_mags": [
+      15.0,
+      30.0,
+      40.0,
+      50.0,
+      60.0,
+      70.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 126,
+    "curve": [
+      10,
+      15,
+      20,
+      25,
+      30
+    ],
+    "note": "resist %, V=30; stacking is the payoff"
+  },
+  "EnchResistFrostConstantSelf": {
+    "class": "RESIST",
+    "domain": "armor",
+    "vanilla_mags": [
+      15.0,
+      30.0,
+      40.0,
+      50.0,
+      60.0,
+      70.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 126,
+    "curve": [
+      10,
+      15,
+      20,
+      25,
+      30
+    ],
+    "note": "resist %, V=30; stacking is the payoff"
+  },
+  "EnchResistFireConstantSelf": {
+    "class": "RESIST",
+    "domain": "armor",
+    "vanilla_mags": [
+      15.0,
+      30.0,
+      40.0,
+      50.0,
+      60.0,
+      70.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 124,
+    "curve": [
+      10,
+      15,
+      20,
+      25,
+      30
+    ],
+    "note": "resist %, V=30; stacking is the payoff"
+  },
+  "EnchFortifyArticulation": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      4.0,
+      10.0,
+      12.0,
+      15.0,
+      17.0,
+      20.0,
+      22.0,
+      25.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 7,
+    "curve": [
+      10,
+      16,
+      21,
+      26,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchFortifyShoutTimerConstantSelf": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      0.2
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 3,
+    "curve": [
+      0,
+      8,
+      16,
+      24,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchFortifyCarryConstantSelf": {
+    "class": "LINEAR",
+    "domain": "armor",
+    "vanilla_mags": [
+      15.0,
+      20.0,
+      25.0,
+      30.0,
+      35.0,
+      40.0,
+      45.0,
+      50.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 74,
+    "base": 20.0,
+    "curve": [
+      17.0,
+      27.2,
+      38.2,
+      49.3,
+      59.5
+    ],
+    "note": "base=tier2, V=basex3.5"
+  },
+  "EnchDragonPriestUltraMaskEffect": {
+    "class": "LINEAR",
+    "domain": "armor",
+    "vanilla_mags": [],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 1,
+    "note": "no vanilla magnitude data; manual"
+  },
+  "EnchDragonPriestWoodMaskEffect": {
+    "class": "LINEAR",
+    "domain": "armor",
+    "vanilla_mags": [
+      1.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 1,
+    "base": 1.0,
+    "curve": [
+      0.8,
+      1.7,
+      1.7,
+      2.5,
+      3.4
+    ],
+    "note": "base=tier2, V=basex3.5"
+  },
+  "EnchFortifyPersuasionConstantSelf": {
+    "class": "SKILL",
+    "domain": "armor",
+    "vanilla_mags": [
+      15.0
+    ],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 1,
+    "curve": [
+      15,
+      19,
+      24,
+      28,
+      32
+    ],
+    "note": "skill fortify: I=tier2, V=32 (decided)"
+  },
+  "EnchFireDamageFFContact": {
+    "class": "LINEAR",
+    "domain": "weapon",
+    "vanilla_mags": [
+      5.0,
+      10.0,
+      15.0,
+      20.0,
+      25.0,
+      30.0
+    ],
+    "vanilla_durs": [],
+    "weap": 235,
+    "armo": 0,
+    "base": 10.0,
+    "curve": [
+      8.5,
+      13.6,
+      18.7,
+      24.6,
+      29.8
+    ],
+    "note": "base=tier2, V=basex3.5"
+  },
+  "DraugrMagicBowStreak": {
+    "class": "LINEAR",
+    "domain": "weapon",
+    "vanilla_mags": [
+      15.0
+    ],
+    "vanilla_durs": [],
+    "weap": 1,
+    "armo": 0,
+    "base": 15.0,
+    "curve": [
+      12.8,
+      20.4,
+      28.9,
+      36.5,
+      44.2
+    ],
+    "note": "base=tier2, V=basex3.5"
+  },
+  "DraugrMagicAxeStreak": {
+    "class": "LINEAR",
+    "domain": "weapon",
+    "vanilla_mags": [
+      15.0
+    ],
+    "vanilla_durs": [],
+    "weap": 1,
+    "armo": 0,
+    "base": 15.0,
+    "curve": [
+      12.8,
+      20.4,
+      28.9,
+      36.5,
+      44.2
+    ],
+    "note": "base=tier2, V=basex3.5"
+  },
+  "DraugrMagicSwordStreak": {
+    "class": "LINEAR",
+    "domain": "weapon",
+    "vanilla_mags": [
+      15.0
+    ],
+    "vanilla_durs": [
+      1
+    ],
+    "weap": 1,
+    "armo": 0,
+    "base": 15.0,
+    "curve": [
+      12.8,
+      20.4,
+      28.9,
+      36.5,
+      44.2
+    ],
+    "note": "base=tier2, V=basex3.5"
+  },
+  "EnchAbsorbMagickaFFContact": {
+    "class": "ABSORB",
+    "domain": "weapon",
+    "vanilla_mags": [
+      10.0,
+      15.0,
+      20.0,
+      25.0,
+      30.0
+    ],
+    "vanilla_durs": [
+      1
+    ],
+    "weap": 173,
+    "armo": 0,
+    "base": 15.0,
+    "curve": [
+      12.8,
+      20.4,
+      28.9,
+      36.5,
+      44.2
+    ],
+    "note": "per-hit; x3.5"
+  },
+  "EnchAbsorbHealthFFContact": {
+    "class": "ABSORB",
+    "domain": "weapon",
+    "vanilla_mags": [
+      5.0,
+      8.0,
+      10.0,
+      15.0,
+      20.0,
+      25.0
+    ],
+    "vanilla_durs": [
+      1
+    ],
+    "weap": 175,
+    "armo": 0,
+    "base": 8.0,
+    "curve": [
+      6.8,
+      11.0,
+      15.3,
+      19.6,
+      23.8
+    ],
+    "note": "per-hit; x3.5"
+  },
+  "EnchStaminaDamageFFContact": {
+    "class": "LINEAR",
+    "domain": "weapon",
+    "vanilla_mags": [
+      5.0,
+      10.0,
+      15.0,
+      20.0,
+      25.0,
+      30.0
+    ],
+    "vanilla_durs": [],
+    "weap": 245,
+    "armo": 0,
+    "base": 10.0,
+    "curve": [
+      8.5,
+      13.6,
+      18.7,
+      24.6,
+      29.8
+    ],
+    "note": "base=tier2, V=basex3.5"
+  },
+  "StaggerAttackFFContact": {
+    "class": "LINEAR",
+    "domain": "weapon",
+    "vanilla_mags": [
+      100.0
+    ],
+    "vanilla_durs": [],
+    "weap": 1,
+    "armo": 0,
+    "base": 100.0,
+    "curve": [
+      85.0,
+      137.7,
+      191.2,
+      244.8,
+      297.5
+    ],
+    "note": "base=tier2, V=basex3.5"
+  },
+  "EnchSoulTrapFFContact": {
+    "class": "SOULTRAP",
+    "domain": "weapon",
+    "vanilla_mags": [],
+    "vanilla_durs": [
+      3,
+      4,
+      5,
+      7,
+      10,
+      15,
+      20
+    ],
+    "weap": 249,
+    "armo": 0,
+    "curve_dur": [
+      3,
+      4,
+      5,
+      6,
+      8
+    ],
+    "note": "duration s; only needs to outlast the kill"
+  },
+  "EnchInfluenceConfDownFFContactLow": {
+    "class": "CONTROL",
+    "domain": "weapon",
+    "vanilla_mags": [
+      5.0,
+      7.0,
+      10.0,
+      13.0,
+      16.0,
+      20.0
+    ],
+    "vanilla_durs": [
+      30
+    ],
+    "weap": 243,
+    "armo": 0,
+    "curve_level": [
+      6,
+      12,
+      18,
+      25,
+      40
+    ],
+    "note": "affected-creature level (Fear/Banish/Turn Undead)"
+  },
+  "EnchMagickaDamageFFContact": {
+    "class": "LINEAR",
+    "domain": "weapon",
+    "vanilla_mags": [
+      10.0,
+      15.0,
+      20.0,
+      30.0,
+      40.0,
+      50.0,
+      60.0
+    ],
+    "vanilla_durs": [],
+    "weap": 246,
+    "armo": 0,
+    "base": 15.0,
+    "curve": [
+      12.8,
+      20.4,
+      28.9,
+      36.5,
+      44.2
+    ],
+    "note": "base=tier2, V=basex3.5"
+  },
+  "EnchShockDamageFFContact": {
+    "class": "LINEAR",
+    "domain": "weapon",
+    "vanilla_mags": [
+      5.0,
+      10.0,
+      15.0,
+      20.0,
+      25.0,
+      30.0,
+      40.0,
+      75.0
+    ],
+    "vanilla_durs": [
+      1
+    ],
+    "weap": 250,
+    "armo": 0,
+    "base": 10.0,
+    "curve": [
+      8.5,
+      13.6,
+      18.7,
+      24.6,
+      29.8
+    ],
+    "note": "base=tier2, V=basex3.5"
+  },
+  "EnchTurnUndeadFFContact": {
+    "class": "CONTROL",
+    "domain": "weapon",
+    "vanilla_mags": [
+      3.0,
+      7.0,
+      10.0,
+      13.0,
+      21.0,
+      30.0,
+      40.0
+    ],
+    "vanilla_durs": [
+      30
+    ],
+    "weap": 249,
+    "armo": 0,
+    "curve_level": [
+      6,
+      12,
+      18,
+      25,
+      40
+    ],
+    "note": "affected-creature level (Fear/Banish/Turn Undead)"
+  },
+  "EnchAbsorbStaminaFFContact": {
+    "class": "ABSORB",
+    "domain": "weapon",
+    "vanilla_mags": [
+      10.0,
+      15.0,
+      20.0,
+      25.0,
+      30.0,
+      50.0
+    ],
+    "vanilla_durs": [
+      1
+    ],
+    "weap": 170,
+    "armo": 0,
+    "base": 15.0,
+    "curve": [
+      12.8,
+      20.4,
+      28.9,
+      36.5,
+      44.2
+    ],
+    "note": "per-hit; x3.5"
+  },
+  "EnchParalysisFFContact": {
+    "class": "STAGGER",
+    "domain": "weapon",
+    "vanilla_mags": [],
+    "vanilla_durs": [
+      2,
+      4,
+      6
+    ],
+    "weap": 122,
+    "armo": 0,
+    "renamed_from": "Paralyze",
+    "curve_stagger": [
+      0.5,
+      0.6,
+      0.75,
+      0.9,
+      1.0
+    ],
+    "note": "REPLACED paralyze -> on-hit stagger magnitude; no perma-CC"
+  },
+  "EnchBanishFFContact": {
+    "class": "CONTROL",
+    "domain": "weapon",
+    "vanilla_mags": [
+      10.0,
+      12.0,
+      20.0,
+      36.0
+    ],
+    "vanilla_durs": [],
+    "weap": 120,
+    "armo": 0,
+    "curve_level": [
+      6,
+      12,
+      18,
+      25,
+      40
+    ],
+    "note": "affected-creature level (Fear/Banish/Turn Undead)"
+  },
+  "DLC2EnchDragonAbsorbFake": {
+    "class": "ABSORB",
+    "domain": "armor",
+    "vanilla_mags": [],
+    "vanilla_durs": [],
+    "weap": 0,
+    "armo": 2,
+    "note": "no vanilla magnitude data; manual"
+  },
+  "DLC2StaggerBallistaFFContact50": {
+    "class": "LINEAR",
+    "domain": "weapon",
+    "vanilla_mags": [],
+    "vanilla_durs": [],
+    "weap": 3,
+    "armo": 0,
+    "note": "no vanilla magnitude data; manual"
+  },
+  "DLC2BloodskalEnchGlowEffect": {
+    "class": "LINEAR",
+    "domain": "weapon",
+    "vanilla_mags": [],
+    "vanilla_durs": [],
+    "weap": 1,
+    "armo": 0,
+    "note": "no vanilla magnitude data; manual"
+  }
 }

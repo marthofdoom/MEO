@@ -17,7 +17,16 @@ is uniform across effects. So for magnitude-scaling effects:
 - Investment then multiplies further: **× 1.40** (Attunement perks) **× 1.50**
   (optional CSF mastery) — see DESIGN §3.
 
-This reproduces Fire `[10,16,22,29,35]` and Fortify Health `[20,32,45,58,70]`.
+This reproduced Fire `[10,16,22,29,35]` and Fortify Health `[20,32,45,58,70]`.
+
+**Global -15% pass (Marth, 2026-07-08, shipped v0.13.0):** every LINEAR and
+ABSORB curve ×0.85 (rounded to 1 decimal) — effective V = base × 2.975. Fire
+is now `[8.5, 13.6, 18.7, 24.6, 29.8]`, Fortify Health
+`[17, 27.2, 38.2, 49.3, 59.5]`. Strict scaling at all levels (level I lands
+below the Requiem craft value; the gem's edge is growth, not its floor).
+RESIST / SKILL / CONTROL / STAGGER / SOULTRAP / BINARY draft curves are
+deliberately untouched — those classes still await their own per-class calls
+(table below).
 Applies as-is to: Fire, Frost, Shock, Damage Magicka/Stamina, Fortify
 Health/Magicka/Stamina, the three Regen effects, Carry Weight, and (per-hit)
 Absorb Health/Magicka/Stamina.
