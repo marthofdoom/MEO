@@ -157,3 +157,45 @@ The `- 4` offset on the callback message is the trap everyone hits.
 - **Some floor items vanish after save → main menu → load.** Suspected
   engine save-culling issue (wskeever pinpointed it), external to MEO.
   Socketed items *in inventory* persist correctly across save/load.
+
+## 9. In-process ImGui overlay menu (validated 2026-07-08, v0.12.0 in-game)
+
+The M6 gem menu: ImGui drawn inside the game's own DX11 present, no
+external overlay. Verified against D7ry/wheeler source, then validated
+in-game under Lorerim's ENB/Community Shaders stack on 1.6.1170.
+
+**Three trampoline hooks** (`SKSE::AllocTrampoline(64)` at plugin load,
+installed in `SKSEPluginLoad` — before the renderer exists):
+
+| Hook | RelocationID | Offset | Purpose |
+|---|---|---|---|
+| D3DInit | `(75595, 77226)` | `VariantOffset(0x9, 0x275, 0x0)` | grab device/context/swapchain, init ImGui backends |
+| DXGIPresent | `(75461, 77246)` | `Offset(0x9)` | draw (render thread!) |
+| InputDispatch | `(67315, 68617)` | `Offset(0x7B)` | translate + swallow input while open |
+
+- Renderer access (NG 3.7): `RE::BSGraphics::Renderer::GetSingleton()->
+  data.{forwarder, context, renderWindows[0].swapChain}`; hwnd from
+  `swapChain->GetDesc()` → `sd.OutputWindow`; WndProc swapped via
+  `SetWindowLongPtrA` (clear ImGui keys on `WM_KILLFOCUS`).
+- InputDispatch signature: `void(RE::BSTEventSource<RE::InputEvent*>*,
+  RE::InputEvent**)`. While the menu is open, walk the event list into
+  ImGui IO and set `*a_events = nullptr` — the game sees nothing, so no
+  vanilla menu bleed-through and Esc/Tab are ours to interpret.
+- **Threading rule**: the present hook draws from the render thread. All
+  engine mutation goes through `SKSE::GetTaskInterface()->AddTask` (main
+  thread); the draw reads a mutex-guarded snapshot rebuilt by each task.
+- **`io.DisplaySize` lies under Proton/upscalers**: the Win32 backend
+  reads `GetClientRect`, which can disagree with the backbuffer — v0.12.0
+  drew its "centered" window visibly off-center (validated symptom).
+  Fix: cache `sd.BufferDesc.{Width,Height}` at init and overwrite
+  `io.DisplaySize` every frame between `ImGui_ImplWin32_NewFrame()` and
+  `ImGui::NewFrame()` (shipped v0.13.0, validation pending).
+- **Build traps**: NG 3.7 declares but does not export
+  `RE::ExtraDataList::ExtraDataList()` → LNK2019; never `new` an xList —
+  mint instances via the engine (`RemoveItem(kDropping)` → stamp uid on
+  the dropped ref → `PickUpObject`). `d3d11.h` pulls `windows.h`, which
+  NG never includes: guard with `WIN32_LEAN_AND_MEAN` + `NOMINMAX` or its
+  min/max macros break `std::max`/`std::clamp` everywhere.
+- `io.IniFilename = nullptr` — never write imgui.ini into the game dir.
+- vcpkg: `imgui` features `dx11-binding`, `win32-binding`; link
+  `imgui::imgui d3d11`.
