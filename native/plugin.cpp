@@ -308,17 +308,16 @@ bool FindWornWeapon(RE::InventoryEntryData*& a_entry, RE::ExtraDataList*& a_xLis
     return a_entry != nullptr;
 }
 
-// Shared guards; notifies and returns false if the instance can't take a gem.
-bool CanSocket(RE::InventoryEntryData* a_entry, RE::ExtraDataList* a_xList) {
-    if (a_xList->HasType(RE::ExtraDataType::kEnchantment)) {
-        Notify("That weapon already holds a gem.");
-        return false;
-    }
-    if (auto* weap = a_entry->object->As<RE::TESObjectWEAP>(); weap && weap->formEnchanting) {
-        Notify("Enchanted weapons cannot hold gems.");
-        return false;
-    }
-    return true;
+// Weapon-base eligibility, shared by the gem menu and world-loot rolls.
+// All engine-owned verdicts: GetPlayable() rejects non-playable WEAPs
+// (Dawnguard's Aetherium Crest is one), IsHandToHandMelee() rejects
+// unarmed pseudo-weapons, IsBound() rejects conjured weapons, and
+// MagicDisallowEnchanting is the enchanting table's own artifact rule —
+// if the table refuses the item, a gem does too.
+bool IsSocketableWeaponBase(const RE::TESObjectWEAP* a_weap) {
+    return a_weap && !a_weap->formEnchanting && a_weap->GetPlayable() &&
+           !a_weap->IsHandToHandMelee() && !a_weap->IsBound() &&
+           !a_weap->HasKeywordString("MagicDisallowEnchanting");
 }
 
 // ── M4b: every unique gem owns its own Gem XP pool (DESIGN §3) ────────
@@ -600,10 +599,9 @@ void BuildMenuSnapshot() {
             continue;
         }
         if (obj->Is(RE::FormType::Weapon)) {
-            auto* weap = obj->As<RE::TESObjectWEAP>();
-            if (weap && weap->formEnchanting) {
-                continue;  // base-enchanted can never take a gem
-            }
+            // Ineligible bases are hidden — but an instance that already
+            // holds one of our gems stays listed so the gem can come back.
+            const bool eligible = IsSocketableWeaponBase(obj->As<RE::TESObjectWEAP>());
             const char* baseName = obj->GetName();
             if (!baseName || !*baseName) {
                 continue;
@@ -616,16 +614,14 @@ void BuildMenuSnapshot() {
                     }
                     instances += std::max(xl->GetCount(), 1);
                     auto* xid = xl->GetByType<RE::ExtraUniqueID>();
-                    if (!xid) {
-                        xid = new RE::ExtraUniqueID(obj->GetFormID(), g_nextUID++);
-                        xl->Add(xid);
-                    }
                     MenuItemRow row;
                     row.base = obj->GetFormID();
-                    row.uid = xid->uniqueID;
                     row.worn = IsWornXList(xl);
                     if (xl->HasType(RE::ExtraDataType::kEnchantment)) {
-                        auto it = g_sockets.find(MakeKey(row.base, row.uid));
+                        if (!xid) {
+                            continue;  // enchanted, never stamped by us
+                        }
+                        auto it = g_sockets.find(MakeKey(row.base, xid->uniqueID));
                         if (it == g_sockets.end()) {
                             continue;  // player-enchanted at a table — not socketable
                         }
@@ -642,7 +638,16 @@ void BuildMenuSnapshot() {
                         } else {
                             row.gemLabel = "gem from a missing master";
                         }
+                    } else {
+                        if (!eligible) {
+                            continue;
+                        }
+                        if (!xid) {
+                            xid = new RE::ExtraUniqueID(obj->GetFormID(), g_nextUID++);
+                            xl->Add(xid);
+                        }
                     }
+                    row.uid = xid->uniqueID;
                     const char* dn = nullptr;
                     if (auto* xt = xl->GetByType<RE::ExtraTextDisplayData>()) {
                         dn = xt->displayName.c_str();
@@ -654,7 +659,7 @@ void BuildMenuSnapshot() {
                     items.push_back(std::move(row));
                 }
             }
-            if (data.first - instances > 0) {
+            if (eligible && data.first - instances > 0) {
                 MenuItemRow row;
                 row.base = obj->GetFormID();
                 row.label = baseName;
@@ -857,6 +862,44 @@ namespace menuhook {
     ID3D11Device*        g_device = nullptr;
     ID3D11DeviceContext* g_context = nullptr;
     std::atomic<bool>    g_d3dReady{ false };
+    // Backbuffer size, cached at init. The Win32 backend derives
+    // io.DisplaySize from GetClientRect, which under Proton/upscalers can
+    // disagree with the render target — ImGui then draws off-center. The
+    // present hook overrides DisplaySize with these every frame.
+    float g_bbW = 0.0f;
+    float g_bbH = 0.0f;
+
+    // Square corners, dark parchment-on-charcoal, brass accents — closer
+    // to Skyrim's UI language than ImGui's default debug grey.
+    void ApplyMenuStyle() {
+        auto& style = ImGui::GetStyle();
+        style.WindowRounding = 0.0f;
+        style.ChildRounding = 0.0f;
+        style.FrameRounding = 0.0f;
+        style.ScrollbarRounding = 0.0f;
+        style.WindowBorderSize = 1.0f;
+        style.ChildBorderSize = 1.0f;
+        style.WindowPadding = ImVec2(18.0f, 14.0f);
+        style.ItemSpacing = ImVec2(10.0f, 8.0f);
+        style.FramePadding = ImVec2(10.0f, 6.0f);
+        auto* c = style.Colors;
+        c[ImGuiCol_WindowBg]         = ImVec4(0.04f, 0.04f, 0.06f, 0.94f);
+        c[ImGuiCol_ChildBg]          = ImVec4(0.06f, 0.06f, 0.08f, 0.55f);
+        c[ImGuiCol_Border]           = ImVec4(0.55f, 0.50f, 0.35f, 0.60f);
+        c[ImGuiCol_Text]             = ImVec4(0.91f, 0.89f, 0.85f, 1.00f);
+        c[ImGuiCol_TextDisabled]     = ImVec4(0.58f, 0.55f, 0.47f, 1.00f);
+        c[ImGuiCol_Header]           = ImVec4(0.34f, 0.29f, 0.16f, 0.85f);
+        c[ImGuiCol_HeaderHovered]    = ImVec4(0.44f, 0.38f, 0.20f, 0.75f);
+        c[ImGuiCol_HeaderActive]     = ImVec4(0.52f, 0.45f, 0.24f, 0.90f);
+        c[ImGuiCol_Button]           = ImVec4(0.20f, 0.18f, 0.12f, 0.85f);
+        c[ImGuiCol_ButtonHovered]    = ImVec4(0.40f, 0.35f, 0.19f, 0.90f);
+        c[ImGuiCol_ButtonActive]     = ImVec4(0.52f, 0.45f, 0.24f, 1.00f);
+        c[ImGuiCol_Separator]        = ImVec4(0.55f, 0.50f, 0.35f, 0.50f);
+        c[ImGuiCol_ScrollbarBg]      = ImVec4(0.04f, 0.04f, 0.06f, 0.60f);
+        c[ImGuiCol_ScrollbarGrab]    = ImVec4(0.38f, 0.34f, 0.24f, 0.80f);
+        c[ImGuiCol_TitleBg]          = ImVec4(0.04f, 0.04f, 0.06f, 1.00f);
+        c[ImGuiCol_TitleBgActive]    = ImVec4(0.04f, 0.04f, 0.06f, 1.00f);
+    }
 
     void DrawGemMenu() {
         auto& io = ImGui::GetIO();
@@ -866,15 +909,26 @@ namespace menuhook {
         }
         io.MouseDrawCursor = true;
         io.FontGlobalScale = std::max(1.0f, io.DisplaySize.y / 1080.0f);
+        // Centered on each open (Appearing, not Always) so it can be
+        // dragged afterwards; DisplaySize is backbuffer-true by now.
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
-                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+                                ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x * 0.62f, io.DisplaySize.y * 0.68f),
-                                 ImGuiCond_Always);
-        if (!ImGui::Begin("Gem Pouch", nullptr,
+                                 ImGuiCond_Appearing);
+        if (!ImGui::Begin("Gem Socketing", nullptr,
                           ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
-                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
+                              ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings)) {
             ImGui::End();
             return;
+        }
+        {
+            const char* title = "G E M   S O C K E T I N G";
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.78f, 0.70f, 0.45f, 1.0f));
+            ImGui::SetCursorPosX((ImGui::GetWindowSize().x - ImGui::CalcTextSize(title).x) * 0.5f);
+            ImGui::TextUnformatted(title);
+            ImGui::PopStyleColor();
+            ImGui::Separator();
+            ImGui::Spacing();
         }
         std::scoped_lock lk(g_menu.lock);
         const bool busy = g_menu.busy.load();
@@ -985,6 +1039,9 @@ namespace menuhook {
             }
             WndProcHook::func = reinterpret_cast<WNDPROC>(SetWindowLongPtrA(
                 sd.OutputWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(WndProcHook::thunk)));
+            ApplyMenuStyle();
+            g_bbW = static_cast<float>(sd.BufferDesc.Width);
+            g_bbH = static_cast<float>(sd.BufferDesc.Height);
             g_d3dReady.store(true);
             spdlog::info("[menu] ImGui initialized ({}x{})", sd.BufferDesc.Width, sd.BufferDesc.Height);
         }
@@ -1001,6 +1058,9 @@ namespace menuhook {
             }
             ImGui_ImplDX11_NewFrame();
             ImGui_ImplWin32_NewFrame();
+            if (g_bbW > 0.0f) {
+                ImGui::GetIO().DisplaySize = ImVec2(g_bbW, g_bbH);
+            }
             ImGui::NewFrame();
             DrawGemMenu();
             ImGui::EndFrame();
@@ -1186,8 +1246,8 @@ void MaybeStampWorldWeapon(RE::TESObjectREFR* a_ref) {
     if (xList.HasType(RE::ExtraDataType::kEnchantment)) {
         return;  // already socketed (ours or engine)
     }
-    if (auto* weap = base->As<RE::TESObjectWEAP>(); weap && weap->formEnchanting) {
-        return;  // base-enchanted
+    if (!IsSocketableWeaponBase(base->As<RE::TESObjectWEAP>())) {
+        return;  // base-enchanted, non-playable, unarmed, bound, or artifact
     }
     if (auto* xid = xList.GetByType<RE::ExtraUniqueID>();
         xid && g_sockets.contains(MakeKey(base->GetFormID(), xid->uniqueID))) {
@@ -1473,7 +1533,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESCellAttachDetachEvent>(CellAttachSink::GetSingleton());
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.12.0 (M6 ImGui gem menu) loaded");
+            console->Print("MEO native v0.13.0 (M6a menu filters + style) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -1495,7 +1555,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.12.0 (M6: ImGui gem menu) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.13.0 (M6a: menu filters + style) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
