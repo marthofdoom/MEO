@@ -227,6 +227,15 @@ Strip classification (Marth 2026-07-09):
   with 2 effects, so gems fully replace generic enchanted loot. Practical
   test for the tool: an enchantment is a generic tier line if its effects
   are all family-covered AND it appears on ≥4 items across material tiers.
+- Doctrine refinement (Marth, same day): those second effects are
+  **incidental riders**, not packages — they're what the element *means* in
+  the load order (Requiem frost = frost + slow 2M/3s; shock = shock +
+  magicka bite 2M; fire = fire alone). **Gems follow the recipe**: catalog
+  rows carry `riders` (mgef ref + ratio + duration), GemDef/DLL build the
+  full effect list (m21). Chaos gets its frost+shock components (always
+  fire — no 50% proc conditions on built instances; flagged for balance
+  review). Explicit doubles (deliberate distinct-effect packages like
+  robes) remain artifact-class.
 **Packaging = standalone Mutagen CLI** (self-contained .exe, any mod manager, we
 own the UX; not a Synthesis patcher). `tools/scan_loadorder.py` is the python
 executable spec / recon prototype for this tool (no dotnet on the dev machine —

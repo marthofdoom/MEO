@@ -125,6 +125,7 @@ constexpr RE::FormID  kPouchSpellID = 0x803;  // MEO.esp-local
 struct ResolvedGem {
     const meo::GemDef*                  def = nullptr;
     RE::EffectSetting*                  mgef = nullptr;   // null = disabled (missing master)
+    std::array<RE::EffectSetting*, 2>   riders{};         // m21 recipe riders (null = skipped)
     std::array<RE::TESObjectMISC*, 5>   items{};
 };
 std::vector<ResolvedGem>                          g_gems;
@@ -223,6 +224,14 @@ void ResolveCatalog() {
         rg.mgef = dh->LookupForm<RE::EffectSetting>(def.mgefID, def.plugin);
         if (!rg.mgef) {
             spdlog::warn("gem '{}' disabled: MGEF {:06X} not found in {}", def.gid, def.mgefID, def.plugin);
+        }
+        for (int r = 0; r < def.nRiders; ++r) {
+            rg.riders[r] = dh->LookupForm<RE::EffectSetting>(def.riders[r].mgefID,
+                                                             def.riders[r].plugin);
+            if (!rg.riders[r]) {
+                spdlog::warn("gem '{}' rider {:06X} not found in {} — rider skipped",
+                             def.gid, def.riders[r].mgefID, def.riders[r].plugin);
+            }
         }
         const int levels = def.singleLevel ? 1 : 5;
         RE::TESObjectMISC* prev = nullptr;
@@ -359,19 +368,43 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         return;
     }
 
+    // One primary effect per filled socket, plus that gem's recipe riders
+    // (m21, Marth: gems mirror the load order's elemental recipe — frost
+    // carries slow, shock carries magicka bite — at ratio × primary).
+    std::size_t nEff = 0;
+    for (const auto& f : filled) {
+        nEff += 1;
+        for (int r = 0; r < f.rg->def->nRiders; ++r) {
+            nEff += f.rg->riders[r] != nullptr;
+        }
+    }
     RE::BSTArray<RE::Effect> effects;
-    effects.resize(filled.size());
+    effects.resize(nEff);
     std::string namePart;
+    std::size_t e = 0;
     for (std::size_t i = 0; i < filled.size(); ++i) {
-        auto& eff = effects[i];
         // Master power scale (MCM) × Gem Attunement (+8%/rank, DESIGN §6).
-        eff.effectItem.magnitude =
+        const float primaryMag =
             filled[i].rg->def->magnitude[filled[i].lvIdx] * g_magnitudeMult *
             (1.0f + 0.08f * g_attuneRank);
+        auto& eff = effects[e++];
+        eff.effectItem.magnitude = primaryMag;
         eff.effectItem.area = 0;
         eff.effectItem.duration = static_cast<std::uint32_t>(filled[i].rg->def->duration);
         eff.baseEffect = filled[i].rg->mgef;
         eff.cost = 0.0f;
+        for (int r = 0; r < filled[i].rg->def->nRiders; ++r) {
+            if (!filled[i].rg->riders[r]) {
+                continue;
+            }
+            const auto& rd = filled[i].rg->def->riders[r];
+            auto& reff = effects[e++];
+            reff.effectItem.magnitude = primaryMag * rd.ratio;
+            reff.effectItem.area = 0;
+            reff.effectItem.duration = static_cast<std::uint32_t>(rd.duration);
+            reff.baseEffect = filled[i].rg->riders[r];
+            reff.cost = 0.0f;
+        }
         if (!namePart.empty()) {
             namePart += " + ";
         }
@@ -2769,7 +2802,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.28.0 (M20 perk tree mode) loaded");
+            console->Print("MEO native v0.29.0 (M21 recipe riders) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -2795,7 +2828,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.28.0 (M20: installer perk tree + auto-grant standdown) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.29.0 (M21: elemental recipe riders + perk tree mode) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
