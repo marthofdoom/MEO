@@ -212,6 +212,26 @@ the DLL applies it over the compiled GemCatalog.h defaults at kDataLoaded.
 The compiled defaults (hand-matched to Requiem, e.g. m21 riders) remain the
 fallback for installs that never ran the tool.
 
+**Rider derivation SHIPPED (m22, v0.30.0).** `write-calibration` (also run
+automatically by the post-install exe) matches every strip-classified ENCH
+to the family whose full catalog-ref multiset it contains (identity before
+signature; chaos's 3-ref set outranks fire's 1 on a tri-element enchant),
+normalizes companion magnitudes against the family primary, and the
+dominant recipe by item count wins. Semantics: a family **named** in
+`meo_calibration.json` gets exactly that rider set — an empty list clears
+the compiled default (LoreRim's shock line has no magicka rider; the bite
+is inherent in its winning MGEF, so the compiled default would
+double-dip); absent families keep compiled defaults. Riders with
+MGEF-level conditions self-gate (ENGINE_NOTES §12). Effect-level-conditioned
+companions are skipped with a note (they'd fire unconditionally as riders).
+Duration-anchored primaries (paralysis, soultrap: magnitude 0) can't
+ratio-normalize — deferred, noted in the JSON. LoreRim validation: derived
+frost rider Slow ×2.0/3s reproduces the m21 hand-read exactly.
+
+**New-family rarity (Marth 2026-07-09, RULE):** families added from
+list-discovered recipes (Force, Spellbreaking, burst variants,
+armor-penetration packages) enter at the **second-rarest tier (A)**.
+
 ### Install-time load-order scanner (design DECIDED 2026-07-08, tool pending)
 The catalog ships vanilla effects; a mod load order carries dozens more
 (Lorerim scan: ~267 single-effect enchant MGEFs not in our catalog). An

@@ -315,3 +315,32 @@ Mutagen on Linux (installer/).
   / keyword gates. Fully derivable — no perk names needed. Mutagen quirk:
   IGetIsObjectTypeConditionDataGetter hides the param; reflect
   `GetProperty("FormType")`.
+
+## 12. MGEF-level conditions travel with the effect (m22, record-verified)
+
+A magic effect's own condition list (MGEF `Conditions`, distinct from the
+per-effect CTDA on an ENCH/SPEL effect entry) is evaluated wherever the
+effect is applied — including inside a runtime-created enchantment built by
+`BGSCreatedObjectManager::AddWeaponEnchantment`. Consequences MEO relies on:
+
+- **Riders self-gate.** Requiem's `REQ_Effect_EnchShockDamageFFContactDwemerBonus`
+  (mgefConds=1: dwarven automatons) and its vs-undead Turn-Undead damage twin
+  (mgefConds=2) fire only when their MGEF conditions pass, even when a gem
+  carries them as riders with no conditions on the effect entry. Copying such
+  an effect copies its gating for free.
+- **Effect-entry conditions do NOT travel** — they live on the ENCH record's
+  effect item, and MEO builds its effect items bare. A companion that is
+  gated per-entry in the source recipe (chaos's 50%-proc entries) would fire
+  unconditionally as a rider; the installer's calibration derivation skips
+  those with a note.
+- Read both layers with Mutagen: entry = `effect.Conditions`,
+  MGEF = `mgef.Conditions` (`ench` dump prints `conds=`/`mgefConds=`).
+
+Also record-verified on LoreRim: Requiem reimplements vanilla utility
+effects as **Script-archetype** MGEFs at the vanilla FormKey
+(`REQ_Effect_DestructionGM_Slow_Touch` = 0x0B72A0 FrostSlowFFContact,
+arch=Script). Script archetypes work fine as gem riders — the gem
+references the winning MGEF record and the engine runs its script; do NOT
+classify enchantments as non-replicable by archetype. The real
+"casting implement" signals are `ENCH.EnchantType == StaffEnchantment` and
+Concentration/Aimed effects.
