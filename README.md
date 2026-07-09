@@ -99,4 +99,4 @@ SE + SKSE.
   [CommonLibSSE-NG](https://github.com/CharmedBaryon/CommonLibSSE-NG), and
   powerofthree's Papyrus Extender
 
-Private project; not for redistribution while under development.
+MIT licensed — see `LICENSE`.
