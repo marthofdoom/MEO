@@ -178,12 +178,17 @@ The `- 4` offset on the callback message is the trap everyone hits.
   items (refresh created enchant for MCM magnitude), then
   `RE::ActorEquipManager::UnequipObject` → `EquipObject` on each (weapons to
   their `BGSDefaultObjectManager` hand slot kLeft/kRightHandEquip; armor
-  slotless). TIMING (hardened v0.27.3): a blind post-load timer is NOT
-  reliable — on a heavy-area load it fires while the loading screen is still
-  up and the equip cycle is swallowed (field-hit at +4s). Anchor
-  to the Loading Menu CLOSING (MenuOpenCloseEvent) + ~1.5s fade margin,
-  with a long fallback timer for loads that show no loading menu. One pass
-  = a single blink. GOTCHA: `d3d11.h` pulls `wingdi.h` which `#define`s
+  slotless). REFINED (v0.27.4-m19f, Marth's insight): the real rule is that
+  **the ability refresh only takes when the enchant extra CHANGES.**
+  In-session socketing reactivates without any equip cycle (it changes the
+  extra); post-load, a rebuild dedupes to the SAME FF form, so
+  UpdateWeaponAbility no-ops against the save's stale ability bookkeeping —
+  and re-equip only worked because unequip is a forced teardown. The
+  blinkless recipe: strip `ExtraEnchantment` + Update*Ability (teardown),
+  then NEXT task rebuild + Update*Ability (fresh ability). No equip cycle,
+  no gear blink. Run it anchored to Loading-Menu close (+5s and +12s — a
+  blind +1.5s was field-swallowed during the fade; it's invisible, so two
+  passes are free), with a long fallback timer for menu-less loads. GOTCHA: `d3d11.h` pulls `wingdi.h` which `#define`s
   `GetObject`→`GetObjectW`, hijacking `BGSDefaultObjectManager::GetObject<T>()`
   — `#undef GetObject` after the D3D includes.
   SETTLED (2026-07-08, m17b AV probe): the kLeft/RightItemCharge AV-gate
