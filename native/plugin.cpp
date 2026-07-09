@@ -676,6 +676,12 @@ struct MenuState {
     std::vector<MenuItemRow> items;
     std::vector<MenuGemRow>  gems;
     int                      selItem = 0;
+    // m19e: selection is IDENTITY, not index — rows are label-sorted and a
+    // socket/unsocket changes the label, moving the row. After each rebuild
+    // the index is re-derived from (base, uid); a raw index silently landed
+    // on a DIFFERENT item (Marth: "frost disappeared", phantom-empty sockets).
+    RE::FormID               selBase = 0;
+    std::uint16_t            selUid = 0;
 };
 MenuState g_menu;
 
@@ -1104,8 +1110,23 @@ void BuildMenuSnapshot() {
     std::scoped_lock lk(g_menu.lock);
     g_menu.items = std::move(items);
     g_menu.gems = std::move(gems);
-    g_menu.selItem = std::clamp(g_menu.selItem, 0,
-                                std::max(0, static_cast<int>(g_menu.items.size()) - 1));
+    int found = -1;
+    if (g_menu.selBase) {  // re-locate the selected ITEM after the resort
+        for (int i = 0; i < static_cast<int>(g_menu.items.size()); ++i) {
+            if (g_menu.items[i].base == g_menu.selBase && g_menu.items[i].uid == g_menu.selUid) {
+                found = i;
+                break;
+            }
+        }
+    }
+    g_menu.selItem = (found >= 0) ? found
+                                  : std::clamp(g_menu.selItem, 0,
+                                               std::max(0, static_cast<int>(g_menu.items.size()) - 1));
+    if (found < 0 && g_menu.selItem < static_cast<int>(g_menu.items.size()) &&
+        !g_menu.items.empty()) {  // keep identity in sync with the fallback row
+        g_menu.selBase = g_menu.items[g_menu.selItem].base;
+        g_menu.selUid = g_menu.items[g_menu.selItem].uid;
+    }
 }
 
 // ── Menu actions (SKSE tasks — main thread; all M4b-proven flows) ─────
@@ -1475,6 +1496,8 @@ namespace menuhook {
             label += std::format("##item{}", i);
             if (ImGui::Selectable(label.c_str(), g_menu.selItem == i)) {
                 g_menu.selItem = i;
+                g_menu.selBase = row.base;
+                g_menu.selUid = row.uid;
             }
         }
         if (g_menu.items.empty()) {
@@ -1770,8 +1793,10 @@ void OpenGemMenu(bool a_station) {
     if (g_menu.open.load()) {
         return;
     }
-    BuildMenuSnapshot();
+    g_menu.selBase = 0;  // fresh open: no remembered selection
+    g_menu.selUid = 0;
     g_menu.selItem = 0;
+    BuildMenuSnapshot();
     g_menu.wantClose = false;
     g_menu.station = a_station;
     g_menu.open = true;
