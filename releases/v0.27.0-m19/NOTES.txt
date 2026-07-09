@@ -1,0 +1,2 @@
+M19: themed enemy socketed spawns + vendor gems + container re-key (uid-trap fix) + m18b UX (table exit, shout-key menu toggle)
+built from native run 28996934551
