@@ -161,26 +161,32 @@ The `- 4` offset on the callback message is the trap everyone hits.
   (Confidence: the cost/charge change is definitely the cause — it's the only
   weapon-side change; the exact charge→shader gating path is inferred, not
   instrumented. Revisit here if it ever regresses.)
-- **Created-enchant `costOverride`/`kCostOverride` do NOT survive save/load
-  — worn sockets go inert on load. FIXED in v0.23.0-m15.** The §3 free-cost
-  fields are a *runtime* property of the `BGSCreatedObjectManager` enchant;
-  the save round-trips the effects + charge but drops the cost-override flag,
-  so on load the socket reverts to an auto per-hit cost that (at our scaled-up
-  magnitude) charge-starves — the enchant shows but never fires, exactly the
-  pre-m12 firing bug. Pre-m11 builds never hit this: low magnitude, `charge
-  500` sufficed, nothing to lose on load — which is why *earlier* builds
-  persisted natively with no reapply. Fix: re-stamp every worn socketed item
-  after load (re-mint enchant → costOverride restored → re-derive worn
-  ability). CRITICAL: `kPostLoadGame` fires while the engine is still
-  finalizing the loaded actor's equipped-weapon process, so a re-stamp done
-  *then* is silently discarded (m14's single-shot reapply failed for this
-  reason — only a manual re-socket minutes later worked). m15 re-stamps on a
-  few post-load delays (~1.5s/4s/8s via a detached timer → main-thread task)
-  until the actor is live; `AddWeaponEnchantment` dedupes identical created
-  enchants so rebuilding every attempt doesn't churn created objects.
-  (Confidence: costOverride-loss is the leading hypothesis, corroborated by
-  the manual-re-socket fix; the alternative is pure ability-derivation timing.
-  Either way the re-stamp-until-live fix covers it. Revisit if it regresses.)
+- **Worn instance-`ExtraEnchantment` sockets go INERT on load until a real
+  re-equip. FIXED in v0.24.0-m16.** The enchant data survives the save
+  PERFECTLY — the m15 `[load-diag]` (reads the as-loaded enchant before we
+  touch it) proved `kCostOverride=true`, `costOverride=0`, `charge=0xFFFF` all
+  round-trip. So this was NEVER an enchant-data problem (the m14/m15
+  costOverride-loss hypothesis was WRONG — disproved by the diag). What dies is
+  the actor's **equipped-weapon enchant delivery cache**, which the engine
+  rebuilds on load from the item's **base-form** enchantment (`formEnchanting`)
+  — which a socketed item does NOT have; ours is an instance `ExtraEnchantment`
+  the load path doesn't re-derive from. `Actor::UpdateWeaponAbility`/
+  `UpdateArmorAbility` do NOT rebuild that cache here: m15 called them 4× over
+  8s and the weapon still never fired. The ONLY thing that reactivates it is
+  the engine's own equip flow — a real unequip → re-equip (which is exactly the
+  manual fix Marth found). m16 fix: `ReapplyWornSockets` collects worn socketed
+  items (refresh created enchant for MCM magnitude), then
+  `RE::ActorEquipManager::UnequipObject` → `EquipObject` on each (weapons to
+  their `BGSDefaultObjectManager` hand slot kLeft/kRightHandEquip; armor
+  slotless). Deferred ~4s post-load via a detached timer → main-thread task
+  (`kPostLoadGame` is too early — the engine is still finalizing its own
+  load-equip and an equip cycle there conflicts/gets undone). One pass = a
+  single blink. GOTCHA: `d3d11.h` pulls `wingdi.h` which `#define`s
+  `GetObject`→`GetObjectW`, hijacking `BGSDefaultObjectManager::GetObject<T>()`
+  — `#undef GetObject` after the D3D includes. (This also means the earlier
+  builds that "worked on load" almost certainly did NOT — they were re-equipped
+  by hand, or the low-magnitude effect went unnoticed. Instance ExtraEnchantment
+  has never self-reactivated on load; that's inherent to not using formEnchanting.)
 - **Weapons in containers, on racks/displays, or in NPC inventories are NOT
   born socketed.** `TESCellAttachDetachEvent` fires per *world reference*;
   container contents and carried items are inventory entries, not refs, and
