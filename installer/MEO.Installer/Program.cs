@@ -278,6 +278,7 @@ static class Commands
         var removedIdx = new HashSet<uint>();
         var removedPerks = new HashSet<FormKey>();
         var keptPerkHeads = new List<IPerkGetter>();
+        var keepCandidates = new List<(uint Idx, IPerkGetter Perk)>();
         foreach (var n in av.PerkTree)
         {
             if ((n.Index ?? 0) == 0) continue;
@@ -289,9 +290,62 @@ static class Commands
             }
             else
             {
-                keptPerkHeads.Add(perk);
+                keepCandidates.Add((n.Index ?? 0, perk));
             }
         }
+
+        // Interactive curation (Marth 2026-07-09): the classifier decides what
+        // is MEO's domain; the human decides which surviving perks are worth
+        // keeping. Decisions persist next to the patch so re-runs don't re-ask
+        // — delete or edit the .choices.json to change your mind.
+        var choicesPath = Path.ChangeExtension(outPath, ".choices.json");
+        var choices = File.Exists(choicesPath)
+            ? System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, bool>>(
+                  File.ReadAllText(choicesPath)) ?? []
+            : [];
+        var interactive = !Console.IsInputRedirected ||
+                          Environment.GetEnvironmentVariable("MEO_ASSUME_TTY") == "1";
+        foreach (var (idx, perk) in keepCandidates)
+        {
+            var key = perk.FormKey.ToString();
+            if (!choices.TryGetValue(key, out var keep))
+            {
+                var ranks = RankChain(perk).ToList();
+                Console.WriteLine($"\nnon-enchanting perk in the tree: '{perk.Name}'" +
+                                  $" ({ranks.Count} rank(s)) [{perk.FormKey.ModKey}]");
+                foreach (var r in ranks)
+                    if (r.Description?.String is { Length: > 0 } d)
+                        Console.WriteLine($"  desc: {d}");
+                foreach (var e in perk.Effects.OfType<IAPerkEntryPointEffectGetter>())
+                    Console.WriteLine($"  effect: {e.EntryPoint}");
+                foreach (var e in perk.Effects.OfType<IPerkAbilityEffectGetter>())
+                    Console.WriteLine($"  ability: {(e.Ability.TryResolve(cache, out var sp) ? sp.Name?.String ?? sp.EditorID : "?")}");
+                if (interactive)
+                {
+                    Console.Write("  keep it in the new tree? [Y/n]: ");
+                    var a = Console.ReadLine()?.Trim().ToLowerInvariant();
+                    keep = a is not ("n" or "no");
+                }
+                else
+                {
+                    keep = true;
+                    Console.WriteLine("  (non-interactive: kept)");
+                }
+                choices[key] = keep;
+            }
+            Console.WriteLine($"  -> {(keep ? "KEEP" : "REMOVE")} '{perk.Name}'");
+            if (keep)
+            {
+                keptPerkHeads.Add(perk);
+            }
+            else
+            {
+                removedIdx.Add(idx);
+                foreach (var p in RankChain(perk)) removedPerks.Add(p.FormKey);
+            }
+        }
+        File.WriteAllText(choicesPath, System.Text.Json.JsonSerializer.Serialize(
+            choices, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
 
         var root = over.PerkTree.FirstOrDefault(n => (n.Index ?? 0) == 0)
                    ?? throw new InvalidOperationException("no root node in source tree");
