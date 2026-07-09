@@ -134,6 +134,10 @@ try
         "strip-report" => Commands.StripReport(loadOrder, cache,
             positional.ElementAtOrDefault(0) ?? "data/gem_catalog.json",
             positional.ElementAtOrDefault(1)),
+        "ench" => Commands.DumpEnch(loadOrder, cache, positional[0]),
+        "write-calibration" => Commands.WriteCalibration(loadOrder, cache,
+            positional.ElementAtOrDefault(0) ?? "data/gem_catalog.json",
+            positional.ElementAtOrDefault(1) ?? "meo_calibration.json"),
         _ => Commands.Fail($"unknown command {cmd}"),
     };
 }
@@ -518,6 +522,200 @@ static class Commands
         return 0;
     }
 
+    public static int DumpEnch(
+        LoadOrder<IModListingGetter<ISkyrimModGetter>> lo, ILinkCache cache, string edid)
+    {
+        var hits = lo.PriorityOrder.ObjectEffect().WinningOverrides()
+            .Where(e => (e.EditorID?.Contains(edid, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                        (e.Name?.String?.Contains(edid, StringComparison.OrdinalIgnoreCase) ?? false))
+            .Take(4).ToList();
+        if (hits.Count == 0) return Fail($"no winning ENCH matching '{edid}'");
+        foreach (var e in hits)
+        {
+            Console.WriteLine($"{e.EditorID} '{e.Name?.String}' [{e.FormKey}]");
+            foreach (var x in e.Effects)
+            {
+                if (!x.BaseEffect.TryResolve(cache, out var m))
+                { Console.WriteLine("  (unresolved effect)"); continue; }
+                Console.WriteLine($"  {m.EditorID} '{m.Name?.String}' [{m.FormKey}] " +
+                    $"arch={m.Archetype.Type} av={m.Archetype.ActorValue} resist={m.ResistValue} " +
+                    $"av2={m.SecondActorValue} mag={x.Data?.Magnitude} dur={x.Data?.Duration} " +
+                    $"conds={x.Conditions.Count} mgefConds={m.Conditions.Count}");
+            }
+        }
+        return 0;
+    }
+
+    // Derive each gem family's rider recipe from the list's own generic loot
+    // lines (the prime directive: read what the list does, never assume).
+    // For every strip-classified ENCH, the family is the catalog entry whose
+    // full effect-signature multiset the enchant contains (chaos's 3-sig set
+    // outranks fire's 1-sig set on a tri-element enchant). Whatever effects
+    // remain after the family's own are consumed — plus the family's 2nd/3rd
+    // components — are that recipe's riders: magnitude ratio vs the primary,
+    // plus duration. The dominant recipe (by item count) wins.
+    public static int WriteCalibration(
+        LoadOrder<IModListingGetter<ISkyrimModGetter>> lo, ILinkCache cache,
+        string catalogPath, string outPath)
+    {
+        if (BuildCensus(lo, cache, catalogPath) is not { } data) return 1;
+
+        var clsByItem = data.Items.ToDictionary(i => i.Key, i => i.Cls);
+        var enchWeight = new Dictionary<FormKey, int>();
+        foreach (var r in data.Raw)
+            if (clsByItem[r.Key].StartsWith("strip"))
+                enchWeight[r.Ench] = enchWeight.GetValueOrDefault(r.Ench) + 1;
+
+        var fams = new Dictionary<string, Dictionary<string, RecipeAgg>>();
+        var noteWeight = new Dictionary<string, int>();
+        void Note(string msg, int weight) =>
+            noteWeight[msg] = noteWeight.GetValueOrDefault(msg) + weight;
+        foreach (var (ench, weight) in enchWeight)
+        {
+            var fx = data.EnchInfo[ench].Fx
+                .Where(t => t.Sig is not null && t.M is not null).ToList();
+            if (fx.Count == 0) continue;
+
+            string? best = null;
+            int bestN = 0;
+            bool bestFirst = false;
+            foreach (var (famKey, refs) in data.FamilyRefs)
+            {
+                var pool = fx.Select(t => t.Sig!).ToList();
+                if (!refs.All(r => pool.Remove(r.Sig))) continue;
+                var first = refs[0].Sig == fx[0].Sig;
+                if (refs.Count > bestN || (refs.Count == bestN && first && !bestFirst))
+                    (best, bestN, bestFirst) = (famKey, refs.Count, first);
+            }
+            if (Environment.GetEnvironmentVariable("MEO_CAL_DEBUG") == "1")
+                Console.WriteLine($"DBG\t{best ?? "NO-FAMILY"}\tw={weight}\t" +
+                    string.Join(" | ", fx.Select(t => $"{t.M!.EditorID}={t.Sig}")));
+            if (best is null) continue;
+
+            // Consume the family's own components in catalog order; the first
+            // is the primary the ratios normalize against. Prefer FormKey
+            // identity over signature so a sig-colliding companion (turn
+            // undead + a heal that reads as the same value-modifier) isn't
+            // mistaken for the family's own effect.
+            var refs2 = data.FamilyRefs[best];
+            var pool2 = new List<(string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds)>(fx);
+            var matched = new List<(string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds)>();
+            foreach (var (rk, rs) in refs2)
+            {
+                var idx = pool2.FindIndex(t => t.M!.FormKey == rk);
+                if (idx < 0) idx = pool2.FindIndex(t => t.Sig == rs);
+                matched.Add(pool2[idx]);
+                pool2.RemoveAt(idx);
+            }
+            var prim = matched[0];
+            if (prim.Mag <= 0)
+            {
+                Note($"{best}: primary magnitude 0 (duration-anchored recipe, can't normalize)", weight);
+                continue;
+            }
+            // A conditional companion (Requiem's double-shock-vs-Dwemer bonus)
+            // only fires under its conditions; gem riders carry none, so
+            // copying it would apply the bonus always. Skip and say so.
+            var all = matched.Skip(1).Concat(pool2).ToList();
+            var riders = all.Where(t => t.Conds == 0).ToList();
+            foreach (var d in all.Where(t => t.Conds > 0))
+                Note($"{best}: conditional companion '{d.M!.Name?.String ?? d.M.EditorID}' " +
+                     $"({d.Conds} cond(s)) not carried", weight);
+            var famRec = fams.TryGetValue(best, out var f) ? f : fams[best] = [];
+            var key = string.Join("+", riders.Select(t => t.M!.FormKey));
+            var rec = famRec.TryGetValue(key, out var got) ? got : famRec[key] = new()
+            { Mgefs = riders.Select(t => t.M!).ToList() };
+            rec.Weight += weight;
+            rec.Enchs++;
+            for (int i = 0; i < riders.Count; i++)
+            {
+                if (rec.Obs.Count <= i) rec.Obs.Add([]);
+                rec.Obs[i].Add((riders[i].Mag / prim.Mag, riders[i].Dur));
+            }
+        }
+
+        static float Median(List<float> v)
+        {
+            var s = v.Order().ToList();
+            return s.Count % 2 == 1 ? s[s.Count / 2] : (s[s.Count / 2 - 1] + s[s.Count / 2]) / 2f;
+        }
+
+        var outFams = new SortedDictionary<string, object>();
+        foreach (var (famKey, recipes) in fams.OrderBy(kv => kv.Key))
+        {
+            var ranked = recipes.Values.OrderByDescending(r => r.Weight).ToList();
+            var dom = ranked[0];
+            var alts = ranked.Skip(1).Sum(r => r.Weight);
+            var line = $"{famKey}: ";
+            if (dom.Mgefs.Count == 0)
+            {
+                // Explicit empty rider list: the DLL must CLEAR any compiled
+                // default for a family this list's recipe keeps plain.
+                outFams[famKey] = new Dictionary<string, object>
+                {
+                    ["riders"] = new List<object>(),
+                    ["from"] = $"{dom.Weight} item(s), {dom.Enchs} ench(s)",
+                };
+                line += $"no riders (plain recipe, {dom.Weight} item(s))";
+                if (alts > 0) line += $" — minority recipes on {alts} item(s) ignored";
+                Console.WriteLine("  " + line);
+                continue;
+            }
+            if (dom.Mgefs.Count > 2)
+                Note($"{famKey}: recipe has {dom.Mgefs.Count} riders, DLL carries 2 — truncated",
+                     dom.Weight);
+            var riderJson = new List<object>();
+            var parts = new List<string>();
+            for (int i = 0; i < Math.Min(dom.Mgefs.Count, 2); i++)
+            {
+                var m = dom.Mgefs[i];
+                var ratio = (float)Math.Round(Median(dom.Obs[i].Select(o => o.Ratio).ToList()), 3);
+                var dur = (int)Median(dom.Obs[i].Select(o => (float)o.Dur).ToList());
+                riderJson.Add(new Dictionary<string, object>
+                {
+                    ["plugin"] = m.FormKey.ModKey.FileName.String,
+                    ["fid"] = $"0x{m.FormKey.ID:X6}",
+                    ["ratio"] = ratio,
+                    ["dur"] = dur,
+                    ["mgef"] = m.EditorID ?? m.Name?.String ?? "?",
+                });
+                parts.Add($"{m.Name?.String ?? m.EditorID} x{ratio}/{dur}s");
+            }
+            outFams[famKey] = new Dictionary<string, object>
+            {
+                ["riders"] = riderJson,
+                ["from"] = $"{dom.Weight} item(s), {dom.Enchs} ench(s)",
+            };
+            line += string.Join(" + ", parts) + $"  (from {dom.Weight} item(s))";
+            if (alts > 0) line += $" — minority recipes on {alts} item(s)";
+            Console.WriteLine("  " + line);
+        }
+        var notes = noteWeight.OrderByDescending(kv => kv.Value)
+            .Select(kv => $"{kv.Key} — {kv.Value} item(s)").ToList();
+        foreach (var n in notes) Console.WriteLine("  note: " + n);
+
+        var doc = new Dictionary<string, object>
+        {
+            ["version"] = 1,
+            ["generated"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+            ["families"] = outFams,
+            ["notes"] = notes,
+        };
+        File.WriteAllText(outPath, System.Text.Json.JsonSerializer.Serialize(doc,
+            new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+        Console.WriteLine($"wrote {outPath} ({outFams.Count} matched famil(ies), " +
+                          "absent families keep compiled defaults)");
+        return 0;
+    }
+
+    sealed class RecipeAgg
+    {
+        public int Weight;
+        public int Enchs;
+        public List<IMagicEffectGetter> Mgefs = [];
+        public List<List<(float Ratio, int Dur)>> Obs = [];
+    }
+
     // A magic effect's mechanical identity, independent of which plugin last
     // touched it: what it does (archetype), to what (AVs), and whether it
     // hurts. Two MGEFs with the same signature are the same gameplay effect,
@@ -528,44 +726,74 @@ static class Commands
         $"{(int)(m.Flags & (MagicEffect.Flag.Hostile | MagicEffect.Flag.Detrimental))}|" +
         $"{m.ResistValue}|{m.SecondActorValue}";
 
-    // Read-only census for the loot strip: classifies every winning ENCH by
-    // the ruled policy (single-effect family-covered generics and tiered
-    // 2-effect generic lines strip; named packages / multi-effect artifacts /
-    // blacklist keep) and counts what that means item- and LVLI-wise.
-    public static int StripReport(
-        LoadOrder<IModListingGetter<ISkyrimModGetter>> lo, ILinkCache cache,
-        string catalogPath, string? dumpPath = null)
+    // Shared loot census: what every winning ENCH does (resolved effects with
+    // magnitudes), which effects the gem catalog mirrors, and the per-item
+    // strip/keep classification. strip-report prints it; write-calibration
+    // derives rider recipes from it.
+    sealed class CensusData
     {
-        if (!File.Exists(catalogPath)) return Fail($"catalog not found: {catalogPath}");
+        public HashSet<string> Covered = [];
+        public Dictionary<string, List<(FormKey Key, string Sig)>> FamilyRefs = [];
+        public Dictionary<FormKey, (List<(string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds)> Fx, bool Covered, bool CastLike)> EnchInfo = [];
+        public List<(FormKey Key, FormKey Ench, string? Name, string? BaseName, ModKey Mod, string? Edid)> Raw = [];
+        public List<(FormKey Key, string Cls, string? Name, ModKey Mod, string? Edid)> Items = [];
+    }
+
+    static CensusData? BuildCensus(
+        LoadOrder<IModListingGetter<ISkyrimModGetter>> lo, ILinkCache cache, string catalogPath)
+    {
+        if (!File.Exists(catalogPath))
+        {
+            Console.Error.WriteLine($"catalog not found: {catalogPath}");
+            return null;
+        }
+        var data = new CensusData();
         var catalog = System.Text.Json.JsonDocument.Parse(File.ReadAllText(catalogPath));
-        var covered = new HashSet<string>();
         int unresolved = 0;
         foreach (var fam in catalog.RootElement.EnumerateObject())
+        {
+            var refs = new List<(FormKey Key, string Sig)>();
             foreach (var r in fam.Value.GetProperty("mgef_refs").EnumerateArray())
             {
                 var fk = new FormKey(
                     ModKey.FromNameAndExtension(r.GetProperty("plugin").GetString()!),
                     Convert.ToUInt32(r.GetProperty("fid").GetString()!, 16));
-                if (cache.TryResolve<IMagicEffectGetter>(fk, out var m)) covered.Add(Sig(m));
+                if (cache.TryResolve<IMagicEffectGetter>(fk, out var m))
+                {
+                    var s = Sig(m);
+                    refs.Add((fk, s));
+                    data.Covered.Add(s);
+                }
                 else unresolved++;
             }
-        Console.WriteLine($"catalog: {covered.Count} covered effect signature(s)" +
+            if (refs.Count > 0) data.FamilyRefs[fam.Name] = refs;
+        }
+        Console.WriteLine($"catalog: {data.Covered.Count} covered effect signature(s)" +
                           (unresolved > 0 ? $", {unresolved} ref(s) not in this list" : ""));
 
-        // ENCH coverage: resolved effects + whether every one is mirrored by a
-        // gem family.
-        var enchInfo = new Dictionary<FormKey, (List<(string? Sig, IMagicEffectGetter? M)> Fx, bool Covered)>();
         foreach (var e in lo.PriorityOrder.ObjectEffect().WinningOverrides())
         {
             var fx = e.Effects
                 .Select(x => x.BaseEffect.TryResolve(cache, out var m)
-                    ? (Sig(m!), (IMagicEffectGetter?)m) : (null, null))
+                    ? (Sig(m!), (IMagicEffectGetter?)m, x.Data?.Magnitude ?? 0f,
+                       x.Data?.Duration ?? 0, x.Conditions.Count)
+                    : (null, null, 0f, 0, 0))
                 .ToList();
-            enchInfo[e.FormKey] =
-                (fx, fx.Count > 0 && fx.All(t => t.Item1 is not null && covered.Contains(t.Item1)));
+            // Casting implements, not carried enchantments: staff-type ENCH
+            // records and concentration/aimed effects (battlestaff spell
+            // lines). Script ARCHETYPES are fine — a gem references the same
+            // winning MGEF and the engine runs whatever it does; Requiem's
+            // Slow rider is a Script-archetype contact effect.
+            var castLike = e.EnchantType.ToString() == "StaffEnchantment" ||
+                fx.Any(t => t.Item2 is { } m2 &&
+                    (m2.CastType == CastType.Concentration ||
+                     m2.TargetType == TargetType.Aimed));
+            data.EnchInfo[e.FormKey] =
+                (fx, fx.Count > 0 && fx.All(t => t.Item1 is not null && data.Covered.Contains(t.Item1)),
+                 castLike);
         }
-        Console.WriteLine($"winning ENCH records: {enchInfo.Count} " +
-                          $"(fully covered: {enchInfo.Values.Count(v => v.Covered)})");
+        Console.WriteLine($"winning ENCH records: {data.EnchInfo.Count} " +
+                          $"(fully covered: {data.EnchInfo.Values.Count(v => v.Covered)})");
 
         // The strip decision is per ITEM, and "generic loot line" is a record
         // shape, not a name list: list-generated enchanted variants are
@@ -600,13 +828,8 @@ static class Commands
         string Classify(FormKey ench, bool generic)
         {
             if (!generic) return "keep-named";
-            var info = enchInfo.GetValueOrDefault(ench);
-            // Casting implements and framework-entangled lines (battlestaffs
-            // wired into combat-mod scripts, summon staves): these effects
-            // cannot exist inside a gem, so their items stay untouched.
-            if (info.Fx is not null && info.Fx.Any(t => t.M?.Archetype.Type.ToString()
-                    is "Script" or "SummonCreature" or "SpawnHazard" or "Light" or "Cloak"))
-                return "keep-scripted";
+            var info = data.EnchInfo.GetValueOrDefault(ench);
+            if (info.CastLike) return "keep-cast";
             var (n, cov) = (info.Fx?.Count ?? 0, info.Covered);
             return n switch
             {
@@ -622,7 +845,6 @@ static class Commands
         // Tier chains template on each other ("of the Inferno" -> "of
         // Scorching" -> ... -> base), so walk to the chain's root — the
         // unenchanted item whose name the generics extend.
-        var raw = new List<(FormKey Key, FormKey Ench, string? Name, string? BaseName, ModKey Mod, string? Edid)>();
         foreach (var w in lo.PriorityOrder.Weapon().WinningOverrides())
         {
             if (w.ObjectEffect.IsNull) continue;
@@ -630,8 +852,8 @@ static class Commands
             for (int i = 0; i < 10 && !root.Template.IsNull; i++)
                 if (root.Template.TryResolve(cache, out var t)) root = t; else break;
             var baseName = ReferenceEquals(root, w) ? null : root.Name?.String;
-            raw.Add((w.FormKey, w.ObjectEffect.FormKey, w.Name?.String, baseName,
-                     w.FormKey.ModKey, w.EditorID));
+            data.Raw.Add((w.FormKey, w.ObjectEffect.FormKey, w.Name?.String, baseName,
+                          w.FormKey.ModKey, w.EditorID));
         }
         foreach (var a in lo.PriorityOrder.Armor().WinningOverrides())
         {
@@ -640,31 +862,43 @@ static class Commands
             for (int i = 0; i < 10 && !root.TemplateArmor.IsNull; i++)
                 if (root.TemplateArmor.TryResolve(cache, out var t)) root = t; else break;
             var baseName = ReferenceEquals(root, a) ? null : root.Name?.String;
-            raw.Add((a.FormKey, a.ObjectEffect.FormKey, a.Name?.String, baseName,
-                     a.FormKey.ModKey, a.EditorID));
+            data.Raw.Add((a.FormKey, a.ObjectEffect.FormKey, a.Name?.String, baseName,
+                          a.FormKey.ModKey, a.EditorID));
         }
 
         // Corroboration for the name-shape path: loot generics share their
         // ENCH across many item records; an artifact's enchant is bespoke.
         // "Spear of Bitter Mercy" is name-shaped like a generic but its
         // enchant exists nowhere else -> keep.
-        var enchUse = raw.GroupBy(r => r.Ench).ToDictionary(g => g.Key, g => g.Count());
-        var items = new List<(FormKey Key, string Cls, string? Name, ModKey Mod, string? Edid)>();
-        foreach (var r in raw)
+        var enchUse = data.Raw.GroupBy(r => r.Ench).ToDictionary(g => g.Key, g => g.Count());
+        foreach (var r in data.Raw)
         {
             var generic = GenericNamed(r.Name, r.BaseName) ||
                           (GenericShaped(r.Name) && enchUse[r.Ench] >= 3);
-            items.Add((r.Key, Classify(r.Ench, generic), r.Name, r.Mod, r.Edid));
+            data.Items.Add((r.Key, Classify(r.Ench, generic), r.Name, r.Mod, r.Edid));
         }
         // Untemplated twins: NPC-hand records (Dremora fire blades etc.) share
         // a stripped generic's display name but not its template shape. They
         // reach players as kill loot, so surface them for a ruling instead of
         // hiding them inside keep-named.
-        var stripNames = items.Where(i => i.Cls.StartsWith("strip") && i.Name is not null)
+        var stripNames = data.Items.Where(i => i.Cls.StartsWith("strip") && i.Name is not null)
             .Select(i => i.Name!).ToHashSet(StringComparer.Ordinal);
-        items = items.Select(i =>
+        data.Items = data.Items.Select(i =>
             i.Cls == "keep-named" && i.Name is not null && stripNames.Contains(i.Name)
                 ? i with { Cls = "review-npc-twin" } : i).ToList();
+        return data;
+    }
+
+    // Read-only census for the loot strip: classifies every winning ENCH by
+    // the ruled policy (single-effect family-covered generics and tiered
+    // 2-effect generic lines strip; named packages / multi-effect artifacts /
+    // blacklist keep) and counts what that means item- and LVLI-wise.
+    public static int StripReport(
+        LoadOrder<IModListingGetter<ISkyrimModGetter>> lo, ILinkCache cache,
+        string catalogPath, string? dumpPath = null)
+    {
+        if (BuildCensus(lo, cache, catalogPath) is not { } data) return 1;
+        var (covered, enchInfo, raw, items) = (data.Covered, data.EnchInfo, data.Raw, data.Items);
 
         var stripItems = items.Where(i => i.Cls.StartsWith("strip")).Select(i => i.Key).ToHashSet();
         var counts = items.GroupBy(i => i.Cls).ToDictionary(g => g.Key, g => g.Count());
@@ -692,7 +926,7 @@ static class Commands
             if (clsByItem[r.Key] == "keep-named") continue;
             if (!enchInfo.TryGetValue(r.Ench, out var info) || info.Fx is null || info.Covered)
                 continue;
-            foreach (var (sig, m) in info.Fx)
+            foreach (var (sig, m, _, _, _) in info.Fx)
             {
                 if (sig is null || m is null || covered.Contains(sig)) continue;
                 var a = agg.TryGetValue(sig, out var got) ? got : agg[sig] = new() { M = m };
