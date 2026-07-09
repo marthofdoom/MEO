@@ -827,6 +827,10 @@ void GiveGemInstance(int a_gemIdx, int a_level, float a_xp) {
         return;
     }
     auto&               xl = ref->extraList;
+    // A PlaceObjectAtMe ref has NO owner, so ownership falls back to the
+    // cell/location owner — picking it up in town, witnessed, was THEFT
+    // (Marth's 100g bounty on gem swaps near guards, m17b). Own it first.
+    xl.SetOwner(player->GetActorBase());
     const std::uint16_t uid = g_nextUID++;
     xl.Add(new RE::ExtraUniqueID(gemForm->GetFormID(), uid));
     const std::string name = std::format("{} ({:.0f}/{:.0f})", gemForm->GetName(), a_xp,
@@ -1110,6 +1114,7 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
         const auto dropped = player->RemoveItem(itemForm, 1, RE::ITEM_REMOVE_REASON::kDropping,
                                                 nullptr, nullptr);
         if (auto ref = dropped.get()) {
+            ref->extraList.SetOwner(player->GetActorBase());  // never theft (m17b)
             const std::uint16_t uid = g_nextUID++;
             ref->extraList.Add(new RE::ExtraUniqueID(a_itemBase, uid));
             player->PickUpObject(ref.get(), 1, false, false);
@@ -2155,7 +2160,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.25.0 (M17 socket perks) loaded");
+            console->Print("MEO native v0.25.1 (M17b socket perks + theft fix) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -2181,7 +2186,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.25.0 (M17: socket perks — Twinned Fitting + Master Jeweler) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.25.1 (M17b: socket perks + gem-return ownership fix) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
