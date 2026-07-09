@@ -1902,32 +1902,30 @@ void EnsurePlayerSetup() {
 }
 
 // On load, worn socketed gems' abilities are runtime state that doesn't persist
-// — re-stamp + re-activate every worn socketed item so effects are live without
-// a manual re-equip. (The g_sockets records + item ExtraEnchantment do persist;
-// the magic caster does not.)
+// — re-activate every worn socketed item so effects fire without a manual
+// re-equip. (The g_sockets records + item ExtraEnchantment persist fine; the
+// runtime magic delivery does not.)
 //
-// REGRESSION (m15): the m12 never-drain mechanism (costOverride=0 + kCostOverride
-// on the created enchant) is a runtime property that does NOT survive save/load;
-// on load the socket reverts to auto per-hit cost and, at our scaled-up magnitude,
-// charge-starves exactly like the pre-m12 firing bug — so the enchant shows but
-// never fires. Pre-m11 builds never hit this (low magnitude, charge 500 sufficed,
-// nothing to lose on load). Re-stamping (a_rebuild) re-mints the enchant with the
-// override restored + re-derives the worn ability.
-//
-// TIMING: kPostLoadGame fires while the engine is still finalizing the loaded
-// actor's equipped-weapon process, so a re-stamp applied then is silently
-// discarded (the player's manual re-socket, minutes later, is what fixed it).
-// So we re-stamp on a few delays until the actor is live. Rebuild every attempt
-// (AddWeaponEnchantment dedupes identical created enchants — no churn) so the
-// final state is correct regardless of the engine's load-finalization order.
-// Each call re-scans inventory so captured xList pointers can't go stale.
-void ReapplyWornSockets(bool a_rebuild, bool a_diag = false) {
+// MECHANISM (m16): the m15 [load-diag] settled it — on load the enchant is
+// FULLY intact (kCostOverride=true, costOverride=0, charge=0xFFFF all survive).
+// So the regression was never the enchant data. The dead thing is the actor's
+// equipped-weapon delivery cache, which the engine rebuilds from the item's
+// BASE-form enchantment (none for us — ours is an instance ExtraEnchantment),
+// not from ExtraEnchantment, on load. Actor::UpdateWeaponAbility does NOT
+// rebuild it here: m15 called it 4x across 8s and the sword still never fired;
+// only a manual unequip/re-equip did. So the fix is to drive the engine's own
+// equip flow — a real unequip -> re-equip — which is exactly what the player
+// did by hand. a_rebuild refreshes the created enchant (picks up MCM magnitude);
+// a_reequip does the equip cycle. Targets are collected BEFORE re-equipping so
+// the equip calls can't invalidate the entryList mid-iteration.
+void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag = false) {
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* changes = player ? player->GetInventoryChanges() : nullptr;
     if (!changes || !changes->entryList) {
         return;
     }
-    int n = 0;
+    struct Target { RE::TESBoundObject* base; RE::ExtraDataList* xl; bool isArmor; bool left; };
+    std::vector<Target> targets;
     for (auto* entry : *changes->entryList) {
         if (!entry || !entry->object || !entry->extraLists ||
             !(entry->object->Is(RE::FormType::Weapon) || entry->object->Is(RE::FormType::Armor))) {
@@ -1952,11 +1950,7 @@ void ReapplyWornSockets(bool a_rebuild, bool a_diag = false) {
             if (!ours) {
                 continue;
             }
-            // m15 diagnostic: on the immediate post-load pass, read the enchant
-            // that SURVIVED the save BEFORE we overwrite it — proves whether the
-            // never-drain costOverride/kCostOverride round-trips (hypothesis) or
-            // it's purely an ability-derivation timing issue.
-            if (a_diag) {
+            if (a_diag) {  // read the as-loaded enchant before we touch it
                 auto* xEnch = xl->GetByType<RE::ExtraEnchantment>();
                 auto* en = xEnch ? xEnch->enchantment : nullptr;
                 spdlog::info("[load-diag] {:08X}/{} as-loaded: ench={:08X} kCostOverride={} "
@@ -1971,23 +1965,46 @@ void ReapplyWornSockets(bool a_rebuild, bool a_diag = false) {
             if (a_rebuild) {
                 RebuildInstanceEnchant(entry->object, xl);
             }
-            ApplyWornAbility(player, entry->object, xl, xl->HasType(RE::ExtraDataType::kWornLeft));
-            ++n;
+            targets.push_back({ entry->object, xl, entry->object->Is(RE::FormType::Armor),
+                                xl->HasType(RE::ExtraDataType::kWornLeft) });
         }
     }
-    spdlog::info("[load] {} worn socketed item(s) (rebuild={})", n, a_rebuild);
+    if (a_reequip) {
+        auto* eqm = RE::ActorEquipManager::GetSingleton();
+        auto* dobj = RE::BGSDefaultObjectManager::GetSingleton();
+        for (auto& t : targets) {
+            const RE::BGSEquipSlot* slot = nullptr;
+            if (!t.isArmor && dobj) {  // weapons need their hand slot; armor is slotless
+                slot = dobj->GetObject<RE::BGSEquipSlot>(
+                    t.left ? RE::DEFAULT_OBJECT::kLeftHandEquip
+                           : RE::DEFAULT_OBJECT::kRightHandEquip);
+            }
+            // Unequip then re-equip the SAME instance (its own xList) — the engine
+            // rebuilds the enchant delivery cache from ExtraEnchantment on equip.
+            eqm->UnequipObject(player, t.base, t.xl, 1, slot, false, true, false, true);
+            eqm->EquipObject(player, t.base, t.xl, 1, slot, false, true, false, true);
+        }
+    }
+    spdlog::info("[load] {} worn socketed item(s) (rebuild={}, reequip={})",
+                 static_cast<int>(targets.size()), a_rebuild, a_reequip);
 }
 
-// Fire the reapply once immediately (rebuild) then again after the loaded actor
-// settles — the immediate pass is usually discarded (see ReapplyWornSockets).
-// A detached timer thread hands each retry back to the main thread via a task.
+// On load: refresh the enchant immediately (+ diag), then drive ONE real
+// unequip/re-equip once the loaded actor has settled. kPostLoadGame fires while
+// the engine is still finalizing equip, so an equip cycle done THEN can conflict
+// or be undone; ~4s is comfortably past load-finalize (the player's manual fix
+// worked well after that). One pass keeps the re-equip flicker to a single
+// blink and won't interrupt a player who's already moving. A detached timer
+// hands the deferred pass back to the main thread.
 void ScheduleReapplyWornSockets() {
-    SKSE::GetTaskInterface()->AddTask([]() { ReapplyWornSockets(true, /*diag=*/true); });
+    SKSE::GetTaskInterface()->AddTask([]() {
+        ReapplyWornSockets(/*rebuild=*/true, /*reequip=*/false, /*diag=*/true);
+    });
     std::thread([]() {
-        for (int ms : { 1500, 2500, 4000 }) {  // cumulative ~1.5s, 4s, 8s post-load
-            std::this_thread::sleep_for(std::chrono::milliseconds(ms));
-            SKSE::GetTaskInterface()->AddTask([]() { ReapplyWornSockets(true); });
-        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(4000));
+        SKSE::GetTaskInterface()->AddTask([]() {
+            ReapplyWornSockets(/*rebuild=*/false, /*reequip=*/true);
+        });
     }).detach();
 }
 
@@ -2104,7 +2121,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.23.0 (M15 load-reapply timing/costOverride fix) loaded");
+            console->Print("MEO native v0.24.0 (M16 load re-equip reactivation) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -2130,7 +2147,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.23.0 (M15: on-load reapply timing + costOverride-loss fix) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.24.0 (M16: on-load re-equip reactivation) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
