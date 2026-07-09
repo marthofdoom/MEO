@@ -159,13 +159,19 @@ RE::TESSoulGem*      g_filledSoulGems[5] = {};
 constexpr RE::FormID kPerkAttuneBase = 0x810;  // 0x810..0x814 = Attunement 1..5
 constexpr RE::FormID kPerkGemCutter  = 0x815;
 constexpr RE::FormID kPerkSoulFeeder = 0x816;
+constexpr RE::FormID kPerkTwinned    = 0x817;  // Twinned Fitting: chest 2nd socket
+constexpr RE::FormID kPerkJeweler    = 0x818;  // Master Jeweler: weapon 2nd socket
 RE::BGSPerk* g_perkAttune[5] = {};
 RE::BGSPerk* g_perkGemCutter = nullptr;
 RE::BGSPerk* g_perkSoulFeeder = nullptr;
+RE::BGSPerk* g_perkTwinned = nullptr;
+RE::BGSPerk* g_perkJeweler = nullptr;
 // Cached from the player's perks (refreshed on load + menu close).
 int  g_attuneRank = 0;      // 0..5 → +8% gem magnitude per rank
 bool g_hasGemCutter = false;  // +50% Gem XP
 bool g_hasSoulFeeder = false; // soul feeding is twice as potent
+bool g_hasTwinned = false;    // chest armor holds 2 linked gems
+bool g_hasJeweler = false;    // weapons hold 2 linked gems
 
 void SetupLog() {
     auto logDir = SKSE::log::log_directory();
@@ -245,6 +251,8 @@ void ResolveCatalog() {
     }
     g_perkGemCutter = dh->LookupForm<RE::BGSPerk>(kPerkGemCutter, kPluginName);
     g_perkSoulFeeder = dh->LookupForm<RE::BGSPerk>(kPerkSoulFeeder, kPluginName);
+    g_perkTwinned = dh->LookupForm<RE::BGSPerk>(kPerkTwinned, kPluginName);
+    g_perkJeweler = dh->LookupForm<RE::BGSPerk>(kPerkJeweler, kPluginName);
     spdlog::info("catalog resolved: {}/{} gems live (weapon+armor), {} socketable gem items, pouch={}, "
                  "mentor={}, soulCairn={}, bossType={}",
                  ok, std::size(meo::kGems), g_gemByItem.size(),
@@ -253,16 +261,22 @@ void ResolveCatalog() {
 }
 
 // Sockets an item can hold (m13 multi-socket). Boots are excluded upstream
-// (ineligible). Gloves are dual by default; chest/weapon 2nd sockets arrive
-// with the socket perks (3b-2). Everything else is single.
+// (ineligible). Gloves are dual by default; chest needs Twinned Fitting and
+// weapons need Master Jeweler (3b-2 socket perks). Everything else is single.
 int SocketCapacity(RE::TESBoundObject* a_obj) {
     if (auto* armo = a_obj ? a_obj->As<RE::TESObjectARMO>() : nullptr) {
         if (armo->HasPartOf(RE::BGSBipedObjectForm::BipedObjectSlot::kHands)) {
             return 2;  // gloves
         }
+        if (g_hasTwinned && armo->HasPartOf(RE::BGSBipedObjectForm::BipedObjectSlot::kBody)) {
+            return 2;  // Twinned Fitting: chest
+        }
         return 1;
     }
-    return 1;  // weapons
+    if (a_obj && a_obj->Is(RE::FormType::Weapon) && g_hasJeweler) {
+        return 2;  // Master Jeweler: weapons
+    }
+    return 1;
 }
 
 // Rebuild an instance's SINGLE combined enchantment from ALL its filled socket
@@ -554,6 +568,8 @@ void RefreshPerks() {
     }
     grant(g_perkGemCutter, skill >= 20.0f);
     grant(g_perkSoulFeeder, skill >= 40.0f);
+    grant(g_perkTwinned, skill >= 70.0f);   // DESIGN §6 Corpus-tier req
+    grant(g_perkJeweler, skill >= 100.0f);  // DESIGN §6 Extra Effect req
     g_attuneRank = 0;
     for (int i = 0; i < 5; ++i) {
         if (g_perkAttune[i] && player->HasPerk(g_perkAttune[i])) {
@@ -562,8 +578,10 @@ void RefreshPerks() {
     }
     g_hasGemCutter = g_perkGemCutter && player->HasPerk(g_perkGemCutter);
     g_hasSoulFeeder = g_perkSoulFeeder && player->HasPerk(g_perkSoulFeeder);
-    spdlog::info("[perks] enchanting={:.0f} attuneRank={} gemCutter={} soulFeeder={}",
-                 skill, g_attuneRank, g_hasGemCutter, g_hasSoulFeeder);
+    g_hasTwinned = g_perkTwinned && player->HasPerk(g_perkTwinned);
+    g_hasJeweler = g_perkJeweler && player->HasPerk(g_perkJeweler);
+    spdlog::info("[perks] enchanting={:.0f} attuneRank={} gemCutter={} soulFeeder={} twinned={} jeweler={}",
+                 skill, g_attuneRank, g_hasGemCutter, g_hasSoulFeeder, g_hasTwinned, g_hasJeweler);
 }
 
 // Menu snapshot rows + shared state (declared here so MenuSink can read
@@ -1990,6 +2008,17 @@ void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag = false) {
             eqm->EquipObject(player, t.base, t.xl, 1, slot, false, true, false, true);
         }
     }
+    // Mechanism probe (ENGINE_NOTES §8 epistemic status): the hit path may gate
+    // on the actor's item-charge AVs. Log them as-loaded (diag pass) and after
+    // the re-equip — one load with a socketed weapon settles the theory.
+    if ((a_diag || a_reequip) && !targets.empty()) {
+        if (auto* avo = player->AsActorValueOwner()) {
+            spdlog::info("[load-diag] itemCharge AVs {} re-equip: L={:.0f} R={:.0f}",
+                         a_reequip ? "AFTER" : "BEFORE",
+                         avo->GetActorValue(RE::ActorValue::kLeftItemCharge),
+                         avo->GetActorValue(RE::ActorValue::kRightItemCharge));
+        }
+    }
     spdlog::info("[load] {} worn socketed item(s) (rebuild={}, reequip={})",
                  static_cast<int>(targets.size()), a_rebuild, a_reequip);
 }
@@ -2126,7 +2155,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.24.0 (M16 load re-equip reactivation) loaded");
+            console->Print("MEO native v0.25.0 (M17 socket perks) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -2152,7 +2181,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.24.0 (M16: on-load re-equip reactivation) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.25.0 (M17: socket perks — Twinned Fitting + Master Jeweler) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }

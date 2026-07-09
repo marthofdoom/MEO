@@ -206,6 +206,8 @@ MEO_PERKS = [
     ("MEO_Perk_Attunement5", "Gem Attunement", "Socketed gems are 40% more potent."),
     ("MEO_Perk_GemCutter",   "Gem Cutter",     "Socketed gems earn 50% more Gem XP."),
     ("MEO_Perk_SoulFeeder",  "Soul Feeder",    "Soul gems fed to gems at an enchanting station are twice as potent."),
+    ("MEO_Perk_TwinnedFitting","Twinned Fitting","Chest armor can hold a second linked gem."),          # 0x817
+    ("MEO_Perk_MasterJeweler", "Master Jeweler", "Weapons can hold a second linked gem."),              # 0x818
 ]
 def make_perks():
     out=BytesIO()
