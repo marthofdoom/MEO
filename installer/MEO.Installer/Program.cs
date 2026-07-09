@@ -159,6 +159,16 @@ static int Pause(int rc, bool installMode)
 
 static class Commands
 {
+    sealed class UncoveredAgg
+    {
+        public IMagicEffectGetter? M;
+        public int Items;
+        public int Solo;
+        public HashSet<FormKey> Enchs = [];
+        public Dictionary<string, int> Partners = [];
+        public List<string> Examples = [];
+    }
+
     public static int Fail(string msg)
     {
         Console.Error.WriteLine(msg);
@@ -542,16 +552,17 @@ static class Commands
         Console.WriteLine($"catalog: {covered.Count} covered effect signature(s)" +
                           (unresolved > 0 ? $", {unresolved} ref(s) not in this list" : ""));
 
-        // ENCH coverage: effect count + whether every effect is mirrored by a
+        // ENCH coverage: resolved effects + whether every one is mirrored by a
         // gem family.
-        var enchInfo = new Dictionary<FormKey, (int N, bool Covered)>();
+        var enchInfo = new Dictionary<FormKey, (List<(string? Sig, IMagicEffectGetter? M)> Fx, bool Covered)>();
         foreach (var e in lo.PriorityOrder.ObjectEffect().WinningOverrides())
         {
-            var sigs = e.Effects
-                .Select(fx => fx.BaseEffect.TryResolve(cache, out var m) ? Sig(m!) : null)
+            var fx = e.Effects
+                .Select(x => x.BaseEffect.TryResolve(cache, out var m)
+                    ? (Sig(m!), (IMagicEffectGetter?)m) : (null, null))
                 .ToList();
             enchInfo[e.FormKey] =
-                (sigs.Count, sigs.Count > 0 && sigs.All(s => s is not null && covered.Contains(s)));
+                (fx, fx.Count > 0 && fx.All(t => t.Item1 is not null && covered.Contains(t.Item1)));
         }
         Console.WriteLine($"winning ENCH records: {enchInfo.Count} " +
                           $"(fully covered: {enchInfo.Values.Count(v => v.Covered)})");
@@ -589,11 +600,19 @@ static class Commands
         string Classify(FormKey ench, bool generic)
         {
             if (!generic) return "keep-named";
-            var (n, cov) = enchInfo.GetValueOrDefault(ench, (0, false));
+            var info = enchInfo.GetValueOrDefault(ench);
+            // Casting implements and framework-entangled lines (battlestaffs
+            // wired into combat-mod scripts, summon staves): these effects
+            // cannot exist inside a gem, so their items stay untouched.
+            if (info.Fx is not null && info.Fx.Any(t => t.M?.Archetype.Type.ToString()
+                    is "Script" or "SummonCreature" or "SpawnHazard" or "Light" or "Cloak"))
+                return "keep-scripted";
+            var (n, cov) = (info.Fx?.Count ?? 0, info.Covered);
             return n switch
             {
                 1 when cov => "strip-1fx",
                 2 when cov => "strip-2fx-recipe",      // gems follow the recipe (riders)
+                3 when cov => "strip-3fx-recipe",      // e.g. chaos: tri-element recipe
                 2 => "strip-2fx-uncovered",            // generic line, partly outside the catalog
                 1 => "keep-generic-uncovered",         // a family MEO has no gem for
                 _ => "keep-generic-multifx",
@@ -659,6 +678,55 @@ static class Commands
             File.WriteAllLines(dumpPath, items.OrderBy(i => i.Cls).ThenBy(i => i.Name)
                 .Select(i => $"{i.Cls}\t{i.Name}\t{i.Edid}\t{i.Key}"));
             Console.WriteLine($"full census -> {dumpPath}");
+        }
+
+        // What the catalog is missing: every effect signature that appears on
+        // generic-shaped loot but no gem family mirrors. Pairing tells the
+        // story — an uncovered effect that only rides alongside covered
+        // primaries is a rider recipe; one that stands alone is a family
+        // candidate.
+        var clsByItem = items.ToDictionary(i => i.Key, i => i.Cls);
+        var agg = new Dictionary<string, UncoveredAgg>();
+        foreach (var r in raw)
+        {
+            if (clsByItem[r.Key] == "keep-named") continue;
+            if (!enchInfo.TryGetValue(r.Ench, out var info) || info.Fx is null || info.Covered)
+                continue;
+            foreach (var (sig, m) in info.Fx)
+            {
+                if (sig is null || m is null || covered.Contains(sig)) continue;
+                var a = agg.TryGetValue(sig, out var got) ? got : agg[sig] = new() { M = m };
+                a.Items++;
+                a.Enchs.Add(r.Ench);
+                if (a.Examples.Count < 3 && r.Name is not null && !a.Examples.Contains(r.Name))
+                    a.Examples.Add(r.Name);
+                var partners = info.Fx
+                    .Where(o => o.Sig is not null && o.Sig != sig && o.M is not null)
+                    .Select(o => (o.M!.Name?.String ?? o.M.EditorID ?? "?") +
+                                 (covered.Contains(o.Sig!) ? "" : "*"))
+                    .ToList();
+                if (partners.Count == 0) a.Solo++;
+                foreach (var p in partners)
+                    a.Partners[p] = a.Partners.GetValueOrDefault(p) + 1;
+            }
+        }
+        Console.WriteLine($"\nuncovered effects on generic loot: {agg.Count} signature(s) " +
+                          "(* = partner also uncovered)");
+        foreach (var (_, a) in agg.OrderByDescending(kv => kv.Value.Items).Take(25))
+        {
+            var m = a.M!;
+            Console.WriteLine(
+                $"  [{a.Items} item(s), {a.Enchs.Count} ench(s), solo x{a.Solo}] " +
+                $"'{m.Name?.String ?? m.EditorID}' ({m.EditorID} [{m.FormKey.ModKey}]) " +
+                $"arch={m.Archetype.Type} av={m.Archetype.ActorValue} " +
+                $"resist={m.ResistValue} av2={m.SecondActorValue}");
+            if (m.Description?.String is { Length: > 0 } d)
+                Console.WriteLine($"      \"{(d.Length > 110 ? d[..110] + "…" : d)}\"");
+            if (a.Partners.Count > 0)
+                Console.WriteLine("      pairs with: " + string.Join(", ",
+                    a.Partners.OrderByDescending(p => p.Value).Take(4)
+                        .Select(p => $"{p.Key} x{p.Value}")));
+            Console.WriteLine($"      e.g. {string.Join("; ", a.Examples)}");
         }
 
         int lvliTouched = 0, entriesTotal = 0;
