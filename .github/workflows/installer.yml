@@ -1,0 +1,41 @@
+name: installer
+
+on:
+  push:
+    paths:
+      - "installer/**"
+      - ".github/workflows/installer.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: installer/MEO.Installer
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      # Untrimmed on purpose: IL-trimmed single-file bundles are the main
+      # antivirus false-positive trigger, and Nexus runs uploads through
+      # VirusTotal. ~70MB clean beats 20MB flagged.
+      - name: Publish win-x64
+        run: >
+          dotnet publish -c Release -r win-x64 --self-contained
+          -p:PublishSingleFile=true -p:PublishTrimmed=false
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -o pub
+
+      - name: Smoke test on Windows
+        run: ./pub/MEO.Installer.exe --help
+
+      - name: Upload exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: MEO-installer
+          path: installer/MEO.Installer/pub/MEO.Installer.exe
+          if-no-files-found: error

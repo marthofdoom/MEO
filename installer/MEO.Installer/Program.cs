@@ -18,23 +18,71 @@ using Mutagen.Bethesda.Plugins.Cache;
 using Mutagen.Bethesda.Plugins.Order;
 using Mutagen.Bethesda.Skyrim;
 
-if (args.Length < 3)
+const string Usage =
+    "usage: MEO.Installer                                     (post-install: auto-detect MO2, write patch)\n" +
+    "       MEO.Installer <stats|tree|tree-effects|perk|write-patch> <MO2 root> <profile> [arg]";
+if (args.Length > 0 && args[0] is "-h" or "--help" or "help")
 {
-    Console.Error.WriteLine("usage: MEO.Installer <stats|tree|perk|write-patch> <MO2 root> <profile> [arg]");
+    Console.WriteLine(Usage);
+    return 0;
+}
+if (args.Length is > 0 and < 3)
+{
+    Console.Error.WriteLine(Usage);
     return 1;
 }
 
-var (cmd, mo2Root, profile) = (args[0], args[1], args[2]);
+string cmd, mo2Root, profile;
 // Trailing options: --sub <esp> replaces the same-named plugin's file (test a
 // regenerated plugin in place), --add <esp> appends at the end of the order.
 var subs = new List<string>();
 var adds = new List<string>();
 var positional = new List<string>();
-for (int i = 3; i < args.Length; i++)
+var installMode = args.Length == 0;
+if (installMode)
 {
-    if (args[i] == "--sub") subs.Add(args[++i]);
-    else if (args[i] == "--add") adds.Add(args[++i]);
-    else positional.Add(args[i]);
+    // Post-install mode: the exe ships inside the mod folder (<MO2>/mods/MEO),
+    // so the MO2 root is above us. Detect it, pick the profile, and write the
+    // patch next to the exe.
+    var exeDir = Path.GetDirectoryName(Environment.ProcessPath)
+                 ?? Directory.GetCurrentDirectory();
+    var root = Mo2LoadOrder.FindRootAbove(exeDir);
+    if (root is null)
+    {
+        if (Console.IsInputRedirected)
+        {
+            Console.Error.WriteLine("no ModOrganizer.ini found above the exe and no terminal to ask on.");
+            Console.Error.WriteLine(Usage);
+            return 1;
+        }
+        Console.Write("MO2 folder not auto-detected. Path to it (the folder holding ModOrganizer.ini): ");
+        root = Console.ReadLine()?.Trim().Trim('"');
+        if (string.IsNullOrWhiteSpace(root) ||
+            !File.Exists(Path.Combine(root, "ModOrganizer.ini")))
+        {
+            Console.Error.WriteLine("that folder has no ModOrganizer.ini — aborting.");
+            return Pause(1, installMode);
+        }
+    }
+    Console.WriteLine($"MO2 root: {root}");
+    var picked = Mo2LoadOrder.PickProfile(root);
+    if (picked is null) return Pause(Commands.Fail("no profiles found under " + root), installMode);
+    (mo2Root, profile, cmd) = (root, picked, "write-patch");
+    var outDir = exeDir.StartsWith(Path.Combine(root, "mods"), StringComparison.OrdinalIgnoreCase)
+        ? exeDir
+        : Path.Combine(root, "mods", "MEO");
+    Directory.CreateDirectory(outDir);
+    positional.Add(Path.Combine(outDir, "MEO - Patch.esp"));
+}
+else
+{
+    (cmd, mo2Root, profile) = (args[0], args[1], args[2]);
+    for (int i = 3; i < args.Length; i++)
+    {
+        if (args[i] == "--sub") subs.Add(args[++i]);
+        else if (args[i] == "--add") adds.Add(args[++i]);
+        else positional.Add(args[i]);
+    }
 }
 
 var resolved = Mo2LoadOrder.Resolve(mo2Root, profile, out var missing);
@@ -73,15 +121,38 @@ var loadOrder = new LoadOrder<IModListingGetter<ISkyrimModGetter>>(listings);
 var cache = loadOrder.ToImmutableLinkCache();
 Console.WriteLine($"load order read in {sw.Elapsed.TotalSeconds:F1}s");
 
-return cmd switch
+int rc;
+try
 {
-    "stats" => Commands.Stats(loadOrder),
-    "tree" => Commands.DumpTree(loadOrder, cache, positional.ElementAtOrDefault(0) ?? "AVEnchanting"),
-    "tree-effects" => Commands.DumpTreeEffects(loadOrder, cache, positional.ElementAtOrDefault(0) ?? "AVEnchanting"),
-    "perk" => Commands.DumpPerk(loadOrder, cache, positional[0]),
-    "write-patch" => Commands.WritePatch(loadOrder, cache, positional[0]),
-    _ => Commands.Fail($"unknown command {cmd}"),
-};
+    rc = cmd switch
+    {
+        "stats" => Commands.Stats(loadOrder),
+        "tree" => Commands.DumpTree(loadOrder, cache, positional.ElementAtOrDefault(0) ?? "AVEnchanting"),
+        "tree-effects" => Commands.DumpTreeEffects(loadOrder, cache, positional.ElementAtOrDefault(0) ?? "AVEnchanting"),
+        "perk" => Commands.DumpPerk(loadOrder, cache, positional[0]),
+        "write-patch" => Commands.WritePatch(loadOrder, cache, positional[0]),
+        _ => Commands.Fail($"unknown command {cmd}"),
+    };
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine(ex.ToString());
+    rc = 1;
+}
+if (installMode && rc == 0)
+    Console.WriteLine("\nDone. In MO2's plugin list (right pane), tick 'MEO - Patch.esp' and keep it at the end.");
+return Pause(rc, installMode);
+
+// Double-clicked console windows vanish on exit; hold them open in install mode.
+static int Pause(int rc, bool installMode)
+{
+    if (installMode && !Console.IsInputRedirected)
+    {
+        Console.Write("\nPress Enter to close...");
+        Console.ReadLine();
+    }
+    return rc;
+}
 
 static class Commands
 {
@@ -444,6 +515,52 @@ static class Mo2LoadOrder
 {
     static readonly string[] BaseMasters =
         ["Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm"];
+
+    // Walk up from the exe (shipped in <MO2>/mods/MEO) to the portable MO2
+    // root — the folder holding both ModOrganizer.ini and profiles/.
+    public static string? FindRootAbove(string start)
+    {
+        for (var d = new DirectoryInfo(start); d is not null; d = d.Parent)
+            if (File.Exists(Path.Combine(d.FullName, "ModOrganizer.ini")) &&
+                Directory.Exists(Path.Combine(d.FullName, "profiles")))
+                return d.FullName;
+        return null;
+    }
+
+    // ModOrganizer.ini's selected_profile is the default; only ask when the
+    // instance has more than one profile.
+    public static string? PickProfile(string root)
+    {
+        var profiles = Directory.EnumerateDirectories(Path.Combine(root, "profiles"))
+            .Where(p => File.Exists(Path.Combine(p, "plugins.txt")))
+            .Select(Path.GetFileName)
+            .OfType<string>()
+            .Order()
+            .ToList();
+        if (profiles.Count == 0) return null;
+
+        var line = File.ReadLines(Path.Combine(root, "ModOrganizer.ini"))
+            .FirstOrDefault(l => l.StartsWith("selected_profile=", StringComparison.Ordinal));
+        var sel = line?["selected_profile=".Length..].Trim();
+        if (sel is not null && sel.StartsWith("@ByteArray(") && sel.EndsWith(')'))
+            sel = sel["@ByteArray(".Length..^1];
+        var def = profiles.FirstOrDefault(p => p.Equals(sel, StringComparison.OrdinalIgnoreCase))
+                  ?? profiles[0];
+        if (profiles.Count == 1 || Console.IsInputRedirected)
+        {
+            Console.WriteLine($"profile: {def}");
+            return def;
+        }
+
+        Console.WriteLine("profiles:");
+        for (int i = 0; i < profiles.Count; i++)
+            Console.WriteLine($"  {i + 1}. {profiles[i]}");
+        Console.Write($"which profile? [Enter = {def}]: ");
+        var a = Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(a)) return def;
+        if (int.TryParse(a, out var n) && n >= 1 && n <= profiles.Count) return profiles[n - 1];
+        return profiles.FirstOrDefault(p => p.Equals(a, StringComparison.OrdinalIgnoreCase)) ?? def;
+    }
 
     public static List<(string Name, string Path)> Resolve(
         string mo2Root, string profile, out List<string> missing)
