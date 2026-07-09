@@ -161,6 +161,26 @@ The `- 4` offset on the callback message is the trap everyone hits.
   (Confidence: the cost/charge change is definitely the cause — it's the only
   weapon-side change; the exact charge→shader gating path is inferred, not
   instrumented. Revisit here if it ever regresses.)
+- **Created-enchant `costOverride`/`kCostOverride` do NOT survive save/load
+  — worn sockets go inert on load. FIXED in v0.23.0-m15.** The §3 free-cost
+  fields are a *runtime* property of the `BGSCreatedObjectManager` enchant;
+  the save round-trips the effects + charge but drops the cost-override flag,
+  so on load the socket reverts to an auto per-hit cost that (at our scaled-up
+  magnitude) charge-starves — the enchant shows but never fires, exactly the
+  pre-m12 firing bug. Pre-m11 builds never hit this: low magnitude, `charge
+  500` sufficed, nothing to lose on load — which is why *earlier* builds
+  persisted natively with no reapply. Fix: re-stamp every worn socketed item
+  after load (re-mint enchant → costOverride restored → re-derive worn
+  ability). CRITICAL: `kPostLoadGame` fires while the engine is still
+  finalizing the loaded actor's equipped-weapon process, so a re-stamp done
+  *then* is silently discarded (m14's single-shot reapply failed for this
+  reason — only a manual re-socket minutes later worked). m15 re-stamps on a
+  few post-load delays (~1.5s/4s/8s via a detached timer → main-thread task)
+  until the actor is live; `AddWeaponEnchantment` dedupes identical created
+  enchants so rebuilding every attempt doesn't churn created objects.
+  (Confidence: costOverride-loss is the leading hypothesis, corroborated by
+  the manual-re-socket fix; the alternative is pure ability-derivation timing.
+  Either way the re-stamp-until-live fix covers it. Revisit if it regresses.)
 - **Weapons in containers, on racks/displays, or in NPC inventories are NOT
   born socketed.** `TESCellAttachDetachEvent` fires per *world reference*;
   container contents and carried items are inventory entries, not refs, and
