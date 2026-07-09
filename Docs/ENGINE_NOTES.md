@@ -178,10 +178,12 @@ The `- 4` offset on the callback message is the trap everyone hits.
   items (refresh created enchant for MCM magnitude), then
   `RE::ActorEquipManager::UnequipObject` → `EquipObject` on each (weapons to
   their `BGSDefaultObjectManager` hand slot kLeft/kRightHandEquip; armor
-  slotless). Deferred ~4s post-load via a detached timer → main-thread task
-  (`kPostLoadGame` is too early — the engine is still finalizing its own
-  load-equip and an equip cycle there conflicts/gets undone). One pass = a
-  single blink. GOTCHA: `d3d11.h` pulls `wingdi.h` which `#define`s
+  slotless). TIMING (hardened v0.27.3): a blind post-load timer is NOT
+  reliable — on a heavy-area load it fires while the loading screen is still
+  up and the equip cycle is swallowed (field-hit at +4s, Solitude). Anchor
+  to the Loading Menu CLOSING (MenuOpenCloseEvent) + ~1.5s fade margin,
+  with a long fallback timer for loads that show no loading menu. One pass
+  = a single blink. GOTCHA: `d3d11.h` pulls `wingdi.h` which `#define`s
   `GetObject`→`GetObjectW`, hijacking `BGSDefaultObjectManager::GetObject<T>()`
   — `#undef GetObject` after the D3D includes.
   SETTLED (2026-07-08, m17b AV probe): the kLeft/RightItemCharge AV-gate
