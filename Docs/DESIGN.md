@@ -192,6 +192,26 @@ generic catalog). A curated subset with clean effects (e.g. Silent Moons)
 can graduate into extractable **unique gems** (level normally, cannot birth)
 in a later version.
 
+### Installer prime directive (Marth 2026-07-09, RULE)
+The installer **tracks what is actually happening in the load order — never
+assumes values, never hardcodes matches**. Nearly every list carries author
+tweaks (LoreRim's fire MGEF was last touched by Big Tweaks, not Requiem).
+Concretely, per install the tool derives from winning records:
+- **Effect identity**: each gem's MGEF ref remapped to the list's canonical
+  implementation (signature match), so gems inherit the list's tuned
+  archetype/AV/description behavior automatically.
+- **Recipe structure**: riders (extra effects + magnitude ratios + durations)
+  read from the list's own generic tier lines — the same family-covered
+  ≥4-item detection the strip uses. On a Thaumaturgy list the elemental
+  recipe differs from Requiem's, and the gems follow it.
+- **Magnitude anchors**: curve endpoints calibrated from the list's tier I /
+  tier max enchant magnitudes (generalizes §3's "I = Requiem base, V =
+  Requiem max").
+Delivery: the installer writes a calibration JSON next to meo_runtime.json;
+the DLL applies it over the compiled GemCatalog.h defaults at kDataLoaded.
+The compiled defaults (hand-matched to Requiem, e.g. m21 riders) remain the
+fallback for installs that never ran the tool.
+
 ### Install-time load-order scanner (design DECIDED 2026-07-08, tool pending)
 The catalog ships vanilla effects; a mod load order carries dozens more
 (Lorerim scan: ~267 single-effect enchant MGEFs not in our catalog). An
