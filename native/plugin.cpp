@@ -82,6 +82,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cmath>
 #include <cstdlib>
 #include <format>
 #include <fstream>
@@ -131,6 +132,23 @@ std::unordered_map<std::string_view, int>         g_gemByGid;
 std::vector<int>                                  g_lootableGems;  // weapon-domain, world-weapon stamps
 std::vector<int>                                  g_corpseGems;    // weapon+armor, corpse drops
 RE::SpellItem*                                    g_pouchSpell = nullptr;
+
+// ── m19: themed NPC spawn pools (DESIGN §3 "Post-strip gem economy") ──
+// Enemy archetype × gem theme weights build per-archetype weighted pools
+// (index 0 = weapon-domain gems, 1 = armor-domain). S-tier (spawnWeight 1)
+// takes an extra ×0.5 on enemies — rarer than world drops, per design.
+enum class Arch : int { kWarrior = 0, kMage, kRogue, kUndead, kCount };
+// [arch][theme]; theme order = meo::Theme (Fire Frost Shock Arcane Drain
+// Martial Roguish Holy Utility).
+constexpr float kArchThemeW[4][9] = {
+    /*Warrior*/ { 0.30f, 0.30f, 0.30f, 0.05f, 0.20f, 1.00f, 0.20f, 0.10f, 0.0f },
+    /*Mage*/    { 0.70f, 0.70f, 0.70f, 1.00f, 0.50f, 0.10f, 0.10f, 0.20f, 0.0f },
+    /*Rogue*/   { 0.20f, 0.20f, 0.20f, 0.10f, 0.50f, 0.40f, 1.00f, 0.00f, 0.0f },
+    /*Undead*/  { 0.15f, 1.00f, 0.15f, 0.40f, 0.80f, 0.50f, 0.10f, 0.00f, 0.0f },
+};
+std::vector<int> g_npcPool[4][2];       // [arch][isArmor] -> weighted gem indices
+RE::BGSKeyword*  g_kwNPC = nullptr;     // ActorTypeNPC (humanoids only)
+RE::BGSKeyword*  g_kwUndead = nullptr;  // ActorTypeUndead
 float g_magnitudeMult = 1.0f;  // [XP] fMagnitudeMult master power scale; used by StampInstance below, set by ReadConfig (MCM)
 
 // ── M3d forms (all IDs extracted from the real Lorerim masters) ───────
@@ -233,6 +251,28 @@ void ResolveCatalog() {
                 }
             }
         }
+    }
+    // m19: per-archetype themed pools — copies = spawnWeight × theme weight × 4,
+    // with S-tier (spawnWeight 1) halved again so rares are rarer on enemies
+    // than in world drops (anti-farm, DESIGN §3 post-strip economy).
+    for (int a = 0; a < static_cast<int>(Arch::kCount); ++a) {
+        for (std::size_t i = 0; i < g_gems.size(); ++i) {
+            const auto* def = g_gems[i].def;
+            if (!g_gems[i].mgef || def->singleLevel) {
+                continue;
+            }
+            const float tw = kArchThemeW[a][static_cast<int>(def->theme)];
+            const float sPenalty = (def->spawnWeight <= 1) ? 0.5f : 1.0f;
+            const int copies = static_cast<int>(std::lround(def->spawnWeight * tw * 4.0f * sPenalty));
+            for (int w = 0; w < copies; ++w) {
+                g_npcPool[a][def->isArmor ? 1 : 0].push_back(static_cast<int>(i));
+            }
+        }
+    }
+    g_kwNPC = RE::TESForm::LookupByEditorID<RE::BGSKeyword>("ActorTypeNPC");
+    g_kwUndead = RE::TESForm::LookupByEditorID<RE::BGSKeyword>("ActorTypeUndead");
+    if (!g_kwNPC) {
+        spdlog::warn("[npc] ActorTypeNPC keyword not found — enemy socket spawns disabled");
     }
     // M3d forms. Skyrim.esm forms are unconditional; Dawnguard gates Mentor.
     g_pouchCont = dh->LookupForm<RE::TESObjectCONT>(kPouchContID, kPluginName);
@@ -493,6 +533,7 @@ float g_xpPerKill = 1.0f;         // [Dev] fXPPerKill in SKSE/Plugins/MEO.ini
 float g_gemDropChance = 0.03f;    // [Loot] fGemDropChance — corpse gem on player kill
 float g_worldSocketChance = 0.05f;// [Loot] fWorldSocketChance — world weapon born socketed
 float g_gemLevel2Chance = 0.02f;  // [Loot] fGemLevel2Chance — spawned gem is level II not I
+float g_npcSocketChance = 0.05f;  // [Loot] fNPCSocketChance — enemy spawns with a socketed piece (m19)
 float g_bossXPMult = 10.0f;       // [XP] fBossXPMult — boss/dragon kill multiplier
 bool  g_xpNotify = true;          // [UI] bXPNotify — "Gem XP +N" on kills
 bool  g_stationTakeover = true;   // [UI] bStationTakeover — gem menu REPLACES the vanilla enchanting menu
@@ -526,6 +567,7 @@ static void ApplyIniFile(const char* a_path) {
         else if (key == "fGemDropChance")     g_gemDropChance = val;
         else if (key == "fWorldSocketChance") g_worldSocketChance = val;
         else if (key == "fGemLevel2Chance")   g_gemLevel2Chance = val;
+        else if (key == "fNPCSocketChance")   g_npcSocketChance = val;
         else if (key == "fBossXPMult")        g_bossXPMult = val;
         else if (key == "fMagnitudeMult")     g_magnitudeMult = val;
         else if (key == "bXPNotify")          g_xpNotify = val != 0.0f;
@@ -1750,6 +1792,164 @@ void MaybeStampWorldWeapon(RE::TESObjectREFR* a_ref) {
     }
 }
 
+// ── m19: enemies spawn wearing socketed gear (DESIGN §3 post-strip economy) ──
+// Archetype from the actor's race keyword / dominant base skills — picks which
+// themed pool its gem rolls from.
+Arch DetectArchetype(RE::Actor* a_actor) {
+    if (g_kwUndead && a_actor->GetRace() && a_actor->GetRace()->HasKeyword(g_kwUndead)) {
+        return Arch::kUndead;
+    }
+    auto* avo = a_actor->AsActorValueOwner();
+    if (!avo) {
+        return Arch::kWarrior;
+    }
+    auto av = [&](RE::ActorValue v) { return avo->GetBaseActorValue(v); };
+    using AV = RE::ActorValue;
+    const float mage = std::max({ av(AV::kDestruction), av(AV::kConjuration),
+                                  av(AV::kIllusion), av(AV::kAlteration), av(AV::kRestoration) });
+    const float rogue = std::max({ av(AV::kSneak), av(AV::kLightArmor), av(AV::kLockpicking) });
+    const float warrior = std::max({ av(AV::kOneHanded), av(AV::kTwoHanded),
+                                     av(AV::kHeavyArmor), av(AV::kArchery), av(AV::kBlock) });
+    if (mage >= rogue && mage >= warrior) {
+        return Arch::kMage;
+    }
+    return rogue > warrior ? Arch::kRogue : Arch::kWarrior;
+}
+
+// Deterministic per-reference roll (same discipline as world weapons): a given
+// NPC decides once, forever. The gem is LIVE on the enemy (ApplyWornAbility) —
+// you fight the effect; at death it converts to a lootable loose gem (below).
+void MaybeStampNPCGear(RE::Actor* a_actor) {
+    if (!a_actor || g_npcSocketChance <= 0.0f || !g_kwNPC || a_actor->IsPlayerRef() ||
+        a_actor->IsPlayerTeammate() || a_actor->IsDead()) {
+        return;
+    }
+    auto* race = a_actor->GetRace();
+    if (!race || !race->HasKeyword(g_kwNPC)) {
+        return;  // humanoids only — creatures don't wear gear
+    }
+    const std::uint32_t h = HashU32(a_actor->GetFormID() ^ 0x4D454F32u);  // 'MEO2'
+    if ((h % 10000) / 10000.0f >= g_npcSocketChance) {
+        return;
+    }
+    auto* changes = a_actor->GetInventoryChanges();
+    if (!changes || !changes->entryList) {
+        return;
+    }
+    struct Cand { RE::TESBoundObject* base; RE::ExtraDataList* xl; bool armor; bool left; };
+    std::vector<Cand> cands;
+    for (auto* entry : *changes->entryList) {
+        if (!entry || !entry->object || !entry->extraLists) {
+            continue;
+        }
+        const bool isW = entry->object->Is(RE::FormType::Weapon);
+        const bool isA = entry->object->Is(RE::FormType::Armor);
+        if (!isW && !isA) {
+            continue;
+        }
+        for (auto* xl : *entry->extraLists) {
+            if (!xl || !IsWornXList(xl)) {
+                continue;
+            }
+            if (auto* xid = xl->GetByType<RE::ExtraUniqueID>()) {
+                for (int s = 0; s < kMaxSockets; ++s) {
+                    if (g_sockets.contains(MakeKey(entry->object->GetFormID(), xid->uniqueID,
+                                                   static_cast<std::uint8_t>(s)))) {
+                        return;  // already blessed (re-attach after a save)
+                    }
+                }
+            }
+            if (xl->HasType(RE::ExtraDataType::kEnchantment)) {
+                continue;  // foreign enchant
+            }
+            if (isW && !IsSocketableWeaponBase(entry->object->As<RE::TESObjectWEAP>())) {
+                continue;
+            }
+            if (isA && !IsSocketableArmorBase(entry->object->As<RE::TESObjectARMO>())) {
+                continue;
+            }
+            cands.push_back({ entry->object, xl, isA,
+                              xl->HasType(RE::ExtraDataType::kWornLeft) });
+        }
+    }
+    if (cands.empty()) {
+        return;
+    }
+    const auto& c = cands[HashU32(h ^ 0xC0FFEEu) % cands.size()];
+    const int   arch = static_cast<int>(DetectArchetype(a_actor));
+    const auto& pool = g_npcPool[arch][c.armor ? 1 : 0];
+    if (pool.empty()) {
+        return;
+    }
+    const int gemIdx = pool[HashU32(h ^ 0xBEEF5A5Au) % pool.size()];
+    const std::uint32_t l2cut = static_cast<std::uint32_t>(g_gemLevel2Chance * 10000.0f);
+    const int level = (HashU32(h ^ 0x22222222u) % 10000) < l2cut ? 2 : 1;
+    if (StampInstance(c.base, c.xl, gemIdx, level)) {
+        ApplyWornAbility(a_actor, c.base, c.xl, c.left);  // live on the enemy
+        spdlog::info("[npc] {:08X} '{}' (arch {}) spawns with {} {} on {}", a_actor->GetFormID(),
+                     a_actor->GetName(), arch, g_gems[gemIdx].def->name, meo::kRoman[level - 1],
+                     c.base->GetName());
+    }
+}
+
+// At death, an NPC's socketed gear converts: enchant stripped (item back to
+// plain), loose gem MISC of the same level dropped into the corpse. This
+// sidesteps the §1 uid-rewrite trap — corpse->player loot is a container
+// transfer that rewrites ExtraUniqueID and would orphan the record. Enemy
+// gems never earn XP, and a zero-XP gem needs no instance record (M4b), so a
+// plain stackable gem item is lossless here. Runs for ALL deaths (not just
+// player kills) so records never leak into orphaned loot.
+void ConvertNPCGemsOnDeath(RE::Actor* a_victim) {
+    if (!a_victim || a_victim->IsPlayerRef() || a_victim->IsPlayerTeammate()) {
+        return;  // followers keep their instance gems (player-managed)
+    }
+    auto* changes = a_victim->GetInventoryChanges();
+    if (!changes || !changes->entryList) {
+        return;
+    }
+    struct Hit { RE::TESBoundObject* base; RE::ExtraDataList* xl; std::uint16_t uid; };
+    std::vector<Hit> hits;
+    for (auto* entry : *changes->entryList) {
+        if (!entry || !entry->object || !entry->extraLists) {
+            continue;
+        }
+        for (auto* xl : *entry->extraLists) {
+            auto* xid = xl ? xl->GetByType<RE::ExtraUniqueID>() : nullptr;
+            if (!xid) {
+                continue;
+            }
+            for (int s = 0; s < kMaxSockets; ++s) {
+                if (g_sockets.contains(MakeKey(entry->object->GetFormID(), xid->uniqueID,
+                                               static_cast<std::uint8_t>(s)))) {
+                    hits.push_back({ entry->object, xl, xid->uniqueID });
+                    break;
+                }
+            }
+        }
+    }
+    for (const auto& hit : hits) {
+        for (int s = 0; s < kMaxSockets; ++s) {
+            auto it = g_sockets.find(MakeKey(hit.base->GetFormID(), hit.uid,
+                                             static_cast<std::uint8_t>(s)));
+            if (it == g_sockets.end()) {
+                continue;
+            }
+            const int lvIdx = std::clamp<int>(it->second.level, 1, 5) - 1;
+            if (auto gemIt = g_gemByGid.find(it->second.gid); gemIt != g_gemByGid.end()) {
+                if (auto* gemForm = g_gems[gemIt->second].items[lvIdx]) {
+                    a_victim->AddObjectToContainer(gemForm, nullptr, 1, nullptr);
+                }
+            }
+            g_sockets.erase(it);
+        }
+        RebuildInstanceEnchant(hit.base, hit.xl);  // no slots left -> strips enchant+name
+    }
+    if (!hits.empty()) {
+        spdlog::info("[npc] death-converted {} socketed item(s) on {:08X} '{}'",
+                     hits.size(), a_victim->GetFormID(), a_victim->GetName());
+    }
+}
+
 class CellAttachSink : public RE::BSTEventSink<RE::TESCellAttachDetachEvent> {
 public:
     static CellAttachSink* GetSingleton() {
@@ -1767,6 +1967,17 @@ public:
             SKSE::GetTaskInterface()->AddTask([handle]() {
                 if (auto ref = handle.get()) {
                     MaybeStampWorldWeapon(ref.get());
+                }
+            });
+        } else if (a_event->reference->GetBaseObject() &&
+                   a_event->reference->GetBaseObject()->Is(RE::FormType::NPC)) {
+            // m19: NPC refs roll a themed worn socket the moment they attach.
+            const RE::ObjectRefHandle handle = a_event->reference->GetHandle();
+            SKSE::GetTaskInterface()->AddTask([handle]() {
+                if (auto ref = handle.get()) {
+                    if (auto* actor = ref->As<RE::Actor>()) {
+                        MaybeStampNPCGear(actor);
+                    }
                 }
             });
         }
@@ -1799,7 +2010,23 @@ public:
     RE::BSEventNotifyControl ProcessEvent(const RE::TESDeathEvent* a_event,
                                           RE::BSTEventSource<RE::TESDeathEvent>*) override {
         if (!a_event || !a_event->dead || !a_event->actorDying ||
-            a_event->actorDying->IsPlayerRef() || !a_event->actorKiller) {
+            a_event->actorDying->IsPlayerRef()) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        // m19: convert the victim's socketed gear to plain item + loose gem
+        // BEFORE any looting can move it between containers (uid-rewrite trap).
+        // Runs for every death regardless of killer, so records never leak.
+        {
+            const RE::ObjectRefHandle vh = a_event->actorDying->GetHandle();
+            SKSE::GetTaskInterface()->AddTask([vh]() {
+                if (auto ref = vh.get()) {
+                    if (auto* v = ref->As<RE::Actor>()) {
+                        ConvertNPCGemsOnDeath(v);
+                    }
+                }
+            });
+        }
+        if (!a_event->actorKiller) {
             return RE::BSEventNotifyControl::kContinue;
         }
         // M3d: player kills AND follower kills (followers feed their own gems).
@@ -2173,7 +2400,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.26.0 (M18 station takeover) loaded");
+            console->Print("MEO native v0.27.0 (M19 enemy socketed spawns) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -2199,7 +2426,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.26.0 (M18: gem menu replaces the enchanting station menu) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.27.0 (M19: themed enemy socketed spawns + death conversion) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
