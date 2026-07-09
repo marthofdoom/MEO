@@ -63,6 +63,11 @@
 #endif
 #include <d3d11.h>
 #include <dxgi.h>
+// wingdi.h #defines GetObject -> GetObjectW, which hijacks
+// RE::BGSDefaultObjectManager::GetObject<T>(). Drop the macro.
+#ifdef GetObject
+#    undef GetObject
+#endif
 
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
