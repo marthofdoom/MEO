@@ -183,10 +183,19 @@ The `- 4` offset on the callback message is the trap everyone hits.
   load-equip and an equip cycle there conflicts/gets undone). One pass = a
   single blink. GOTCHA: `d3d11.h` pulls `wingdi.h` which `#define`s
   `GetObject`→`GetObjectW`, hijacking `BGSDefaultObjectManager::GetObject<T>()`
-  — `#undef GetObject` after the D3D includes. (This also means the earlier
-  builds that "worked on load" almost certainly did NOT — they were re-equipped
-  by hand, or the low-magnitude effect went unnoticed. Instance ExtraEnchantment
-  has never self-reactivated on load; that's inherent to not using formEnchanting.)
+  — `#undef GetObject` after the D3D includes.
+  EPISTEMIC STATUS (2026-07-08): the FIX is empirical (replicates Marth's
+  proven manual re-equip); the MECHANISM story above is NOT settled. Two facts
+  contradict a pure "equip-time delivery cache" theory: (a) in-session
+  socketing fires immediately with NO equip cycle (m12-validated), and (b)
+  Marth reports pre-m12 builds (cost>0, charge=500, no reapply code) fired
+  after load. Leading candidate that reconciles both: the hit path gates on
+  the actor's kLeft/RightItemCharge ACTOR VALUES (mirrored from weapon charge
+  at equip; modified player AVs persist in saves — so a pre-m12 charge=500
+  weapon would load with its AV restored and fire). Unverified. NEXT: passenger
+  diagnostic in a future build — log kLeft/RightItemCharge in [load-diag] and
+  after the auto-re-equip. If inconclusive, throwaway-branch revert experiment
+  (pre-m12 cost/charge, reapply disabled) to test load-firing directly.
 - **Weapons in containers, on racks/displays, or in NPC inventories are NOT
   born socketed.** `TESCellAttachDetachEvent` fires per *world reference*;
   container contents and carried items are inventory entries, not refs, and
