@@ -131,6 +131,9 @@ try
         "tree-effects" => Commands.DumpTreeEffects(loadOrder, cache, positional.ElementAtOrDefault(0) ?? "AVEnchanting"),
         "perk" => Commands.DumpPerk(loadOrder, cache, positional[0]),
         "write-patch" => Commands.WritePatch(loadOrder, cache, positional[0]),
+        "strip-report" => Commands.StripReport(loadOrder, cache,
+            positional.ElementAtOrDefault(0) ?? "data/gem_catalog.json",
+            positional.ElementAtOrDefault(1)),
         _ => Commands.Fail($"unknown command {cmd}"),
     };
 }
@@ -502,6 +505,176 @@ static class Commands
         patch.WriteToBinary(outPath);
         Console.WriteLine($"wrote {outPath}");
         Console.WriteLine($"masters: {string.Join(", ", patch.ModHeader.MasterReferences.Select(m => m.Master))}");
+        return 0;
+    }
+
+    // A magic effect's mechanical identity, independent of which plugin last
+    // touched it: what it does (archetype), to what (AVs), and whether it
+    // hurts. Two MGEFs with the same signature are the same gameplay effect,
+    // which is how "does a gem family cover this enchantment" is decided
+    // without ever matching names or FormIDs (the prime directive).
+    static string Sig(IMagicEffectGetter m) =>
+        $"{m.Archetype.Type}|{m.Archetype.ActorValue}|" +
+        $"{(int)(m.Flags & (MagicEffect.Flag.Hostile | MagicEffect.Flag.Detrimental))}|" +
+        $"{m.ResistValue}|{m.SecondActorValue}";
+
+    // Read-only census for the loot strip: classifies every winning ENCH by
+    // the ruled policy (single-effect family-covered generics and tiered
+    // 2-effect generic lines strip; named packages / multi-effect artifacts /
+    // blacklist keep) and counts what that means item- and LVLI-wise.
+    public static int StripReport(
+        LoadOrder<IModListingGetter<ISkyrimModGetter>> lo, ILinkCache cache,
+        string catalogPath, string? dumpPath = null)
+    {
+        if (!File.Exists(catalogPath)) return Fail($"catalog not found: {catalogPath}");
+        var catalog = System.Text.Json.JsonDocument.Parse(File.ReadAllText(catalogPath));
+        var covered = new HashSet<string>();
+        int unresolved = 0;
+        foreach (var fam in catalog.RootElement.EnumerateObject())
+            foreach (var r in fam.Value.GetProperty("mgef_refs").EnumerateArray())
+            {
+                var fk = new FormKey(
+                    ModKey.FromNameAndExtension(r.GetProperty("plugin").GetString()!),
+                    Convert.ToUInt32(r.GetProperty("fid").GetString()!, 16));
+                if (cache.TryResolve<IMagicEffectGetter>(fk, out var m)) covered.Add(Sig(m));
+                else unresolved++;
+            }
+        Console.WriteLine($"catalog: {covered.Count} covered effect signature(s)" +
+                          (unresolved > 0 ? $", {unresolved} ref(s) not in this list" : ""));
+
+        // ENCH coverage: effect count + whether every effect is mirrored by a
+        // gem family.
+        var enchInfo = new Dictionary<FormKey, (int N, bool Covered)>();
+        foreach (var e in lo.PriorityOrder.ObjectEffect().WinningOverrides())
+        {
+            var sigs = e.Effects
+                .Select(fx => fx.BaseEffect.TryResolve(cache, out var m) ? Sig(m!) : null)
+                .ToList();
+            enchInfo[e.FormKey] =
+                (sigs.Count, sigs.Count > 0 && sigs.All(s => s is not null && covered.Contains(s)));
+        }
+        Console.WriteLine($"winning ENCH records: {enchInfo.Count} " +
+                          $"(fully covered: {enchInfo.Values.Count(v => v.Covered)})");
+
+        // The strip decision is per ITEM, and "generic loot line" is a record
+        // shape, not a name list: list-generated enchanted variants are
+        // template records whose display name extends their unenchanted
+        // base's name ("Iron Sword of Embers" <- template "Iron Sword").
+        // Distinctively named gear ("Lunar Iron Sword...", backpacks, thane
+        // rewards) fails the prefix test and keeps, with no blacklist needed.
+        static bool GenericNamed(string? name, string? baseName) =>
+            name is { Length: > 0 } && baseName is { Length: > 0 } &&
+            name.Length > baseName.Length &&
+            name.StartsWith(baseName, StringComparison.OrdinalIgnoreCase);
+
+        // Fallback for lists that rebuild loot without template links (Requiem
+        // replaces vanilla enchanted variants with untemplated REQ_ records):
+        // "<unenchanted item's name> of <suffix>" is the loot generator's
+        // naming shape, tested against the list's own unenchanted item names.
+        var plainNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var w in lo.PriorityOrder.Weapon().WinningOverrides())
+            if (w.ObjectEffect.IsNull && w.Name?.String is { Length: > 0 } n) plainNames.Add(n);
+        foreach (var a in lo.PriorityOrder.Armor().WinningOverrides())
+            if (a.ObjectEffect.IsNull && a.Name?.String is { Length: > 0 } n) plainNames.Add(n);
+
+        bool GenericShaped(string? name)
+        {
+            if (name is null) return false;
+            for (int p = name.IndexOf(" of ", StringComparison.Ordinal); p > 0;
+                 p = name.IndexOf(" of ", p + 1, StringComparison.Ordinal))
+                if (plainNames.Contains(name[..p])) return true;
+            return false;
+        }
+
+        string Classify(FormKey ench, bool generic)
+        {
+            if (!generic) return "keep-named";
+            var (n, cov) = enchInfo.GetValueOrDefault(ench, (0, false));
+            return n switch
+            {
+                1 when cov => "strip-1fx",
+                2 when cov => "strip-2fx-recipe",      // gems follow the recipe (riders)
+                2 => "strip-2fx-uncovered",            // generic line, partly outside the catalog
+                1 => "keep-generic-uncovered",         // a family MEO has no gem for
+                _ => "keep-generic-multifx",
+            };
+        }
+
+        // Tier chains template on each other ("of the Inferno" -> "of
+        // Scorching" -> ... -> base), so walk to the chain's root — the
+        // unenchanted item whose name the generics extend.
+        var raw = new List<(FormKey Key, FormKey Ench, string? Name, string? BaseName, ModKey Mod, string? Edid)>();
+        foreach (var w in lo.PriorityOrder.Weapon().WinningOverrides())
+        {
+            if (w.ObjectEffect.IsNull) continue;
+            var root = w;
+            for (int i = 0; i < 10 && !root.Template.IsNull; i++)
+                if (root.Template.TryResolve(cache, out var t)) root = t; else break;
+            var baseName = ReferenceEquals(root, w) ? null : root.Name?.String;
+            raw.Add((w.FormKey, w.ObjectEffect.FormKey, w.Name?.String, baseName,
+                     w.FormKey.ModKey, w.EditorID));
+        }
+        foreach (var a in lo.PriorityOrder.Armor().WinningOverrides())
+        {
+            if (a.ObjectEffect.IsNull) continue;
+            var root = a;
+            for (int i = 0; i < 10 && !root.TemplateArmor.IsNull; i++)
+                if (root.TemplateArmor.TryResolve(cache, out var t)) root = t; else break;
+            var baseName = ReferenceEquals(root, a) ? null : root.Name?.String;
+            raw.Add((a.FormKey, a.ObjectEffect.FormKey, a.Name?.String, baseName,
+                     a.FormKey.ModKey, a.EditorID));
+        }
+
+        // Corroboration for the name-shape path: loot generics share their
+        // ENCH across many item records; an artifact's enchant is bespoke.
+        // "Spear of Bitter Mercy" is name-shaped like a generic but its
+        // enchant exists nowhere else -> keep.
+        var enchUse = raw.GroupBy(r => r.Ench).ToDictionary(g => g.Key, g => g.Count());
+        var items = new List<(FormKey Key, string Cls, string? Name, ModKey Mod, string? Edid)>();
+        foreach (var r in raw)
+        {
+            var generic = GenericNamed(r.Name, r.BaseName) ||
+                          (GenericShaped(r.Name) && enchUse[r.Ench] >= 3);
+            items.Add((r.Key, Classify(r.Ench, generic), r.Name, r.Mod, r.Edid));
+        }
+        // Untemplated twins: NPC-hand records (Dremora fire blades etc.) share
+        // a stripped generic's display name but not its template shape. They
+        // reach players as kill loot, so surface them for a ruling instead of
+        // hiding them inside keep-named.
+        var stripNames = items.Where(i => i.Cls.StartsWith("strip") && i.Name is not null)
+            .Select(i => i.Name!).ToHashSet(StringComparer.Ordinal);
+        items = items.Select(i =>
+            i.Cls == "keep-named" && i.Name is not null && stripNames.Contains(i.Name)
+                ? i with { Cls = "review-npc-twin" } : i).ToList();
+
+        var stripItems = items.Where(i => i.Cls.StartsWith("strip")).Select(i => i.Key).ToHashSet();
+        var counts = items.GroupBy(i => i.Cls).ToDictionary(g => g.Key, g => g.Count());
+        Console.WriteLine("enchanted item classes: " + string.Join("  ",
+            counts.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key}={kv.Value}")));
+        foreach (var g in items.GroupBy(i => i.Cls).OrderBy(g => g.Key))
+            Console.WriteLine($"  {g.Key}: {string.Join("; ",
+                g.Take(6).Select(i => $"{i.Name} [{i.Mod}]"))}");
+        if (dumpPath is not null)
+        {
+            File.WriteAllLines(dumpPath, items.OrderBy(i => i.Cls).ThenBy(i => i.Name)
+                .Select(i => $"{i.Cls}\t{i.Name}\t{i.Edid}\t{i.Key}"));
+            Console.WriteLine($"full census -> {dumpPath}");
+        }
+
+        int lvliTouched = 0, entriesTotal = 0;
+        var top = new List<(string, int)>();
+        foreach (var l in lo.PriorityOrder.LeveledItem().WinningOverrides())
+        {
+            var hits = l.Entries?.Count(en =>
+                en.Data is not null && stripItems.Contains(en.Data.Reference.FormKey)) ?? 0;
+            if (hits == 0) continue;
+            lvliTouched++;
+            entriesTotal += hits;
+            top.Add(($"{l.EditorID} [{l.FormKey.ModKey}]", hits));
+        }
+        Console.WriteLine($"LVLI impact: {entriesTotal} entr(ies) across {lvliTouched} leveled list(s)");
+        foreach (var (name, n) in top.OrderByDescending(t => t.Item2).Take(15))
+            Console.WriteLine($"  {n,4}  {name}");
         return 0;
     }
 }
