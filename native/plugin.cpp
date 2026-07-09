@@ -1921,7 +1921,7 @@ void EnsurePlayerSetup() {
 // (AddWeaponEnchantment dedupes identical created enchants — no churn) so the
 // final state is correct regardless of the engine's load-finalization order.
 // Each call re-scans inventory so captured xList pointers can't go stale.
-void ReapplyWornSockets(bool a_rebuild) {
+void ReapplyWornSockets(bool a_rebuild, bool a_diag = false) {
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* changes = player ? player->GetInventoryChanges() : nullptr;
     if (!changes || !changes->entryList) {
@@ -1952,6 +1952,22 @@ void ReapplyWornSockets(bool a_rebuild) {
             if (!ours) {
                 continue;
             }
+            // m15 diagnostic: on the immediate post-load pass, read the enchant
+            // that SURVIVED the save BEFORE we overwrite it — proves whether the
+            // never-drain costOverride/kCostOverride round-trips (hypothesis) or
+            // it's purely an ability-derivation timing issue.
+            if (a_diag) {
+                auto* xEnch = xl->GetByType<RE::ExtraEnchantment>();
+                auto* en = xEnch ? xEnch->enchantment : nullptr;
+                spdlog::info("[load-diag] {:08X}/{} as-loaded: ench={:08X} kCostOverride={} "
+                             "costOverride={} charge={}",
+                             entry->object->GetFormID(), xid->uniqueID,
+                             en ? en->GetFormID() : 0u,
+                             en && en->data.flags.any(
+                                       RE::EnchantmentItem::EnchantmentFlag::kCostOverride),
+                             en ? en->data.costOverride : -1,
+                             xEnch ? xEnch->charge : 0);
+            }
             if (a_rebuild) {
                 RebuildInstanceEnchant(entry->object, xl);
             }
@@ -1966,7 +1982,7 @@ void ReapplyWornSockets(bool a_rebuild) {
 // settles — the immediate pass is usually discarded (see ReapplyWornSockets).
 // A detached timer thread hands each retry back to the main thread via a task.
 void ScheduleReapplyWornSockets() {
-    SKSE::GetTaskInterface()->AddTask([]() { ReapplyWornSockets(true); });
+    SKSE::GetTaskInterface()->AddTask([]() { ReapplyWornSockets(true, /*diag=*/true); });
     std::thread([]() {
         for (int ms : { 1500, 2500, 4000 }) {  // cumulative ~1.5s, 4s, 8s post-load
             std::this_thread::sleep_for(std::chrono::milliseconds(ms));
