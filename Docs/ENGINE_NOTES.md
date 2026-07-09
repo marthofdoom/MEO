@@ -180,7 +180,7 @@ The `- 4` offset on the callback message is the trap everyone hits.
   their `BGSDefaultObjectManager` hand slot kLeft/kRightHandEquip; armor
   slotless). TIMING (hardened v0.27.3): a blind post-load timer is NOT
   reliable — on a heavy-area load it fires while the loading screen is still
-  up and the equip cycle is swallowed (field-hit at +4s, Solitude). Anchor
+  up and the equip cycle is swallowed (field-hit at +4s). Anchor
   to the Loading Menu CLOSING (MenuOpenCloseEvent) + ~1.5s fade margin,
   with a long fallback timer for loads that show no loading menu. One pass
   = a single blink. GOTCHA: `d3d11.h` pulls `wingdi.h` which `#define`s
