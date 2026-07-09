@@ -406,6 +406,13 @@ accrual while keeping it varied**:
 2. **Shops sell gems** at a similar per-item roll (~`0.04`), and the
    enchanted equipment vendors would have stocked is now **socketed**
    equipment instead — same shelves, gem-flavored.
+   *Implementation status (m19b)*: loose gem sales SHIPPED (per-item roll at
+   barter open, deterministic per vendor per game day, cap 3, tier-weighted).
+   Socketed vendor STOCK is DEFERRED: buying is a container transfer, which
+   rewrites `ExtraUniqueID` and would orphan the socket record (ENGINE_NOTES
+   §1 — the same trap corpse loot hit; corpses solved it with death-time
+   conversion, but vendors have no equivalent pre-transfer moment). Unblocks
+   when the `TESContainerChangedEvent` re-key experiment is proven.
 
 Implementation notes: both are DLL-side and runtime-dynamic (per
 DYNAMIC_OR_DROP — no leveled-list edits): enemy worn-socket rolls stamp the

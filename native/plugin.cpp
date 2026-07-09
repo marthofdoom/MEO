@@ -534,6 +534,7 @@ float g_gemDropChance = 0.03f;    // [Loot] fGemDropChance — corpse gem on pla
 float g_worldSocketChance = 0.05f;// [Loot] fWorldSocketChance — world weapon born socketed
 float g_gemLevel2Chance = 0.02f;  // [Loot] fGemLevel2Chance — spawned gem is level II not I
 float g_npcSocketChance = 0.05f;  // [Loot] fNPCSocketChance — enemy spawns with a socketed piece (m19)
+float g_vendorGemChance = 0.04f;  // [Loot] fVendorGemChance — per stock item, vendor adds a gem (m19b)
 float g_bossXPMult = 10.0f;       // [XP] fBossXPMult — boss/dragon kill multiplier
 bool  g_xpNotify = true;          // [UI] bXPNotify — "Gem XP +N" on kills
 bool  g_stationTakeover = true;   // [UI] bStationTakeover — gem menu REPLACES the vanilla enchanting menu
@@ -568,6 +569,7 @@ static void ApplyIniFile(const char* a_path) {
         else if (key == "fWorldSocketChance") g_worldSocketChance = val;
         else if (key == "fGemLevel2Chance")   g_gemLevel2Chance = val;
         else if (key == "fNPCSocketChance")   g_npcSocketChance = val;
+        else if (key == "fVendorGemChance")   g_vendorGemChance = val;
         else if (key == "fBossXPMult")        g_bossXPMult = val;
         else if (key == "fMagnitudeMult")     g_magnitudeMult = val;
         else if (key == "bXPNotify")          g_xpNotify = val != 0.0f;
@@ -658,6 +660,7 @@ struct MenuState {
 MenuState g_menu;
 
 void OpenGemMenu(bool a_station = false);  // defined with the render hooks below
+void StockVendorGems();                    // m19b — defined with the loot rolls below
 void CloseGemMenu();
 
 // Live MCM apply: SkyUI's Mod Configuration menu is hosted in the Journal
@@ -679,6 +682,9 @@ public:
         if (!a_event->opening && a_event->menuName == RE::JournalMenu::MENU_NAME) {
             ReadConfig();
             RefreshPerks();  // pick up Enchanting skill-ups (interim auto-grant)
+        } else if (a_event->opening && a_event->menuName == RE::BarterMenu::MENU_NAME) {
+            // m19b: vendors stock loose gems for this restock cycle.
+            SKSE::GetTaskInterface()->AddTask([]() { StockVendorGems(); });
         } else if (!a_event->opening && a_event->menuName == RE::CraftingMenu::MENU_NAME) {
             // Overlay mode only: leaving the vanilla enchanting UI takes the gem
             // menu with it. In takeover mode (m18) the crafting menu closing IS
@@ -1950,6 +1956,69 @@ void ConvertNPCGemsOnDeath(RE::Actor* a_victim) {
     }
 }
 
+// ── m19b: vendors sell loose gems (DESIGN §3 post-strip economy) ──────
+// Loose gem MISC items are plain stackables — container-transfer-safe (no §1
+// uid concerns). Socketed vendor STOCK is deferred until the container-
+// transfer re-key (TESContainerChangedEvent) is proven. Deterministic per
+// vendor per game day: per stock item, fVendorGemChance of adding one gem
+// (tier-weighted corpse pool), capped at 3; skipped while any MEO gem is
+// still in stock (no re-roll stacking on menu reopen).
+void StockVendorGems() {
+    if (g_vendorGemChance <= 0.0f || g_corpseGems.empty()) {
+        return;
+    }
+    auto* mtm = RE::MenuTopicManager::GetSingleton();
+    auto  speaker = mtm ? mtm->speaker.get() : RE::NiPointer<RE::TESObjectREFR>{};
+    auto* vendor = speaker ? speaker->As<RE::Actor>() : nullptr;
+    if (!vendor) {
+        return;
+    }
+    RE::TESObjectREFR* target = vendor;  // fallback: vendors sell their own inventory
+    if (auto* base = vendor->GetActorBase()) {
+        for (auto& fr : base->factions) {
+            if (fr.faction && fr.faction->IsVendor() &&
+                fr.faction->vendorData.merchantContainer) {
+                target = fr.faction->vendorData.merchantContainer;
+                break;
+            }
+        }
+    }
+    int  itemCount = 0;
+    bool hasGem = false;
+    for (auto& [obj, data] : target->GetInventory()) {
+        if (data.first > 0) {
+            ++itemCount;
+            if (obj && g_gemByItem.contains(obj->GetFormID())) {
+                hasGem = true;
+            }
+        }
+    }
+    if (hasGem || itemCount == 0) {
+        return;  // this restock cycle already has gem stock
+    }
+    const auto* cal = RE::Calendar::GetSingleton();
+    const std::uint32_t day = cal ? static_cast<std::uint32_t>(cal->GetDaysPassed()) : 0;
+    const std::uint32_t h = HashU32(target->GetFormID() ^ (day * 0x9E3779B9u) ^ 0x4D454F33u);
+    const std::uint32_t cut = static_cast<std::uint32_t>(g_vendorGemChance * 10000.0f);
+    const std::uint32_t l2cut = static_cast<std::uint32_t>(g_gemLevel2Chance * 10000.0f);
+    int added = 0;
+    for (int i = 0; i < itemCount && added < 3; ++i) {
+        if (HashU32(h ^ static_cast<std::uint32_t>(i)) % 10000 >= cut) {
+            continue;
+        }
+        const int gemIdx = g_corpseGems[HashU32(h ^ 0x900Du ^ static_cast<std::uint32_t>(i)) %
+                                        g_corpseGems.size()];
+        const int level = (HashU32(h ^ 0x33333333u ^ static_cast<std::uint32_t>(i)) % 10000) <
+                          l2cut ? 2 : 1;
+        if (auto* gemForm = g_gems[gemIdx].items[level - 1]) {
+            target->AddObjectToContainer(gemForm, nullptr, 1, nullptr);
+            ++added;
+            spdlog::info("[vendor] {:08X} stocks {} {}", target->GetFormID(),
+                         g_gems[gemIdx].def->name, meo::kRoman[level - 1]);
+        }
+    }
+}
+
 class CellAttachSink : public RE::BSTEventSink<RE::TESCellAttachDetachEvent> {
 public:
     static CellAttachSink* GetSingleton() {
@@ -2400,7 +2469,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.27.0 (M19 enemy socketed spawns) loaded");
+            console->Print("MEO native v0.27.0 (M19 enemy spawns + vendor gems) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -2426,7 +2495,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.27.0 (M19: themed enemy socketed spawns + death conversion) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.27.0 (M19: themed enemy socketed spawns + death conversion + vendor gems) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
