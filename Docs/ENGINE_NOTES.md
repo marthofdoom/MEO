@@ -258,3 +258,18 @@ installed in `SKSEPluginLoad` — before the renderer exists):
 - `io.IniFilename = nullptr` — never write imgui.ini into the game dir.
 - vcpkg: `imgui` features `dx11-binding`, `win32-binding`; link
   `imgui::imgui d3d11`.
+
+## 10. Enchanting-station detection + takeover (m10/m18)
+
+- **Detect**: `MenuOpenCloseEvent` for `RE::CraftingMenu::MENU_NAME` opening,
+  then (deferred to a task) `player->GetOccupiedFurniture()` → base
+  `TESFurniture` → `workBenchData.benchType == BenchType::kEnchanting` (3).
+  The DG staff enchanter is a different bench type — untouched by design.
+- **Takeover (m18, v0.26.0)**: MEO replaces enchanting, so the vanilla menu
+  is dismissed at open via the engine's own queue:
+  `RE::UIMessageQueue::GetSingleton()->AddMessage(CraftingMenu::MENU_NAME,
+  UI_MESSAGE_TYPE::kHide, nullptr)`, and the gem menu owns the station.
+  CAVEAT: hiding it fires the menu's own CLOSE event — any close-handler
+  coupling ("crafting closed → close our menu") must be gated off in takeover
+  mode or it will kill the menu you just opened. INI/MCM `bStationTakeover`
+  (default on) restores overlay mode when off. Validation pending (m18).
