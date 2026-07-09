@@ -1,0 +1,2 @@
+M16: reactivate on-load sockets via real unequip/re-equip (ActorEquipManager) instead of UpdateWeaponAbility; worn gems fire ~4s after load, no manual re-equip
+built from native run 28991129258
