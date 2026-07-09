@@ -206,6 +206,25 @@ install-time tool remaps and extends against the *actual* load order. Two jobs:
 Decisions (Marth): **inclusion = threshold ≥4 wearable items + a maintained
 blacklist** (drops the 1–2-item artifact tail automatically; blacklists MGEFs
 that duplicate effects we already cover, e.g. Requiem's tier-2 fortifies).
+
+Strip classification (Marth 2026-07-09):
+- **Artifact-class → KEEP enchanted, socket-sealed**: true artifacts/uniques;
+  multi-effect enchantment packages (mage robes = school + regen, etc.);
+  named themed sets even when single-effect (Silent Moons/Lunar — keep
+  blacklist, substring match on MGEF/ENCH edid); new-family effects no gem
+  covers (Spellbreaker ward, Thaumaturgy families on non-Requiem lists).
+- **Strip → replace with plain item in LVLIs**: single-effect, family-covered
+  (signature match against the gem catalog), generic (≥4 items), not
+  blacklisted.
+- **Never socketable**: anything with an existing ability — base `EITM`
+  (formEnchanting) or a foreign ExtraEnchantment. Already enforced in the DLL
+  (IsSocketable*Base + apply-path + menu listing + NPC stamper); artifacts
+  stay enchanted AND cannot take gems.
+- OPEN (Marth to rule): Requiem's tiered 2-effect generics ("of Freezing" =
+  frost+slow tiers; ~560 enchants / ~4,351 items in LoreRim). Literal
+  keep-all-multi-effect retains most generic enchanted weapon loot,
+  contradicting "no findable non-artifact enchantments"; recommended reading
+  is distinctive *packages* keep, generic tier lines strip.
 **Packaging = standalone Mutagen CLI** (self-contained .exe, any mod manager, we
 own the UX; not a Synthesis patcher). `tools/scan_loadorder.py` is the python
 executable spec / recon prototype for this tool (no dotnet on the dev machine —

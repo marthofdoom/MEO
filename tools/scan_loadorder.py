@@ -196,13 +196,19 @@ def scan(mo2_root, profile):
             continue
         m = mgefs.get(mk, {})
         gems = covered_sigs.get(sig_of(m) or (), None) if m else None
+        # Keep-blacklist (Marth 2026-07-09): named themed sets stay enchanted
+        # even when single-effect and family-covered (artifact-class).
+        KEEP_SETS = ('silentmoons',)
+        blob = f"{m.get('edid') or ''} {e['edid'] or ''}".lower()
+        kept_set = any(k in blob for k in KEEP_SETS)
         g = groups.setdefault(mk, {
             'mgef_edid': m.get('edid'), 'mgef_full': m.get('full'),
             'mgef_plugin': mk[0], 'mgef_fid': f"0x{mk[1]:06X}",
             'mgef_winner': m.get('winner'),
             'archetype': m.get('archetype'), 'primaryAV': m.get('primaryAV'),
             'castType': m.get('castType'), 'delivery': m.get('delivery'),
-            'coverage': 'family:' + '/'.join(sorted(gems)) if gems else 'new',
+            'coverage': ('keep:set' if kept_set else
+                         'family:' + '/'.join(sorted(gems)) if gems else 'new'),
             'enchs': [], 'items': 0, 'item_names': []})
         g['enchs'].append({'edid': e['edid'], 'full': e['full'],
                            'plugin': key[0], 'fid': f"0x{key[1]:06X}",
@@ -240,7 +246,8 @@ def main():
                   f"{(g['mgef_winner'] or '?'):<26} {names[:70]}")
 
     new = [g for g in ranked if g['coverage'] == 'new']
-    fam = [g for g in ranked if g['coverage'] != 'new']
+    fam = [g for g in ranked if g['coverage'].startswith('family')]
+    kept = [g for g in ranked if g['coverage'] == 'keep:set']
     big_new = [g for g in new if g['items'] >= 4]
     print(f"\n== NEW FAMILIES (no gem covers the effect; >=4 items = generic) "
           f"— {len(big_new)} big, {len(new) - len(big_new)} minor/artifact ==")
@@ -249,8 +256,14 @@ def main():
           f" — strip targets, not new gems) — {len(fam)} ==")
     for g in sorted(fam, key=lambda g: -g['items'])[:20]:
         print(f"{g['items']:>5}  {(g['mgef_edid'] or '?'):<44} -> {g['coverage'][7:]}")
+    if kept:
+        print(f"\n== KEEP-BLACKLISTED sets (artifact-class by decree) — {len(kept)} ==")
+        for g in kept:
+            print(f"{g['items']:>5}  {(g['mgef_edid'] or '?'):<44} "
+                  f"{'; '.join(n.split(':', 1)[1] for n in g['item_names'][:3])[:60]}")
     n_multi_items = sum(m['items'] for m in multi.values())
-    print(f"\n== MULTI-EFFECT enchantments on worn items (strip decision needed)"
+    print(f"\n== MULTI-EFFECT enchantments on worn items (artifact-class per"
+          f" Marth 2026-07-09; tiered-generic ruling pending)"
           f" — {len(multi)} enchants / {n_multi_items} items ==")
     for m in sorted(multi.values(), key=lambda m: -m['items'])[:12]:
         names = '; '.join(n.split(':', 1)[1] for n in m['item_names'])
