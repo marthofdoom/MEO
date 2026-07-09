@@ -1,0 +1,2 @@
+M17b: socket perks (Twinned Fitting + Master Jeweler) + gem-return ownership fix (no more theft bounty on gem swaps) + itemCharge-AV load diagnostic
+built from native run 28992933512
