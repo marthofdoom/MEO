@@ -1,0 +1,2 @@
+M19f: blinkless strip/restamp on-load reactivation (loading-close +5s/+12s), pass-state logging
+built from native run 29038282785
