@@ -69,8 +69,10 @@
 #include <imgui_impl_win32.h>
 
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <mutex>
+#include <thread>
 
 #include <algorithm>
 #include <array>
@@ -1901,9 +1903,25 @@ void EnsurePlayerSetup() {
 
 // On load, worn socketed gems' abilities are runtime state that doesn't persist
 // — re-stamp + re-activate every worn socketed item so effects are live without
-// a re-equip. (The g_sockets records + item ExtraEnchantment do persist; the
-// magic caster does not.)
-void ReapplyWornSockets() {
+// a manual re-equip. (The g_sockets records + item ExtraEnchantment do persist;
+// the magic caster does not.)
+//
+// REGRESSION (m15): the m12 never-drain mechanism (costOverride=0 + kCostOverride
+// on the created enchant) is a runtime property that does NOT survive save/load;
+// on load the socket reverts to auto per-hit cost and, at our scaled-up magnitude,
+// charge-starves exactly like the pre-m12 firing bug — so the enchant shows but
+// never fires. Pre-m11 builds never hit this (low magnitude, charge 500 sufficed,
+// nothing to lose on load). Re-stamping (a_rebuild) re-mints the enchant with the
+// override restored + re-derives the worn ability.
+//
+// TIMING: kPostLoadGame fires while the engine is still finalizing the loaded
+// actor's equipped-weapon process, so a re-stamp applied then is silently
+// discarded (the player's manual re-socket, minutes later, is what fixed it).
+// So we re-stamp on a few delays until the actor is live. Rebuild every attempt
+// (AddWeaponEnchantment dedupes identical created enchants — no churn) so the
+// final state is correct regardless of the engine's load-finalization order.
+// Each call re-scans inventory so captured xList pointers can't go stale.
+void ReapplyWornSockets(bool a_rebuild) {
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* changes = player ? player->GetInventoryChanges() : nullptr;
     if (!changes || !changes->entryList) {
@@ -1934,12 +1952,27 @@ void ReapplyWornSockets() {
             if (!ours) {
                 continue;
             }
-            RebuildInstanceEnchant(entry->object, xl);
+            if (a_rebuild) {
+                RebuildInstanceEnchant(entry->object, xl);
+            }
             ApplyWornAbility(player, entry->object, xl, xl->HasType(RE::ExtraDataType::kWornLeft));
             ++n;
         }
     }
-    spdlog::info("[load] reapplied {} worn socketed item(s)", n);
+    spdlog::info("[load] {} worn socketed item(s) (rebuild={})", n, a_rebuild);
+}
+
+// Fire the reapply once immediately (rebuild) then again after the loaded actor
+// settles — the immediate pass is usually discarded (see ReapplyWornSockets).
+// A detached timer thread hands each retry back to the main thread via a task.
+void ScheduleReapplyWornSockets() {
+    SKSE::GetTaskInterface()->AddTask([]() { ReapplyWornSockets(true); });
+    std::thread([]() {
+        for (int ms : { 1500, 2500, 4000 }) {  // cumulative ~1.5s, 4s, 8s post-load
+            std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+            SKSE::GetTaskInterface()->AddTask([]() { ReapplyWornSockets(true); });
+        }
+    }).detach();
 }
 
 // ── SKSE co-save (schema v3 — see save-safety rules in the header) ────
@@ -2055,7 +2088,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.22.0 (M14 load-reapply + armor starters) loaded");
+            console->Print("MEO native v0.23.0 (M15 load-reapply timing/costOverride fix) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -2065,8 +2098,8 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetTaskInterface()->AddTask([]() {
             EnsurePlayerSetup();
             RefreshPerks();
-            ReapplyWornSockets();  // re-activate worn gem effects after load
         });
+        ScheduleReapplyWornSockets();  // re-activate worn gem effects (deferred + retried)
         break;
     default:
         break;
@@ -2081,7 +2114,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.22.0 (M14: on-load reapply + armor starter set) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.23.0 (M15: on-load reapply timing + costOverride-loss fix) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
