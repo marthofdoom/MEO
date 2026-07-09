@@ -715,8 +715,11 @@ public:
             // re-equip can take (a blind post-load timer fired during long
             // loading screens and was swallowed; see ScheduleReapplyWornSockets).
             if (g_pendingReapply.exchange(false)) {
-                RunDeferredReapply(8000);  // well past the fade — +1.5s was
-                                           // still swallowed (2026-07-09)
+                // Two passes: the refresh is blinkless (strip/restamp, no
+                // equip cycle), so a late second pass is free insurance —
+                // +1.5s was field-swallowed during the fade (2026-07-09).
+                RunDeferredReapply(5000);
+                RunDeferredReapply(12000);
             }
         } else if (a_event->opening && a_event->menuName == RE::DialogueMenu::MENU_NAME) {
             // m19e: stock at DIALOGUE open — stocking at BarterMenu open
@@ -2541,55 +2544,48 @@ void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag = false) {
         }
     }
     if (a_reequip) {
-        // m19f: log the game state the pass runs under — if a pass is ever
-        // swallowed again, this line names the condition.
-        spdlog::info("[load] reequip pass: paused={} player3D={} drawn={}",
+        spdlog::info("[load] refresh pass: paused={} player3D={} drawn={}",
                      RE::UI::GetSingleton() && RE::UI::GetSingleton()->GameIsPaused(),
-                     player->Is3DLoaded(), player->IsWeaponDrawn());
-        auto* eqm = RE::ActorEquipManager::GetSingleton();
-        auto* dobj = RE::BGSDefaultObjectManager::GetSingleton();
-        struct Re { RE::FormID base; std::uint16_t uid; bool isArmor; bool left; };
-        std::vector<Re> requeue;
+                     player->Is3DLoaded(),
+                     player->AsActorState() && player->AsActorState()->IsWeaponDrawn());
+        // m19f (Marth: "look at how the FX mod reads the weapon — a more
+        // elegant solution"): NO equip cycle, NO gear blink. The proven
+        // in-session reactivation is a socket CHANGE: the engine's ability
+        // refresh only takes when the enchant extra actually differs, and a
+        // plain rebuild dedupes to the SAME FF form, no-oping against the
+        // save's stale ability bookkeeping (why m15's UpdateWeaponAbility
+        // retries failed and only re-equip — a forced teardown — worked).
+        // So do the unsocket/resocket dance programmatically: strip the
+        // enchant + refresh (teardown), then NEXT task rebuild + refresh
+        // (fresh ability). Invisible to the player.
+        struct Re { RE::FormID base; std::uint16_t uid; bool left; };
+        std::vector<Re> restore;
         for (auto& t : targets) {
-            const RE::BGSEquipSlot* slot = nullptr;
-            if (!t.isArmor && dobj) {  // weapons need their hand slot; armor is slotless
-                slot = dobj->GetObject<RE::BGSEquipSlot>(
-                    t.left ? RE::DEFAULT_OBJECT::kLeftHandEquip
-                           : RE::DEFAULT_OBJECT::kRightHandEquip);
+            auto* xid = t.xl->GetByType<RE::ExtraUniqueID>();
+            if (!xid) {
+                continue;
             }
-            // m19f: unequip NOW, equip NEXT TASK (separate frame). The
-            // same-frame unequip+equip cycle is the one structural difference
-            // from the player's manual re-equip (which always works) — the
-            // engine can collapse a same-frame cycle into a no-op.
-            eqm->UnequipObject(player, t.base, t.xl, 1, slot, false, true, false, true);
-            auto* xid = t.xl ? t.xl->GetByType<RE::ExtraUniqueID>() : nullptr;
-            requeue.push_back({ t.base->GetFormID(), xid ? xid->uniqueID : 0,
-                                t.isArmor, t.left });
+            t.xl->RemoveByType(RE::ExtraDataType::kEnchantment);
+            ApplyWornAbility(player, t.base, t.xl, t.left);  // teardown: enchant gone
+            restore.push_back({ t.base->GetFormID(), xid->uniqueID, t.left });
         }
-        if (!requeue.empty()) {
-            SKSE::GetTaskInterface()->AddTask([requeue]() {
+        if (!restore.empty()) {
+            SKSE::GetTaskInterface()->AddTask([restore]() {
                 auto* pl = RE::PlayerCharacter::GetSingleton();
-                auto* mgr = RE::ActorEquipManager::GetSingleton();
-                auto* dob = RE::BGSDefaultObjectManager::GetSingleton();
-                if (!pl || !mgr) {
+                if (!pl) {
                     return;
                 }
-                for (const auto& r : requeue) {
+                for (const auto& r : restore) {
                     auto* form = RE::TESForm::LookupByID<RE::TESBoundObject>(r.base);
-                    if (!form) {
+                    auto* xl = form ? FindInstanceXList(pl, form, r.uid) : nullptr;
+                    if (!xl) {
                         continue;
                     }
-                    auto* xl = FindInstanceXList(pl, form, r.uid);  // re-find: frame passed
-                    const RE::BGSEquipSlot* slot = nullptr;
-                    if (!r.isArmor && dob) {
-                        slot = dob->GetObject<RE::BGSEquipSlot>(
-                            r.left ? RE::DEFAULT_OBJECT::kLeftHandEquip
-                                   : RE::DEFAULT_OBJECT::kRightHandEquip);
-                    }
-                    mgr->EquipObject(pl, form, xl, 1, slot, false, true, false, true);
+                    RebuildInstanceEnchant(form, xl);       // re-adds the enchant extra
+                    ApplyWornAbility(pl, form, xl, r.left); // fresh ability, now live
                 }
-                spdlog::info("[load] reequip pass: {} item(s) re-equipped (split frame)",
-                             requeue.size());
+                spdlog::info("[load] refresh pass: {} worn socket(s) re-activated "
+                             "(strip/restamp, no re-equip)", restore.size());
             });
         }
     }
