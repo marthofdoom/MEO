@@ -245,6 +245,13 @@ installed in `SKSEPluginLoad` — before the renderer exists):
   the dropped ref → `PickUpObject`). `d3d11.h` pulls `windows.h`, which
   NG never includes: guard with `WIN32_LEAN_AND_MEAN` + `NOMINMAX` or its
   min/max macros break `std::max`/`std::clamp` everywhere.
+- **Spawn-and-pickup is THEFT in owned locations (found in-game 2026-07-08,
+  fixed v0.25.1-m17b).** A `PlaceObjectAtMe` ref has NO owner, so ownership
+  falls back to the cell/location owner; `PickUpObject` on it near guards =
+  witnessed theft → instant bounty (Marth: 100g per gem swap in town). Any
+  spawn→stamp→pickup recipe MUST first
+  `ref->extraList.SetOwner(player->GetActorBase())`. Applied to the
+  gem-return path (GiveGemInstance) and the plain-stack drop/pickup mint.
 - `io.IniFilename = nullptr` — never write imgui.ini into the game dir.
 - vcpkg: `imgui` features `dx11-binding`, `win32-binding`; link
   `imgui::imgui d3d11`.
