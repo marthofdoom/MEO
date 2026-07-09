@@ -387,6 +387,34 @@ Chaos, Stagger) at ~2.4% each, A-tier elementals ~7% each, B-tier control
 effects ~12% each. Single-level gems (Soul Trap) never spawn. The weighted pool
 keeps the DLL's pick uniform — only pool construction changes.
 
+### Post-strip gem economy (DECIDED, Marth 2026-07-09 — pending implementation)
+
+Once the install-time tool strips generic enchanted loot (§1/§2 scanner),
+gems are the only enchantment source. The existing rates above stay
+UNCHANGED; two new sources replace the stripped one — roughly **doubling gem
+accrual while keeping it varied**:
+
+1. **Enemies spawn wearing socketed equipment.** Each enemy class has a
+   chance of at least one worn socketed piece, with BOTH the rate and the
+   gem pool adjusted **thematically per enemy type** (mage → magicka/
+   destruction-flavored gems, warrior → weapon/stamina, undead → frost/
+   drain, etc.). The tier rarity curve still applies ON TOP, and harder:
+   rare (S-tier) gems appear on enemies at rates even LOWER than world drop
+   rates — farming a mob type technically works but is deliberately
+   unprofitable for rare gems. Kill → loot the socketed piece → unsocket
+   the gem free (unsocketing is lossless, §4).
+2. **Shops sell gems** at a similar per-item roll (~`0.04`), and the
+   enchanted equipment vendors would have stocked is now **socketed**
+   equipment instead — same shelves, gem-flavored.
+
+Implementation notes: both are DLL-side and runtime-dynamic (per
+DYNAMIC_OR_DROP — no leveled-list edits): enemy worn-socket rolls stamp the
+actor's worn instance on load/attach (same deterministic-per-ref discipline
+as world weapons); vendor rolls stamp/insert at barter-menu open. Rates as
+INI/MCM keys like the rest. Ships as its own DLL stage alongside/after the
+3c installer — additive sources can land BEFORE the strip so the economy
+never dips.
+
 ## 4. Sockets and the Gem Pouch
 
 Socket layout (Marth, DECIDED — supersedes the earlier "cuirass dual by
