@@ -1,0 +1,2 @@
+M18: gem menu replaces the vanilla enchanting-station menu (bStationTakeover MCM toggle, default on)
+built from native run 28995378150
