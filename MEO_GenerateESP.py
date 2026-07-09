@@ -198,23 +198,40 @@ def make_qust():
 # HasPerk and applies effects. Order/index FROZEN (co-save-independent, but the
 # DLL looks them up by these local FormIDs). The C# installer wires these into
 # the load order's enchanting tree; interim the DLL auto-grants them by skill.
+# (edid, name, desc, skill_req, next_slot). skill_req becomes a CTDA
+# GetBaseActorValue(Enchanting) >= req on the record (the skill menu greys the
+# perk until it passes) and mirrors the DLL's interim auto-grant thresholds.
+# next_slot chains ranked perks via NNAM (Requiem convention) so the five
+# Attunements display as one 5-rank node in the installer-written perk tree.
 MEO_PERKS = [
-    ("MEO_Perk_Attunement1", "Gem Attunement", "Socketed gems are 8% more potent."),
-    ("MEO_Perk_Attunement2", "Gem Attunement", "Socketed gems are 16% more potent."),
-    ("MEO_Perk_Attunement3", "Gem Attunement", "Socketed gems are 24% more potent."),
-    ("MEO_Perk_Attunement4", "Gem Attunement", "Socketed gems are 32% more potent."),
-    ("MEO_Perk_Attunement5", "Gem Attunement", "Socketed gems are 40% more potent."),
-    ("MEO_Perk_GemCutter",   "Gem Cutter",     "Socketed gems earn 50% more Gem XP."),
-    ("MEO_Perk_SoulFeeder",  "Soul Feeder",    "Soul gems fed to gems at an enchanting station are twice as potent."),
-    ("MEO_Perk_TwinnedFitting","Twinned Fitting","Chest armor can hold a second linked gem."),          # 0x817
-    ("MEO_Perk_MasterJeweler", "Master Jeweler", "Weapons can hold a second linked gem."),              # 0x818
+    ("MEO_Perk_Attunement1", "Gem Attunement", "Socketed gems are 8% more potent.",   0,  1),
+    ("MEO_Perk_Attunement2", "Gem Attunement", "Socketed gems are 16% more potent.", 20,  2),
+    ("MEO_Perk_Attunement3", "Gem Attunement", "Socketed gems are 24% more potent.", 40,  3),
+    ("MEO_Perk_Attunement4", "Gem Attunement", "Socketed gems are 32% more potent.", 60,  4),
+    ("MEO_Perk_Attunement5", "Gem Attunement", "Socketed gems are 40% more potent.", 80, None),
+    ("MEO_Perk_GemCutter",   "Gem Cutter",     "Socketed gems earn 50% more Gem XP.", 20, None),
+    ("MEO_Perk_SoulFeeder",  "Soul Feeder",    "Soul gems fed to gems at an enchanting station are twice as potent.", 40, None),
+    ("MEO_Perk_TwinnedFitting","Twinned Fitting","Chest armor can hold a second linked gem.", 70, None),   # 0x817
+    ("MEO_Perk_MasterJeweler", "Master Jeweler", "Weapons can hold a second linked gem.", 100, None),      # 0x818
 ]
+def ctda_skill_req(av_index, value):
+    """CTDA: GetBaseActorValue(av) >= value, run on subject. 32 bytes."""
+    return struct.pack('<B3xfH2xiiiii',
+                       0x60,        # operator GreaterThanOrEqual (3<<5)
+                       float(value),
+                       277,         # function index GetBaseActorValue
+                       av_index, 0, # param1 = actor value, param2 unused
+                       0, 0, -1)    # runOn Subject, reference, param3
 def make_perks():
     out=BytesIO()
     data=struct.pack('<BBBBB',0,0,1,1,0)  # trait0 level0 ranks1 playable1 hidden0
-    for i,(edid,name,desc) in enumerate(MEO_PERKS):
+    for i,(edid,name,desc,req,nxt) in enumerate(MEO_PERKS):
         body =subrec('EDID',zstr(edid))+subrec('FULL',zstr(name))+subrec('DESC',zstr(desc))
+        if req > 0:
+            body+=subrec('CTDA',ctda_skill_req(23,req))  # AV 23 = Enchanting
         body+=subrec('DATA',data)
+        if nxt is not None:
+            body+=subrec('NNAM',struct.pack('<I',FID_PERK_BASE+nxt))
         out.write(record('PERK',FID_PERK_BASE+i,0,body))
     return group('PERK',out.getvalue())
 

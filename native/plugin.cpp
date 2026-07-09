@@ -185,6 +185,7 @@ RE::BGSPerk* g_perkGemCutter = nullptr;
 RE::BGSPerk* g_perkSoulFeeder = nullptr;
 RE::BGSPerk* g_perkTwinned = nullptr;
 RE::BGSPerk* g_perkJeweler = nullptr;
+bool g_treeMode = false;  // MEO - Patch.esp installed: perks come from the tree, not auto-grant
 // Cached from the player's perks (refreshed on load + menu close).
 int  g_attuneRank = 0;      // 0..5 → +8% gem magnitude per rank
 bool g_hasGemCutter = false;  // +50% Gem XP
@@ -294,6 +295,13 @@ void ResolveCatalog() {
     g_perkSoulFeeder = dh->LookupForm<RE::BGSPerk>(kPerkSoulFeeder, kPluginName);
     g_perkTwinned = dh->LookupForm<RE::BGSPerk>(kPerkTwinned, kPluginName);
     g_perkJeweler = dh->LookupForm<RE::BGSPerk>(kPerkJeweler, kPluginName);
+    // Tree mode: the installer-generated patch replaces the enchanting perk
+    // tree with MEO's perks, so the player earns them with perk points and
+    // the interim skill-based auto-grant must stand down.
+    g_treeMode = dh->LookupModByName("MEO - Patch.esp") != nullptr;
+    if (g_treeMode) {
+        spdlog::info("[perks] MEO - Patch.esp present: perk tree mode, auto-grant off");
+    }
     spdlog::info("catalog resolved: {}/{} gems live (weapon+armor), {} socketable gem items, pouch={}, "
                  "mentor={}, soulCairn={}, bossType={}",
                  ok, std::size(meo::kGems), g_gemByItem.size(),
@@ -623,19 +631,21 @@ void RefreshPerks() {
         return;
     }
     const float skill = avo->GetBaseActorValue(RE::ActorValue::kEnchanting);
-    auto grant = [&](RE::BGSPerk* p, bool want) {
-        if (p && want && !player->HasPerk(p)) {
-            player->AddPerk(p, 1);
+    if (!g_treeMode) {
+        auto grant = [&](RE::BGSPerk* p, bool want) {
+            if (p && want && !player->HasPerk(p)) {
+                player->AddPerk(p, 1);
+            }
+        };
+        const int rank = 1 + (skill >= 20) + (skill >= 40) + (skill >= 60) + (skill >= 80);
+        for (int i = 0; i < 5; ++i) {
+            grant(g_perkAttune[i], i < rank);
         }
-    };
-    const int rank = 1 + (skill >= 20) + (skill >= 40) + (skill >= 60) + (skill >= 80);
-    for (int i = 0; i < 5; ++i) {
-        grant(g_perkAttune[i], i < rank);
+        grant(g_perkGemCutter, skill >= 20.0f);
+        grant(g_perkSoulFeeder, skill >= 40.0f);
+        grant(g_perkTwinned, skill >= 70.0f);   // DESIGN §6 Corpus-tier req
+        grant(g_perkJeweler, skill >= 100.0f);  // DESIGN §6 Extra Effect req
     }
-    grant(g_perkGemCutter, skill >= 20.0f);
-    grant(g_perkSoulFeeder, skill >= 40.0f);
-    grant(g_perkTwinned, skill >= 70.0f);   // DESIGN §6 Corpus-tier req
-    grant(g_perkJeweler, skill >= 100.0f);  // DESIGN §6 Extra Effect req
     g_attuneRank = 0;
     for (int i = 0; i < 5; ++i) {
         if (g_perkAttune[i] && player->HasPerk(g_perkAttune[i])) {
@@ -646,8 +656,8 @@ void RefreshPerks() {
     g_hasSoulFeeder = g_perkSoulFeeder && player->HasPerk(g_perkSoulFeeder);
     g_hasTwinned = g_perkTwinned && player->HasPerk(g_perkTwinned);
     g_hasJeweler = g_perkJeweler && player->HasPerk(g_perkJeweler);
-    spdlog::info("[perks] enchanting={:.0f} attuneRank={} gemCutter={} soulFeeder={} twinned={} jeweler={}",
-                 skill, g_attuneRank, g_hasGemCutter, g_hasSoulFeeder, g_hasTwinned, g_hasJeweler);
+    spdlog::info("[perks] enchanting={:.0f} treeMode={} attuneRank={} gemCutter={} soulFeeder={} twinned={} jeweler={}",
+                 skill, g_treeMode, g_attuneRank, g_hasGemCutter, g_hasSoulFeeder, g_hasTwinned, g_hasJeweler);
 }
 
 // Menu snapshot rows + shared state (declared here so MenuSink can read
@@ -2759,7 +2769,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.27.4 (M19f split-frame reapply) loaded");
+            console->Print("MEO native v0.28.0 (M20 perk tree mode) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -2785,7 +2795,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.27.4 (M19f: split-frame re-equip at loading-close+8s) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.28.0 (M20: installer perk tree + auto-grant standdown) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
