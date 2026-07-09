@@ -21,6 +21,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def resolve_load_order(mo2_root, profile):
     """Return [(plugin_name, path)] in load order, MO2-VFS-resolved."""
     prof = os.path.join(mo2_root, 'profiles', profile)
+    if not os.path.exists(os.path.join(prof, 'plugins.txt')):
+        have = [p for p in sorted(os.listdir(os.path.join(mo2_root, 'profiles')))
+                if os.path.exists(os.path.join(mo2_root, 'profiles', p, 'plugins.txt'))]
+        sys.exit(f"ERROR: no plugins.txt in profile '{profile}' (never launched?). "
+                 f"Profiles with one: {have or 'none'}")
     plugins = [l[1:].strip() for l in open(os.path.join(prof, 'plugins.txt'),
                encoding='utf-8', errors='replace') if l.startswith('*')]
     mods = [l[1:].strip() for l in open(os.path.join(prof, 'modlist.txt'),
@@ -73,6 +78,9 @@ def scan(mo2_root, profile):
     print(f"{len(lo)} plugins resolved, {len(missing)} missing", file=sys.stderr)
     if missing:
         print("  missing: " + ", ".join(missing[:10]), file=sys.stderr)
+    if 'Skyrim.esm' in missing:
+        sys.exit("ERROR: Skyrim.esm not found — not a Skyrim SE modlist "
+                 "(or the stock game dir wasn't located).")
 
     mgefs, enchs, items = {}, {}, {}   # keyed (origin_master, local_fid)
     for i, (name, path) in enumerate(lo):
