@@ -78,6 +78,9 @@ tools/compile.sh MEO_MCM >/dev/null       # Scripts/MEO_MCM.pex (Papyrus, local 
 
 mkdir -p "$STAGE/SKSE/Plugins/MEO"
 cp out/SKSE/Plugins/MEO/meo_runtime.json "$STAGE/SKSE/Plugins/MEO/"
+# The installer derives per-list rider calibration from this catalog at
+# post-install time (write-calibration); it must ship next to the exe.
+cp data/gem_catalog.json "$STAGE/SKSE/Plugins/MEO/"
 cp out/MEO.esp "$STAGE/"
 mkdir -p "$STAGE/MCM";     cp -r out/MCM/. "$STAGE/MCM/"
 mkdir -p "$STAGE/Scripts"; cp out/Scripts/MEO_MCM.pex "$STAGE/Scripts/"
@@ -130,7 +133,7 @@ EOF
 # Completeness gate: refuse to write a release missing any required file.
 for req in "SKSE/Plugins/MEO.dll" "MEO.esp" "Scripts/MEO_MCM.pex" \
            "MCM/Config/MEO/config.json" "MCM/Settings/MEO.ini" \
-           "SKSE/Plugins/MEO/meo_runtime.json" \
+           "SKSE/Plugins/MEO/meo_runtime.json" "SKSE/Plugins/MEO/gem_catalog.json" \
            "MEO.Installer.exe" "fomod/info.xml" "MEO-README.txt"; do
     [[ -f "$STAGE/$req" ]] || { echo "ERROR: release incomplete — missing $req" >&2; exit 1; }
 done

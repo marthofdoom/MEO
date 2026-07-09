@@ -19,8 +19,8 @@ using Mutagen.Bethesda.Plugins.Order;
 using Mutagen.Bethesda.Skyrim;
 
 const string Usage =
-    "usage: MEO.Installer                                     (post-install: auto-detect MO2, write patch)\n" +
-    "       MEO.Installer <stats|tree|tree-effects|perk|write-patch> <MO2 root> <profile> [arg]";
+    "usage: MEO.Installer                                     (post-install: auto-detect MO2, write patch + calibration)\n" +
+    "       MEO.Installer <stats|tree|tree-effects|perk|ench|write-patch|strip-report|write-calibration> <MO2 root> <profile> [args]";
 if (args.Length > 0 && args[0] is "-h" or "--help" or "help")
 {
     Console.WriteLine(Usage);
@@ -145,6 +145,23 @@ catch (Exception ex)
 {
     Console.Error.WriteLine(ex.ToString());
     rc = 1;
+}
+if (installMode && rc == 0)
+{
+    // Rider calibration: derive each gem family's recipe from this list's own
+    // generic loot lines. The catalog ships inside the mod next to the exe.
+    var modDir = Path.GetDirectoryName(positional[0])!;
+    var meoDir = Path.Combine(modDir, "SKSE", "Plugins", "MEO");
+    var catPath = Path.Combine(meoDir, "gem_catalog.json");
+    if (File.Exists(catPath))
+    {
+        Console.WriteLine();
+        rc = Commands.WriteCalibration(loadOrder, cache, catPath,
+            Path.Combine(meoDir, "meo_calibration.json"));
+    }
+    else
+        Console.WriteLine($"\nnote: {catPath} missing — rider calibration skipped, " +
+                          "compiled defaults stay in force");
 }
 if (installMode && rc == 0)
     Console.WriteLine("\nDone. In MO2's plugin list (right pane), tick 'MEO - Patch.esp' and keep it at the end.");

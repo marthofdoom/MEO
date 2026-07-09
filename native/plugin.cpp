@@ -122,10 +122,20 @@ constexpr std::uint32_t kSerVersion = 6;  // v6: + armorStarterGranted. v5: per-
 constexpr const char* kPluginName = "MEO.esp";
 constexpr RE::FormID  kPouchSpellID = 0x803;  // MEO.esp-local
 
+// m21 recipe riders; m22: rider set comes from the per-list calibration file
+// when it names the family (installer derives it from the list's own generic
+// recipe lines), else from the compiled catalog defaults.
+struct RtRider {
+    RE::EffectSetting* mgef = nullptr;
+    float              ratio = 0.0f;  // rider magnitude = primary × ratio
+    float              dur = 0.0f;
+};
+
 struct ResolvedGem {
     const meo::GemDef*                  def = nullptr;
     RE::EffectSetting*                  mgef = nullptr;   // null = disabled (missing master)
-    std::array<RE::EffectSetting*, 2>   riders{};         // m21 recipe riders (null = skipped)
+    std::array<RtRider, 2>              riders{};
+    int                                 nRiders = 0;
     std::array<RE::TESObjectMISC*, 5>   items{};
 };
 std::vector<ResolvedGem>                          g_gems;
@@ -207,6 +217,50 @@ void SetupLog() {
     spdlog::flush_on(spdlog::level::info);
 }
 
+// ── m22: per-list calibration (installer-derived rider recipes) ───────
+// The installer reads the load order's own generic loot lines and writes
+// SKSE/Plugins/MEO/meo_calibration.json. A family named there gets EXACTLY
+// that rider set (an empty list clears the compiled default — the list's
+// recipe is authoritative); families absent keep compiled defaults.
+struct CalRider {
+    std::string plugin;
+    RE::FormID  fid = 0;
+    float       ratio = 0.0f;
+    float       dur = 0.0f;
+};
+std::unordered_map<std::string, std::vector<CalRider>> g_calibration;
+
+static void LoadCalibration() {
+    constexpr const char* kPath = "Data/SKSE/Plugins/MEO/meo_calibration.json";
+    std::ifstream f(kPath);
+    if (!f) {
+        spdlog::info("no calibration file ({}) — compiled rider defaults in force", kPath);
+        return;
+    }
+    try {
+        nlohmann::json j;
+        f >> j;
+        for (const auto& [fam, val] : j.at("families").items()) {
+            std::vector<CalRider> rs;
+            for (const auto& r : val.at("riders")) {
+                CalRider cr;
+                cr.plugin = r.at("plugin").get<std::string>();
+                cr.fid = static_cast<RE::FormID>(
+                    std::stoul(r.at("fid").get<std::string>(), nullptr, 16));
+                cr.ratio = r.at("ratio").get<float>();
+                cr.dur = r.value("dur", 0.0f);
+                rs.push_back(std::move(cr));
+            }
+            g_calibration[fam] = std::move(rs);
+        }
+        spdlog::info("calibration: {} family recipe(s) loaded from {}", g_calibration.size(), kPath);
+    } catch (const std::exception& ex) {
+        spdlog::error("calibration parse failed ({}): {} — compiled defaults in force",
+                      kPath, ex.what());
+        g_calibration.clear();
+    }
+}
+
 void ResolveCatalog() {
     auto* dh = RE::TESDataHandler::GetSingleton();
     if (!dh) {
@@ -225,12 +279,34 @@ void ResolveCatalog() {
         if (!rg.mgef) {
             spdlog::warn("gem '{}' disabled: MGEF {:06X} not found in {}", def.gid, def.mgefID, def.plugin);
         }
-        for (int r = 0; r < def.nRiders; ++r) {
-            rg.riders[r] = dh->LookupForm<RE::EffectSetting>(def.riders[r].mgefID,
-                                                             def.riders[r].plugin);
-            if (!rg.riders[r]) {
-                spdlog::warn("gem '{}' rider {:06X} not found in {} — rider skipped",
-                             def.gid, def.riders[r].mgefID, def.riders[r].plugin);
+        if (auto cal = g_calibration.find(def.gid); cal != g_calibration.end()) {
+            for (const auto& cr : cal->second) {
+                if (rg.nRiders >= 2) {
+                    spdlog::warn("gem '{}': calibration has >2 riders — extras dropped", def.gid);
+                    break;
+                }
+                auto* m = dh->LookupForm<RE::EffectSetting>(cr.fid, cr.plugin);
+                if (!m) {
+                    spdlog::warn("gem '{}' calibration rider {:06X} not found in {} — skipped",
+                                 def.gid, cr.fid, cr.plugin);
+                    continue;
+                }
+                rg.riders[rg.nRiders++] = { m, cr.ratio, cr.dur };
+            }
+            if (def.nRiders > 0 && rg.nRiders == 0) {
+                spdlog::info("gem '{}': calibration cleared compiled rider default "
+                             "(this list's recipe is plain)", def.gid);
+            }
+        } else {
+            for (int r = 0; r < def.nRiders; ++r) {
+                auto* m = dh->LookupForm<RE::EffectSetting>(def.riders[r].mgefID,
+                                                            def.riders[r].plugin);
+                if (!m) {
+                    spdlog::warn("gem '{}' rider {:06X} not found in {} — rider skipped",
+                                 def.gid, def.riders[r].mgefID, def.riders[r].plugin);
+                    continue;
+                }
+                rg.riders[rg.nRiders++] = { m, def.riders[r].ratio, def.riders[r].duration };
             }
         }
         const int levels = def.singleLevel ? 1 : 5;
@@ -374,8 +450,8 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     std::size_t nEff = 0;
     for (const auto& f : filled) {
         nEff += 1;
-        for (int r = 0; r < f.rg->def->nRiders; ++r) {
-            nEff += f.rg->riders[r] != nullptr;
+        for (int r = 0; r < f.rg->nRiders; ++r) {
+            nEff += f.rg->riders[r].mgef != nullptr;
         }
     }
     RE::BSTArray<RE::Effect> effects;
@@ -393,16 +469,16 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         eff.effectItem.duration = static_cast<std::uint32_t>(filled[i].rg->def->duration);
         eff.baseEffect = filled[i].rg->mgef;
         eff.cost = 0.0f;
-        for (int r = 0; r < filled[i].rg->def->nRiders; ++r) {
-            if (!filled[i].rg->riders[r]) {
+        for (int r = 0; r < filled[i].rg->nRiders; ++r) {
+            const auto& rd = filled[i].rg->riders[r];
+            if (!rd.mgef) {
                 continue;
             }
-            const auto& rd = filled[i].rg->def->riders[r];
             auto& reff = effects[e++];
             reff.effectItem.magnitude = primaryMag * rd.ratio;
             reff.effectItem.area = 0;
-            reff.effectItem.duration = static_cast<std::uint32_t>(rd.duration);
-            reff.baseEffect = filled[i].rg->riders[r];
+            reff.effectItem.duration = static_cast<std::uint32_t>(rd.dur);
+            reff.baseEffect = rd.mgef;
             reff.cost = 0.0f;
         }
         if (!namePart.empty()) {
@@ -2792,6 +2868,7 @@ void RevertCallback(SKSE::SerializationInterface*) {
 void OnMessage(SKSE::MessagingInterface::Message* message) {
     switch (message->type) {
     case SKSE::MessagingInterface::kDataLoaded:
+        LoadCalibration();
         ResolveCatalog();
         ReadConfig();
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESSpellCastEvent>(SpellCastSink::GetSingleton());
@@ -2802,7 +2879,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.29.0 (M21 recipe riders) loaded");
+            console->Print("MEO native v0.30.0 (M22 per-list calibration) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -2828,7 +2905,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.29.0 (M21: elemental recipe riders + perk tree mode) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.30.0 (M22: per-list rider calibration) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
