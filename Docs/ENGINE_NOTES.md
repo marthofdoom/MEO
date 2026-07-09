@@ -280,3 +280,28 @@ installed in `SKSEPluginLoad` — before the renderer exists):
   coupling ("crafting closed → close our menu") must be gated off in takeover
   mode or it will kill the menu you just opened. INI/MCM `bStationTakeover`
   (default on) restores overlay mode when off. Validation pending (m18).
+
+## 11. Perk-tree replacement — record formats (m20, offline-verified)
+
+The whole skill-menu tree for a skill is ONE record: the skill's AVIF
+(`AVEnchanting` 0x45D). Whoever wins that override owns the tree — every
+mod's added nodes (Ordinator, Special Feats, Wand Keywords) vanish with a
+single last-loading override. Verified against the full LoreRim order with
+Mutagen on Linux (installer/).
+
+- **AVIF perk-tree node**: INAM index, PNAM perk, FNAM uint32 (root=300,
+  every real node=1), XNAM/YNAM grid (Y grows outward from root; root has
+  junk coords like 398,40 — preserve it verbatim), HNAM/VNAM float nudges,
+  SNAM = the AVIF itself, CNAM connection indices = the UI's prerequisite
+  lines. Node indices may be sparse; connections reference indices, not
+  positions. Root is index 0 with a null perk — keep it, rewire its CNAMs.
+- **Ranked perks**: NNAM (next perk FormID) chains rank records; numRanks
+  in DATA stays 1 on every record (Requiem convention, e.g. Enchanter's
+  Insight 1→2). The skill UI derives "rank 1/5" from the chain.
+- **Skill gates**: CTDA on the PERK record. GetBaseActorValue is function
+  index 277, param1 = AV index (Enchanting=23), operator byte 0x60 =
+  GreaterThanOrEqual (3<<5). 32-byte CTDA:
+  `<B3xfH2xiiiii` = op, compValue, func, param1, param2, runOn, ref, -1.
+- **DLL coexistence**: the DLL detects the generated patch via
+  `TESDataHandler::LookupModByName("MEO - Patch.esp")` and stands down its
+  skill-based auto-grant so tree perks cost perk points.
