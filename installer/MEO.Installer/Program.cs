@@ -162,7 +162,27 @@ static class Commands
                         IPerkQuestEffectGetter q => "quest-stage",
                         _ => eff.GetType().Name,
                     };
-                    Console.WriteLine($"    {kind}");
+                    var nc = (eff as IAPerkEffectGetter)?.Conditions.Count ?? -1;
+                    Console.WriteLine($"    {kind} [conds={nc}]");
+                    if (eff is IAPerkEffectGetter pe)
+                        foreach (var pc in pe.Conditions)
+                            foreach (var c in pc.Conditions)
+                            {
+                                var d = c.Data;
+                                var args = string.Join(" ", new[]
+                                {
+                                    (d as IHasKeywordConditionDataGetter)?.Keyword.Link.TryResolve(cache, out var kw) == true ? kw.EditorID : null,
+                                    (d as IEPMagic_SpellHasKeywordConditionDataGetter)?.Keyword.Link.TryResolve(cache, out var kw2) == true ? kw2.EditorID : null,
+                                    (d as IWornHasKeywordConditionDataGetter)?.Keyword.Link.TryResolve(cache, out var kw3) == true ? kw3.EditorID : null,
+                                    d is IGetIsObjectTypeConditionDataGetter or IEPMagic_SpellHasSkillConditionDataGetter
+                                        ? string.Join(",", d.GetType().GetProperties()
+                                            .Where(pr => pr.PropertyType.IsEnum || pr.PropertyType == typeof(int) || pr.PropertyType == typeof(uint) || pr.PropertyType == typeof(float))
+                                            .Select(pr => $"{pr.Name}={pr.GetValue(d)}"))
+                                        : null,
+                                }.Where(x => x is not null));
+                                var cmp = c is IConditionFloatGetter cff ? $" {cff.CompareOperator} {cff.ComparisonValue}" : "";
+                                Console.WriteLine($"        [tab{pc.RunOnTabIndex}] {d.Function} {args}{cmp}");
+                            }
                 }
                 if (p.NextPerk.IsNull) break;
             }
@@ -241,8 +261,19 @@ static class Commands
                 yield return p;
             }
         }
+        // v2: also claim perks whose runtime entries only fire for
+        // FormType=Enchantment magic — they empower the enchantment system
+        // itself (e.g. Special Feats' Arcane Artificery), which MEO now owns
+        // via Gem Attunement; leaving them would double-scale gem output.
+        static bool RequiresEnchantmentObject(IAPerkEffectGetter e) =>
+            e.Conditions.Any(pc => pc.Conditions.Any(c =>
+                c is IConditionFloatGetter cf &&
+                cf.CompareOperator == CompareOperator.EqualTo && cf.ComparisonValue == 1 &&
+                cf.Data is IGetIsObjectTypeConditionDataGetter g &&
+                g.GetType().GetProperty("FormType")?.GetValue(g)?.ToString() == "Enchantment"));
         bool IsCraftPerk(IPerkGetter perk) => RankChain(perk).Any(p =>
-            p.Effects.OfType<IAPerkEntryPointEffectGetter>().Any(e => IsCraftEntry(e.EntryPoint)));
+            p.Effects.OfType<IAPerkEntryPointEffectGetter>().Any(e => IsCraftEntry(e.EntryPoint)) ||
+            p.Effects.OfType<IAPerkEffectGetter>().Any(RequiresEnchantmentObject));
 
         var removedIdx = new HashSet<uint>();
         var removedPerks = new HashSet<FormKey>();
