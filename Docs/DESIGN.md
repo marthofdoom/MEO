@@ -406,13 +406,19 @@ accrual while keeping it varied**:
 2. **Shops sell gems** at a similar per-item roll (~`0.04`), and the
    enchanted equipment vendors would have stocked is now **socketed**
    equipment instead — same shelves, gem-flavored.
-   *Implementation status (m19b)*: loose gem sales SHIPPED (per-item roll at
+   *Implementation status (m19b)*: loose gem sales BUILT (per-item roll at
    barter open, deterministic per vendor per game day, cap 3, tier-weighted).
-   Socketed vendor STOCK is DEFERRED: buying is a container transfer, which
-   rewrites `ExtraUniqueID` and would orphan the socket record (ENGINE_NOTES
-   §1 — the same trap corpse loot hit; corpses solved it with death-time
-   conversion, but vendors have no equivalent pre-transfer moment). Unblocks
-   when the `TESContainerChangedEvent` re-key experiment is proven.
+   *Enemy worn gems STAY IN THE GEAR* (Marth 2026-07-09) — the corpse's
+   socketed item is itself the loot; loose corpse gems are a separate pool.
+   That requires surviving container transfers, so m19 adds the
+   **container re-key** (`TESContainerChangedEvent` sink): when a base with
+   socket records moves containers, the arriving orphan xList (enchanted,
+   record-less) and the stranded record (uid in neither container) are
+   matched and the record moves to the new uid — looted/bought/stored
+   socketed gear keeps living records (ENGINE_NOTES §1 trap neutralized;
+   ambiguous multi-instance transfers log + skip). PENDING in-game
+   validation via the `[rekey]` log line. Once proven, vendor SOCKETED
+   stock unblocks too.
 
 Implementation notes: both are DLL-side and runtime-dynamic (per
 DYNAMIC_OR_DROP — no leveled-list edits): enemy worn-socket rolls stamp the

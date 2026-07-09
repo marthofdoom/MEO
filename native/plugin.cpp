@@ -1340,8 +1340,20 @@ void QueueMenuTask(std::function<void()> a_fn) {
 }
 
 void CloseGemMenu() {
+    const bool wasStation = g_menu.station.load();
     g_menu.open = false;
     g_menu.wantClose = false;
+    // m18b: in takeover mode the vanilla CraftingMenu was hidden at open, so
+    // its normal exit never runs and the player stays locked at the bench.
+    // Force the furniture exit ourselves (the standard forced-idle release).
+    if (wasStation && g_stationTakeover) {
+        SKSE::GetTaskInterface()->AddTask([]() {
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (player && player->GetOccupiedFurniture()) {
+                player->NotifyAnimationGraph("IdleForceDefaultState");
+            }
+        });
+    }
 }
 
 void OpenGemMenu(bool a_station);  // declared earlier; defined after the render hooks
@@ -1623,6 +1635,18 @@ namespace menuhook {
         }
     }
 
+    // The key currently bound to Shout/Power for a device — casting the pouch
+    // power opened the menu, so the same key closes it (m18b toggle UX).
+    std::uint32_t ShoutKey(RE::INPUT_DEVICE a_device) {
+        auto* cm = RE::ControlMap::GetSingleton();
+        auto* ue = RE::UserEvents::GetSingleton();
+        if (!cm || !ue) {
+            return 0xFFFFFFFFu;
+        }
+        const auto key = cm->GetMappedKey(ue->shout, a_device);
+        return key == 0xFF ? 0xFFFFFFFFu : key;  // kInvalid guard
+    }
+
     // Input dispatch thunk: while the menu is open, feed ImGui and swallow
     // everything so the game world stays deaf to it.
     struct InputDispatchHook {
@@ -1666,6 +1690,8 @@ namespace menuhook {
                     case RE::INPUT_DEVICE::kKeyboard:
                         if ((code == 0x01 || code == 0x0F) && down) {  // Esc / Tab
                             g_menu.wantClose = true;
+                        } else if (down && code == ShoutKey(RE::INPUT_DEVICE::kKeyboard)) {
+                            g_menu.wantClose = true;  // pouch power key = toggle (m18b)
                         } else if (auto key = DIKToImGuiKey(code); key != ImGuiKey_None) {
                             io.AddKeyEvent(key, down);
                         }
@@ -1675,6 +1701,8 @@ namespace menuhook {
                                 RE::BSWin32GamepadDevice::Key::kB &&
                             down) {
                             g_menu.wantClose = true;
+                        } else if (down && code == ShoutKey(RE::INPUT_DEVICE::kGamepad)) {
+                            g_menu.wantClose = true;  // pouch power button = toggle (m18b)
                         } else if (auto key = GamepadToImGuiKey(code); key != ImGuiKey_None) {
                             io.AddKeyEvent(key, down);
                         }
@@ -1898,62 +1926,124 @@ void MaybeStampNPCGear(RE::Actor* a_actor) {
     }
 }
 
-// At death, an NPC's socketed gear converts: enchant stripped (item back to
-// plain), loose gem MISC of the same level dropped into the corpse. This
-// sidesteps the §1 uid-rewrite trap — corpse->player loot is a container
-// transfer that rewrites ExtraUniqueID and would orphan the record. Enemy
-// gems never earn XP, and a zero-XP gem needs no instance record (M4b), so a
-// plain stackable gem item is lossless here. Runs for ALL deaths (not just
-// player kills) so records never leak into orphaned loot.
-void ConvertNPCGemsOnDeath(RE::Actor* a_victim) {
-    if (!a_victim || a_victim->IsPlayerRef() || a_victim->IsPlayerTeammate()) {
-        return;  // followers keep their instance gems (player-managed)
-    }
-    auto* changes = a_victim->GetInventoryChanges();
-    if (!changes || !changes->entryList) {
+// m19: enemy gems STAY IN THE GEAR (Marth 2026-07-09) — the corpse's socketed
+// item is itself the loot; loose corpse gems (fGemDropChance) are a separate
+// pool. That makes the §1 uid-rewrite trap unavoidable: any container
+// transfer (corpse->player loot, buying, chests) REWRITES ExtraUniqueID and
+// would orphan the socket record. This re-key keeps the record alive: on a
+// transfer of a base we have records for, find the arriving orphan xList
+// (enchanted, record-less) in the new container and the stranded record
+// (uid now in neither container), and move the record to the new uid. The
+// event's uniqueID field is used as a hint for BOTH possible semantics
+// (old-side or new-side uid — unproven which; the [rekey] log line will
+// settle it in-game). Ambiguous multi-instance transfers log and skip
+// (no corruption — worst case one orphaned instance, the pre-m19 status quo).
+void RekeyTransferredSockets(RE::FormID a_base, RE::FormID a_oldC, RE::FormID a_newC,
+                             std::uint16_t a_evUid) {
+    auto* newRef = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_newC);
+    auto* oldRef = a_oldC ? RE::TESForm::LookupByID<RE::TESObjectREFR>(a_oldC) : nullptr;
+    if (!newRef) {
         return;
     }
-    struct Hit { RE::TESBoundObject* base; RE::ExtraDataList* xl; std::uint16_t uid; };
-    std::vector<Hit> hits;
-    for (auto* entry : *changes->entryList) {
-        if (!entry || !entry->object || !entry->extraLists) {
+    using UidXl = std::pair<std::uint16_t, RE::ExtraDataList*>;
+    auto collect = [a_base](RE::TESObjectREFR* r, std::vector<UidXl>& out) {
+        auto* ch = r ? r->GetInventoryChanges() : nullptr;
+        if (!ch || !ch->entryList) {
+            return;
+        }
+        for (auto* e : *ch->entryList) {
+            if (!e || !e->object || e->object->GetFormID() != a_base || !e->extraLists) {
+                continue;
+            }
+            for (auto* xl : *e->extraLists) {
+                if (xl) {
+                    if (auto* xid = xl->GetByType<RE::ExtraUniqueID>()) {
+                        out.emplace_back(xid->uniqueID, xl);
+                    }
+                }
+            }
+        }
+    };
+    std::vector<UidXl> inNew, inOld;
+    collect(newRef, inNew);
+    collect(oldRef, inOld);
+    auto hasRecord = [a_base](std::uint16_t uid) {
+        for (int s = 0; s < kMaxSockets; ++s) {
+            if (g_sockets.contains(MakeKey(a_base, uid, static_cast<std::uint8_t>(s)))) {
+                return true;
+            }
+        }
+        return false;
+    };
+    // Arriving orphans: enchanted instances in the NEW container with no record.
+    std::vector<UidXl> orphans;
+    for (auto& [uid, xl] : inNew) {
+        if (!hasRecord(uid) && xl->HasType(RE::ExtraDataType::kEnchantment)) {
+            orphans.emplace_back(uid, xl);
+        }
+    }
+    if (orphans.empty()) {
+        return;
+    }
+    // Stranded records: a record uid now present in NEITHER container.
+    auto uidPresent = [&](std::uint16_t uid) {
+        for (auto& [u, xl] : inNew) { if (u == uid) return true; }
+        for (auto& [u, xl] : inOld) { if (u == uid) return true; }
+        return false;
+    };
+    std::vector<std::uint16_t> stranded;
+    for (auto& [key, rec] : g_sockets) {
+        if (static_cast<RE::FormID>(key >> 24) != a_base) {
             continue;
         }
-        for (auto* xl : *entry->extraLists) {
-            auto* xid = xl ? xl->GetByType<RE::ExtraUniqueID>() : nullptr;
-            if (!xid) {
-                continue;
-            }
-            for (int s = 0; s < kMaxSockets; ++s) {
-                if (g_sockets.contains(MakeKey(entry->object->GetFormID(), xid->uniqueID,
-                                               static_cast<std::uint8_t>(s)))) {
-                    hits.push_back({ entry->object, xl, xid->uniqueID });
-                    break;
-                }
-            }
+        const auto uid = static_cast<std::uint16_t>((key >> 8) & 0xFFFF);
+        if (!uidPresent(uid) &&
+            std::find(stranded.begin(), stranded.end(), uid) == stranded.end()) {
+            stranded.push_back(uid);
         }
     }
-    for (const auto& hit : hits) {
-        for (int s = 0; s < kMaxSockets; ++s) {
-            auto it = g_sockets.find(MakeKey(hit.base->GetFormID(), hit.uid,
-                                             static_cast<std::uint8_t>(s)));
-            if (it == g_sockets.end()) {
-                continue;
-            }
-            const int lvIdx = std::clamp<int>(it->second.level, 1, 5) - 1;
-            if (auto gemIt = g_gemByGid.find(it->second.gid); gemIt != g_gemByGid.end()) {
-                if (auto* gemForm = g_gems[gemIt->second].items[lvIdx]) {
-                    a_victim->AddObjectToContainer(gemForm, nullptr, 1, nullptr);
-                }
-            }
-            g_sockets.erase(it);
+    if (stranded.empty()) {
+        return;
+    }
+    std::uint16_t fromUid = 0;
+    if (std::find(stranded.begin(), stranded.end(), a_evUid) != stranded.end()) {
+        fromUid = a_evUid;  // event uid named the OLD (stranded) side
+    } else if (stranded.size() == 1) {
+        fromUid = stranded[0];
+    } else {
+        spdlog::warn("[rekey] {:08X}: ambiguous ({} stranded, evUid={}) — skipped",
+                     a_base, stranded.size(), a_evUid);
+        return;
+    }
+    RE::ExtraDataList* toXl = nullptr;
+    std::uint16_t      toUid = 0;
+    for (auto& [uid, xl] : orphans) {
+        if (uid == a_evUid) {  // event uid named the NEW (arriving) side
+            toXl = xl;
+            toUid = uid;
         }
-        RebuildInstanceEnchant(hit.base, hit.xl);  // no slots left -> strips enchant+name
     }
-    if (!hits.empty()) {
-        spdlog::info("[npc] death-converted {} socketed item(s) on {:08X} '{}'",
-                     hits.size(), a_victim->GetFormID(), a_victim->GetName());
+    if (!toXl && orphans.size() == 1) {
+        toXl = orphans[0].second;
+        toUid = orphans[0].first;
     }
+    if (!toXl || toUid == fromUid) {
+        if (!toXl) {
+            spdlog::warn("[rekey] {:08X}: ambiguous ({} orphans, evUid={}) — skipped",
+                         a_base, orphans.size(), a_evUid);
+        }
+        return;
+    }
+    for (int s = 0; s < kMaxSockets; ++s) {
+        auto it = g_sockets.find(MakeKey(a_base, fromUid, static_cast<std::uint8_t>(s)));
+        if (it == g_sockets.end()) {
+            continue;
+        }
+        g_sockets[MakeKey(a_base, toUid, static_cast<std::uint8_t>(s))] = std::move(it->second);
+        g_sockets.erase(it);
+    }
+    spdlog::info("[rekey] {:08X}: uid {} -> {} (evUid={}; {} orphan(s), {} stranded)",
+                 a_base, fromUid, toUid, a_evUid, orphans.size(), stranded.size());
 }
 
 // ── m19b: vendors sell loose gems (DESIGN §3 post-strip economy) ──────
@@ -2079,23 +2169,7 @@ public:
     RE::BSEventNotifyControl ProcessEvent(const RE::TESDeathEvent* a_event,
                                           RE::BSTEventSource<RE::TESDeathEvent>*) override {
         if (!a_event || !a_event->dead || !a_event->actorDying ||
-            a_event->actorDying->IsPlayerRef()) {
-            return RE::BSEventNotifyControl::kContinue;
-        }
-        // m19: convert the victim's socketed gear to plain item + loose gem
-        // BEFORE any looting can move it between containers (uid-rewrite trap).
-        // Runs for every death regardless of killer, so records never leak.
-        {
-            const RE::ObjectRefHandle vh = a_event->actorDying->GetHandle();
-            SKSE::GetTaskInterface()->AddTask([vh]() {
-                if (auto ref = vh.get()) {
-                    if (auto* v = ref->As<RE::Actor>()) {
-                        ConvertNPCGemsOnDeath(v);
-                    }
-                }
-            });
-        }
-        if (!a_event->actorKiller) {
+            a_event->actorDying->IsPlayerRef() || !a_event->actorKiller) {
             return RE::BSEventNotifyControl::kContinue;
         }
         // M3d: player kills AND follower kills (followers feed their own gems).
@@ -2134,6 +2208,41 @@ public:
                     }
                 }
             }
+        });
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+// m19: re-key socket records across container transfers (see
+// RekeyTransferredSockets). Cheap gate: only defer a task when the moved
+// base form has records at all.
+class ContainerSink : public RE::BSTEventSink<RE::TESContainerChangedEvent> {
+public:
+    static ContainerSink* GetSingleton() {
+        static ContainerSink singleton;
+        return &singleton;
+    }
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESContainerChangedEvent* a_event,
+                                          RE::BSTEventSource<RE::TESContainerChangedEvent>*) override {
+        if (!a_event || !a_event->baseObj || !a_event->newContainer) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        const RE::FormID base = a_event->baseObj;
+        bool ours = false;
+        for (const auto& [key, rec] : g_sockets) {
+            if (static_cast<RE::FormID>(key >> 24) == base) {
+                ours = true;
+                break;
+            }
+        }
+        if (!ours) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        const RE::FormID    oldC = a_event->oldContainer;
+        const RE::FormID    newC = a_event->newContainer;
+        const std::uint16_t evUid = a_event->uniqueID;
+        SKSE::GetTaskInterface()->AddTask([base, oldC, newC, evUid]() {
+            RekeyTransferredSockets(base, oldC, newC, evUid);
         });
         return RE::BSEventNotifyControl::kContinue;
     }
@@ -2466,10 +2575,11 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESSpellCastEvent>(SpellCastSink::GetSingleton());
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESDeathEvent>(DeathSink::GetSingleton());
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESCellAttachDetachEvent>(CellAttachSink::GetSingleton());
+        RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESContainerChangedEvent>(ContainerSink::GetSingleton());
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.27.0 (M19 enemy spawns + vendor gems) loaded");
+            console->Print("MEO native v0.27.0 (M19 enemy spawns, vendor gems, container re-key, m18b UX) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -2495,7 +2605,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.27.0 (M19: themed enemy socketed spawns + death conversion + vendor gems) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.27.0 (M19: enemy socketed spawns + vendor gems + container re-key + m18b menu UX) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
