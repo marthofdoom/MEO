@@ -89,8 +89,9 @@ var resolved = Mo2LoadOrder.Resolve(mo2Root, profile, out var missing);
 // Self-exclusion: never read our own output — the source tree must be what
 // the load order looks like WITHOUT the patch, or re-runs would compound.
 var dropped = resolved.RemoveAll(r =>
-    r.Name.Equals("MEO - Patch.esp", StringComparison.OrdinalIgnoreCase));
-if (dropped > 0) Console.WriteLine("excluded installed MEO - Patch.esp from the read");
+    r.Name.Equals("MEO - Patch.esp", StringComparison.OrdinalIgnoreCase) ||
+    r.Name.Equals("MEO - Strip.esp", StringComparison.OrdinalIgnoreCase));
+if (dropped > 0) Console.WriteLine($"excluded {dropped} installed MEO output esp(s) from the read");
 foreach (var s in subs)
 {
     var fname = Path.GetFileName(s);
@@ -135,9 +136,14 @@ try
             positional.ElementAtOrDefault(0) ?? "data/gem_catalog.json",
             positional.ElementAtOrDefault(1)),
         "ench" => Commands.DumpEnch(loadOrder, cache, positional[0]),
+        "npc" => Commands.DumpNpc(loadOrder, cache, positional[0]),
+        "spell" => Commands.DumpSpell(loadOrder, cache, positional[0]),
         "write-calibration" => Commands.WriteCalibration(loadOrder, cache,
             positional.ElementAtOrDefault(0) ?? "data/gem_catalog.json",
             positional.ElementAtOrDefault(1) ?? "meo_calibration.json"),
+        "write-strip" => Commands.WriteStrip(loadOrder, cache,
+            positional.ElementAtOrDefault(0) ?? "data/gem_catalog.json",
+            positional.ElementAtOrDefault(1) ?? "MEO - Strip.esp"),
         _ => Commands.Fail($"unknown command {cmd}"),
     };
 }
@@ -563,6 +569,81 @@ static class Commands
         return 0;
     }
 
+    public static int DumpSpell(
+        LoadOrder<IModListingGetter<ISkyrimModGetter>> lo, ILinkCache cache, string needle)
+    {
+        var hits = lo.PriorityOrder.Spell().WinningOverrides()
+            .Where(s => (s.EditorID?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                        (s.Name?.String?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false))
+            .Take(5).ToList();
+        if (hits.Count == 0) return Fail($"no winning SPEL matching '{needle}'");
+        foreach (var s in hits)
+        {
+            Console.WriteLine($"{s.EditorID} '{s.Name?.String}' [{s.FormKey}] type={s.Type}");
+            foreach (var x in s.Effects)
+            {
+                if (!x.BaseEffect.TryResolve(cache, out var m))
+                { Console.WriteLine("  (unresolved effect)"); continue; }
+                Console.WriteLine($"  {m.EditorID} '{m.Name?.String}' [{m.FormKey}] " +
+                    $"arch={m.Archetype.Type} av={m.Archetype.ActorValue} resist={m.ResistValue} " +
+                    $"mag={x.Data?.Magnitude} dur={x.Data?.Duration} " +
+                    $"conds={x.Conditions.Count} mgefConds={m.Conditions.Count}");
+                if (m.Description?.String is { Length: > 0 } d)
+                    Console.WriteLine($"      \"{(d.Length > 140 ? d[..140] + "…" : d)}\"");
+                foreach (var c in x.Conditions)
+                {
+                    var cf = c as IConditionFloatGetter;
+                    var fn = c.Data.GetType().Name.Replace("ConditionDataBinaryOverlay", "");
+                    var ps = string.Join(",", c.Data.GetType().GetProperties()
+                        .Where(p => p.Name is "FirstParameter" or "SecondParameter" or
+                                    "ActorValue" or "Keyword" or "Value")
+                        .Select(p =>
+                        {
+                            var v = p.GetValue(c.Data);
+                            // FormLinkOrIndex -> resolve to an EditorID
+                            var linkObj = v?.GetType().GetProperty("Link")?.GetValue(v);
+                            if (linkObj?.GetType().GetProperty("FormKey")?.GetValue(linkObj)
+                                is FormKey fk &&
+                                cache.TryResolve<IKeywordGetter>(fk, out var kw))
+                                return $"{p.Name}={kw.EditorID}";
+                            return $"{p.Name}={v}";
+                        }));
+                    Console.WriteLine($"      cond: {fn}({ps}) {cf?.CompareOperator} {cf?.ComparisonValue} " +
+                                      $"runOn={c.Data.RunOnType}");
+                }
+            }
+        }
+        return 0;
+    }
+
+    public static int DumpNpc(
+        LoadOrder<IModListingGetter<ISkyrimModGetter>> lo, ILinkCache cache, string needle)
+    {
+        var hits = lo.PriorityOrder.Npc().WinningOverrides()
+            .Where(n => (n.EditorID?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                        (n.Name?.String?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false))
+            .Take(5).ToList();
+        if (hits.Count == 0) return Fail($"no winning NPC matching '{needle}'");
+        foreach (var n in hits)
+        {
+            Console.WriteLine($"{n.EditorID} '{n.Name?.String}' [{n.FormKey}]");
+            foreach (var s in n.ActorEffect)
+                if (s.TryResolve(cache, out var sp))
+                    Console.WriteLine($"  spell/ability: {sp.EditorID} '{(sp as ISpellGetter)?.Name?.String}'");
+            foreach (var p in n.Perks ?? [])
+                if (p.Perk.TryResolve(cache, out var pk))
+                    Console.WriteLine($"  perk: {pk.EditorID} '{pk.Name?.String}'");
+            foreach (var it in n.Items ?? [])
+                if (it.Item.Item.TryResolve(cache, out var item))
+                    Console.WriteLine($"  item: {item.EditorID} x{it.Item.Count} ({item.GetType().Name.Replace("BinaryOverlay", "")})");
+            foreach (var k in n.Keywords ?? [])
+                if (k.TryResolve(cache, out var kw) && (kw.EditorID?.Contains("Automaton") == true ||
+                    kw.EditorID?.Contains("Dwarven") == true))
+                    Console.WriteLine($"  keyword: {kw.EditorID}");
+        }
+        return 0;
+    }
+
     // Derive each gem family's rider recipe from the list's own generic loot
     // lines (the prime directive: read what the list does, never assume).
     // For every strip-classified ENCH, the family is the catalog entry whose
@@ -725,6 +806,67 @@ static class Commands
         return 0;
     }
 
+    // The loot strip (Marth's ruling: SUBSTITUTION, never deletion). Every
+    // winning LVLI entry that resolves to a strip-classified generic is
+    // repointed at that item's unenchanted base, so vendor stock, dungeon
+    // loot, and NPC equip lists all stay populated — enemies spawn armed
+    // with plain steel, and enchantment power comes from gems alone.
+    // Only fully-honored recipes strip (1fx/2fx/3fx all-covered); recipes
+    // the gems can't reproduce yet (duration-anchored riders) stay in loot.
+    public static int WriteStrip(
+        LoadOrder<IModListingGetter<ISkyrimModGetter>> lo, ILinkCache cache,
+        string catalogPath, string outPath)
+    {
+        if (BuildCensus(lo, cache, catalogPath) is not { } data) return 1;
+
+        var honored = new HashSet<string> { "strip-1fx", "strip-2fx-recipe", "strip-3fx-recipe" };
+        var clsByItem = data.Items.ToDictionary(i => i.Key, i => i.Cls);
+        var nameByItem = data.Items.ToDictionary(i => i.Key, i => i.Name);
+        var subst = new Dictionary<FormKey, FormKey>();
+        int deferred = 0;
+        foreach (var (item, baseKey) in data.StripBase)
+        {
+            if (!honored.Contains(clsByItem[item])) { deferred++; continue; }
+            // Never substitute toward an enchanted base (malformed chains).
+            if (cache.TryResolve<IWeaponGetter>(baseKey, out var bw) && !bw.ObjectEffect.IsNull) continue;
+            if (cache.TryResolve<IArmorGetter>(baseKey, out var ba) && !ba.ObjectEffect.IsNull) continue;
+            subst[item] = baseKey;
+        }
+        Console.WriteLine($"substitution table: {subst.Count} item(s) " +
+                          $"({deferred} deferred: recipe not honored by gems yet)");
+
+        var patch = new SkyrimMod(
+            ModKey.FromNameAndExtension(Path.GetFileName(outPath)), SkyrimRelease.SkyrimSE)
+        { IsSmallMaster = true };
+        int lists = 0, entries = 0, shown = 0;
+        foreach (var l in lo.PriorityOrder.LeveledItem().WinningOverrides())
+        {
+            if (!(l.Entries?.Any(en => en.Data is not null &&
+                    subst.ContainsKey(en.Data.Reference.FormKey)) ?? false)) continue;
+            var over = patch.LeveledItems.GetOrAddAsOverride(l);
+            foreach (var en in over.Entries!)
+            {
+                if (en.Data is null || !subst.TryGetValue(en.Data.Reference.FormKey, out var bk))
+                    continue;
+                if (shown++ < 3)
+                {
+                    var bn = cache.TryResolve<IWeaponGetter>(bk, out var bw2) ? bw2.Name?.String
+                           : cache.TryResolve<IArmorGetter>(bk, out var ba2) ? ba2.Name?.String
+                           : bk.ToString();
+                    Console.WriteLine($"  e.g. {l.EditorID}: " +
+                        $"'{nameByItem.GetValueOrDefault(en.Data.Reference.FormKey)}' -> '{bn}'");
+                }
+                en.Data.Reference.SetTo(bk);
+                entries++;
+            }
+            lists++;
+        }
+        Console.WriteLine($"strip: {entries} entr(ies) substituted across {lists} leveled list(s)");
+        patch.WriteToBinary(outPath);
+        Console.WriteLine($"wrote {outPath} (ESL-flagged; masters computed at write)");
+        return 0;
+    }
+
     sealed class RecipeAgg
     {
         public int Weight;
@@ -752,8 +894,9 @@ static class Commands
         public HashSet<string> Covered = [];
         public Dictionary<string, List<(FormKey Key, string Sig)>> FamilyRefs = [];
         public Dictionary<FormKey, (List<(string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds)> Fx, bool Covered, bool CastLike)> EnchInfo = [];
-        public List<(FormKey Key, FormKey Ench, string? Name, string? BaseName, ModKey Mod, string? Edid)> Raw = [];
+        public List<(FormKey Key, FormKey Ench, string? Name, string? BaseName, FormKey? Root, ModKey Mod, string? Edid)> Raw = [];
         public List<(FormKey Key, string Cls, string? Name, ModKey Mod, string? Edid)> Items = [];
+        public Dictionary<FormKey, FormKey> StripBase = [];   // strip item -> unenchanted base
     }
 
     static CensusData? BuildCensus(
@@ -827,19 +970,21 @@ static class Commands
         // replaces vanilla enchanted variants with untemplated REQ_ records):
         // "<unenchanted item's name> of <suffix>" is the loot generator's
         // naming shape, tested against the list's own unenchanted item names.
-        var plainNames = new HashSet<string>(StringComparer.Ordinal);
+        var plainByName = new Dictionary<string, FormKey>(StringComparer.Ordinal);
         foreach (var w in lo.PriorityOrder.Weapon().WinningOverrides())
-            if (w.ObjectEffect.IsNull && w.Name?.String is { Length: > 0 } n) plainNames.Add(n);
+            if (w.ObjectEffect.IsNull && w.Name?.String is { Length: > 0 } n)
+                plainByName.TryAdd(n, w.FormKey);
         foreach (var a in lo.PriorityOrder.Armor().WinningOverrides())
-            if (a.ObjectEffect.IsNull && a.Name?.String is { Length: > 0 } n) plainNames.Add(n);
+            if (a.ObjectEffect.IsNull && a.Name?.String is { Length: > 0 } n)
+                plainByName.TryAdd(n, a.FormKey);
 
-        bool GenericShaped(string? name)
+        FormKey? GenericShapedBase(string? name)
         {
-            if (name is null) return false;
+            if (name is null) return null;
             for (int p = name.IndexOf(" of ", StringComparison.Ordinal); p > 0;
                  p = name.IndexOf(" of ", p + 1, StringComparison.Ordinal))
-                if (plainNames.Contains(name[..p])) return true;
-            return false;
+                if (plainByName.TryGetValue(name[..p], out var fk)) return fk;
+            return null;
         }
 
         string Classify(FormKey ench, bool generic)
@@ -870,6 +1015,7 @@ static class Commands
                 if (root.Template.TryResolve(cache, out var t)) root = t; else break;
             var baseName = ReferenceEquals(root, w) ? null : root.Name?.String;
             data.Raw.Add((w.FormKey, w.ObjectEffect.FormKey, w.Name?.String, baseName,
+                          ReferenceEquals(root, w) ? null : root.FormKey,
                           w.FormKey.ModKey, w.EditorID));
         }
         foreach (var a in lo.PriorityOrder.Armor().WinningOverrides())
@@ -880,6 +1026,7 @@ static class Commands
                 if (root.TemplateArmor.TryResolve(cache, out var t)) root = t; else break;
             var baseName = ReferenceEquals(root, a) ? null : root.Name?.String;
             data.Raw.Add((a.FormKey, a.ObjectEffect.FormKey, a.Name?.String, baseName,
+                          ReferenceEquals(root, a) ? null : root.FormKey,
                           a.FormKey.ModKey, a.EditorID));
         }
 
@@ -890,9 +1037,12 @@ static class Commands
         var enchUse = data.Raw.GroupBy(r => r.Ench).ToDictionary(g => g.Key, g => g.Count());
         foreach (var r in data.Raw)
         {
-            var generic = GenericNamed(r.Name, r.BaseName) ||
-                          (GenericShaped(r.Name) && enchUse[r.Ench] >= 3);
-            data.Items.Add((r.Key, Classify(r.Ench, generic), r.Name, r.Mod, r.Edid));
+            FormKey? baseKey = null;
+            if (GenericNamed(r.Name, r.BaseName)) baseKey = r.Root;
+            else if (enchUse[r.Ench] >= 3) baseKey = GenericShapedBase(r.Name);
+            var cls = Classify(r.Ench, baseKey is not null);
+            if (cls.StartsWith("strip") && baseKey is { } bk) data.StripBase[r.Key] = bk;
+            data.Items.Add((r.Key, cls, r.Name, r.Mod, r.Edid));
         }
         // Untemplated twins: NPC-hand records (Dremora fire blades etc.) share
         // a stripped generic's display name but not its template shape. They
