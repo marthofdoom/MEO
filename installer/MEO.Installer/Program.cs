@@ -325,13 +325,15 @@ static class Commands
                     Console.Write("  keep it in the new tree? [Y/n]: ");
                     var a = Console.ReadLine()?.Trim().ToLowerInvariant();
                     keep = a is not ("n" or "no");
+                    choices[key] = keep;
                 }
                 else
                 {
+                    // Fallback, not a decision: don't record it, so a later
+                    // interactive run still asks.
                     keep = true;
-                    Console.WriteLine("  (non-interactive: kept)");
+                    Console.WriteLine("  (non-interactive: kept, not recorded)");
                 }
-                choices[key] = keep;
             }
             Console.WriteLine($"  -> {(keep ? "KEEP" : "REMOVE")} '{perk.Name}'");
             if (keep)
@@ -344,8 +346,9 @@ static class Commands
                 foreach (var p in RankChain(perk)) removedPerks.Add(p.FormKey);
             }
         }
-        File.WriteAllText(choicesPath, System.Text.Json.JsonSerializer.Serialize(
-            choices, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+        if (choices.Count > 0)
+            File.WriteAllText(choicesPath, System.Text.Json.JsonSerializer.Serialize(
+                choices, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
 
         var root = over.PerkTree.FirstOrDefault(n => (n.Index ?? 0) == 0)
                    ?? throw new InvalidOperationException("no root node in source tree");
