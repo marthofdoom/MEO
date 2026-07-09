@@ -702,8 +702,11 @@ public:
         if (!a_event->opening && a_event->menuName == RE::JournalMenu::MENU_NAME) {
             ReadConfig();
             RefreshPerks();  // pick up Enchanting skill-ups (interim auto-grant)
-        } else if (a_event->opening && a_event->menuName == RE::BarterMenu::MENU_NAME) {
-            // m19b: vendors stock loose gems for this restock cycle.
+        } else if (a_event->opening && a_event->menuName == RE::DialogueMenu::MENU_NAME) {
+            // m19e: stock at DIALOGUE open — stocking at BarterMenu open
+            // mutated the merchant chest while the barter UI was building
+            // its item list and broke it (Belethor, 2026-07-09). By the time
+            // the player picks the trade line, stock is settled.
             SKSE::GetTaskInterface()->AddTask([]() { StockVendorGems(); });
         } else if (!a_event->opening && a_event->menuName == RE::CraftingMenu::MENU_NAME) {
             // Overlay mode only: leaving the vanilla enchanting UI takes the gem
@@ -1882,6 +1885,12 @@ void MaybeStampNPCGear(RE::Actor* a_actor) {
     if (!race || !race->HasKeyword(g_kwNPC)) {
         return;  // humanoids only — creatures don't wear gear
     }
+    // m19e: ENEMY classes only (Marth) — civilians are Unaggressive (0);
+    // bandits/Forsworn/raiders are Aggressive+ (>=1). Base AV, not current.
+    if (auto* avo = a_actor->AsActorValueOwner();
+        !avo || avo->GetBaseActorValue(RE::ActorValue::kAggression) < 1.0f) {
+        return;
+    }
     const std::uint32_t h = HashU32(a_actor->GetFormID() ^ 0x4D454F32u);  // 'MEO2'
     if ((h % 10000) / 10000.0f >= g_npcSocketChance) {
         return;
@@ -2074,6 +2083,8 @@ void RekeyTransferredSockets(RE::FormID a_base, RE::FormID a_oldC, RE::FormID a_
 // vendor per game day: per stock item, fVendorGemChance of adding one gem
 // (tier-weighted corpse pool), capped at 3; skipped while any MEO gem is
 // still in stock (no re-roll stacking on menu reopen).
+std::unordered_map<RE::FormID, std::uint32_t> g_vendorStockedDay;  // session-only
+
 void StockVendorGems() {
     if (g_vendorGemChance <= 0.0f || g_corpseGems.empty()) {
         return;
@@ -2104,11 +2115,19 @@ void StockVendorGems() {
             }
         }
     }
+    const auto* cal = RE::Calendar::GetSingleton();
+    const std::uint32_t day = cal ? static_cast<std::uint32_t>(cal->GetDaysPassed()) : 0;
+    // One stocking per vendor per game day: the session map stops a buy-out ->
+    // reopen from re-adding the same deterministic picks; the in-stock check
+    // covers fresh sessions mid-cycle.
+    if (auto it = g_vendorStockedDay.find(target->GetFormID());
+        it != g_vendorStockedDay.end() && it->second == day) {
+        return;
+    }
+    g_vendorStockedDay[target->GetFormID()] = day;
     if (hasGem || itemCount == 0) {
         return;  // this restock cycle already has gem stock
     }
-    const auto* cal = RE::Calendar::GetSingleton();
-    const std::uint32_t day = cal ? static_cast<std::uint32_t>(cal->GetDaysPassed()) : 0;
     const std::uint32_t h = HashU32(target->GetFormID() ^ (day * 0x9E3779B9u) ^ 0x4D454F33u);
     const std::uint32_t cut = static_cast<std::uint32_t>(g_vendorGemChance * 10000.0f);
     const std::uint32_t l2cut = static_cast<std::uint32_t>(g_gemLevel2Chance * 10000.0f);
@@ -2264,6 +2283,34 @@ public:
         const std::uint16_t evUid = a_event->uniqueID;
         SKSE::GetTaskInterface()->AddTask([base, oldC, newC, evUid]() {
             RekeyTransferredSockets(base, oldC, newC, evUid);
+        });
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+// m19e: outdoors, cell-attach fires before actors equip their gear (no worn
+// candidates yet -> silent miss; Marth saw 1 socketed orc in 20+ at 0.24).
+// TESObjectLoadedEvent fires when the ref's 3D loads — equipment is worn by
+// then. Both triggers stay live: the deterministic hash + already-blessed
+// guard make MaybeStampNPCGear idempotent, so whichever fires second no-ops.
+class ObjectLoadedSink : public RE::BSTEventSink<RE::TESObjectLoadedEvent> {
+public:
+    static ObjectLoadedSink* GetSingleton() {
+        static ObjectLoadedSink singleton;
+        return &singleton;
+    }
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESObjectLoadedEvent* a_event,
+                                          RE::BSTEventSource<RE::TESObjectLoadedEvent>*) override {
+        if (!a_event || !a_event->loaded) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        const RE::FormID id = a_event->formID;
+        SKSE::GetTaskInterface()->AddTask([id]() {
+            if (auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(id)) {
+                if (auto* actor = ref->As<RE::Actor>()) {
+                    MaybeStampNPCGear(actor);
+                }
+            }
         });
         return RE::BSEventNotifyControl::kContinue;
     }
@@ -2597,10 +2644,11 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESDeathEvent>(DeathSink::GetSingleton());
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESCellAttachDetachEvent>(CellAttachSink::GetSingleton());
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESContainerChangedEvent>(ContainerSink::GetSingleton());
+        RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESObjectLoadedEvent>(ObjectLoadedSink::GetSingleton());
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.27.1 (M19d tool exclusion) loaded");
+            console->Print("MEO native v0.27.2 (M19e spawn timing, enemy gate, vendor fix) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -2626,7 +2674,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.27.1 (M19d: tool + nameless-base exclusion) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.27.2 (M19e: 3D-load spawn trigger, aggression gate, dialogue-open vendor stocking) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
