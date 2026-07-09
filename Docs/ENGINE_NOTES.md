@@ -184,18 +184,21 @@ The `- 4` offset on the callback message is the trap everyone hits.
   single blink. GOTCHA: `d3d11.h` pulls `wingdi.h` which `#define`s
   `GetObject`→`GetObjectW`, hijacking `BGSDefaultObjectManager::GetObject<T>()`
   — `#undef GetObject` after the D3D includes.
-  EPISTEMIC STATUS (2026-07-08): the FIX is empirical (replicates Marth's
-  proven manual re-equip); the MECHANISM story above is NOT settled. Two facts
-  contradict a pure "equip-time delivery cache" theory: (a) in-session
-  socketing fires immediately with NO equip cycle (m12-validated), and (b)
-  Marth reports pre-m12 builds (cost>0, charge=500, no reapply code) fired
-  after load. Leading candidate that reconciles both: the hit path gates on
-  the actor's kLeft/RightItemCharge ACTOR VALUES (mirrored from weapon charge
-  at equip; modified player AVs persist in saves — so a pre-m12 charge=500
-  weapon would load with its AV restored and fire). Unverified. NEXT: passenger
-  diagnostic in a future build — log kLeft/RightItemCharge in [load-diag] and
-  after the auto-re-equip. If inconclusive, throwaway-branch revert experiment
-  (pre-m12 cost/charge, reapply disabled) to test load-firing directly.
+  SETTLED (2026-07-08, m17b AV probe): the kLeft/RightItemCharge AV-gate
+  theory is REFUTED — the probe showed the item-charge AV persists in the
+  save and was already 65535 BEFORE the re-equip (identical AFTER). So every
+  piece of persistent data survives load intact: the created enchant, its
+  kCostOverride/costOverride, ExtraEnchantment.charge, AND the charge AVs —
+  yet delivery was still dead (m14/m15) until a real equip. Final statement
+  of the mechanism: **the engine's post-load equip reconstruction does not
+  register instance-ExtraEnchantment delivery at all; only a live
+  ActorEquipManager equip does.** In-session socketing works without an equip
+  cycle because the worn item already went through a live equip that session.
+  The "pre-m12 builds fired on load" recollection is best explained by
+  routine manual re-equipping masking the deadness — the one candidate that
+  could have explained genuine on-load firing (persisted charge AVs) is now
+  eliminated. The m16 deferred unequip→re-equip is therefore not a workaround
+  but the engine's own required path.
 - **Weapons in containers, on racks/displays, or in NPC inventories are NOT
   born socketed.** `TESCellAttachDetachEvent` fires per *world reference*;
   container contents and carried items are inventory entries, not refs, and
