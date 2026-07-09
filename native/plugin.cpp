@@ -83,6 +83,7 @@
 #include <array>
 #include <cstdint>
 #include <cmath>
+#include <cstring>
 #include <cstdlib>
 #include <format>
 #include <fstream>
@@ -468,9 +469,28 @@ bool FindWornWeapon(RE::InventoryEntryData*& a_entry, RE::ExtraDataList*& a_xLis
 // MagicDisallowEnchanting is the enchanting table's own artifact rule —
 // if the table refuses the item, a gem does too.
 bool IsSocketableWeaponBase(const RE::TESObjectWEAP* a_weap) {
-    return a_weap && !a_weap->formEnchanting && a_weap->GetPlayable() &&
-           !a_weap->IsHandToHandMelee() && !a_weap->IsBound() &&
-           !a_weap->HasKeywordString("MagicDisallowEnchanting");
+    if (!a_weap || a_weap->formEnchanting || !a_weap->GetPlayable() ||
+        a_weap->IsHandToHandMelee() || a_weap->IsBound() ||
+        a_weap->HasKeywordString("MagicDisallowEnchanting")) {
+        return false;
+    }
+    // m19d (Marth: "no socketed pickaxes"): tools and nameless bases are out.
+    // Byte-diffed Skyrim.esm — vanilla gives tools NO semantic marker (same
+    // animType/skill as war axes; the plain Pickaxe even carries
+    // WeapTypeWarAxe; Woodcutter's Axe has no WeapType* at all), so a name
+    // blocklist is the honest option.
+    const char* n = a_weap->GetName();
+    if (!n || !*n) {
+        return false;  // nameless pseudo-weapons (trap/effect bases)
+    }
+    static constexpr const char* kToolWords[] = { "Pickaxe", "Pick Axe", "Woodcutter",
+                                                  "Wood Axe", "Woodsman" };
+    for (const char* w : kToolWords) {
+        if (std::strstr(n, w)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // Armor-base eligibility (M8b armor gems). Socketable slots per DESIGN §4:
@@ -1920,9 +1940,10 @@ void MaybeStampNPCGear(RE::Actor* a_actor) {
     const int level = (HashU32(h ^ 0x22222222u) % 10000) < l2cut ? 2 : 1;
     if (StampInstance(c.base, c.xl, gemIdx, level)) {
         ApplyWornAbility(a_actor, c.base, c.xl, c.left);  // live on the enemy
-        spdlog::info("[npc] {:08X} '{}' (arch {}) spawns with {} {} on {}", a_actor->GetFormID(),
-                     a_actor->GetName(), arch, g_gems[gemIdx].def->name, meo::kRoman[level - 1],
-                     c.base->GetName());
+        static constexpr const char* kArchNames[] = { "warrior", "mage", "rogue", "undead" };
+        spdlog::info("[npc] {:08X} '{}' ({}) spawns with {} {} on {}", a_actor->GetFormID(),
+                     a_actor->GetName(), kArchNames[arch], g_gems[gemIdx].def->name,
+                     meo::kRoman[level - 1], c.base->GetName());
     }
 }
 
@@ -2579,7 +2600,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.27.0 (M19 enemy spawns, vendor gems, container re-key, m18b UX) loaded");
+            console->Print("MEO native v0.27.1 (M19d tool exclusion) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -2605,7 +2626,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.27.0 (M19: enemy socketed spawns + vendor gems + container re-key + m18b menu UX) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.27.1 (M19d: tool + nameless-base exclusion) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
