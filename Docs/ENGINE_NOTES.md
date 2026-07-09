@@ -305,3 +305,13 @@ Mutagen on Linux (installer/).
 - **DLL coexistence**: the DLL detects the generated patch via
   `TESDataHandler::LookupModByName("MEO - Patch.esp")` and stands down its
   skill-based auto-grant so tree perks cost perk points.
+
+- **Perk-domain classification (m21 installer)**: perk entry-point effects
+  carry their own condition lists declaring what they apply to. Craft perks
+  = ModEnchantmentPower / soul-gem entry points. Runtime enchantment
+  empowerment = entries gated on `GetIsObjectType FormType=Enchantment`
+  (Special Feats' Arcane Artificery — would double-scale gem output on top
+  of Attunement). Staff/wand utility = GetEquippedItemType / FormType=Spell
+  / keyword gates. Fully derivable — no perk names needed. Mutagen quirk:
+  IGetIsObjectTypeConditionDataGetter hides the param; reflect
+  `GetProperty("FormType")`.
