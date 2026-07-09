@@ -118,7 +118,7 @@ Banish, Paralyze, Soul Trap, Turn Undead, Sun (Dawnguard, undead-only).
 - Utility: Muffle, Waterbreathing.
 
 Placement rules: weapon gems only socket into weapons, armor gems only into
-apparel — EXCEPT via the Added Effect support gem (below). Vanilla slot
+apparel — EXCEPT via the Conduit support gem (below). Vanilla slot
 restrictions per effect (e.g. Fortify Archery on helmets) are dropped; any
 armor gem fits any apparel slot.
 
@@ -216,7 +216,7 @@ prototype in python, build the C#/Mutagen tool via CI).
 - Gems are MISC items, one form per type × level: `MEO_Gem<Type><1..5>`.
   Support gems level too, but in **3 tiers** (`MEO_Support<Type><1..3>`); see §5.
 - **Terminology (Marth, 2026-07-07): the currency is "Gem XP"** — never "AP"
-  (an FFVII fingerprint; see the branding rule). Code/serialization keep `xp`.
+  (banned term; all naming must be original to MEO). Code/serialization keep `xp`.
 - **Every unique gem owns its own Gem XP pool — no pooling, no fungibility
   of any kind (Marth, 2026-07-07).** A gem is a unique individual for its
   whole life: socketed or loose, it keeps its own {level, Gem XP}. A Fire I
@@ -257,7 +257,7 @@ prototype in python, build the C#/Mutagen tool via CI).
   - **The Mentor gem** — a unique support gem that **doubles the Gem XP of
     its paired gem**, awarded mid-Dawnguard (around Chasing Echoes / Beyond
     Death). The calibration below assumes it's active for the back half of a
-    playthrough. (Name "Mentor" provisional; no FFVII echoes.)
+    playthrough. (Name "Mentor" provisional; keep all naming original to MEO.)
     *M3d interim*: doubles ALL Gem XP earned by whoever carries it
     (whole-inventory aura — becomes true socket pairing once the
     multi-socket model lands). *Acquisition (PROVISIONAL, placement under
@@ -620,8 +620,8 @@ Open engineering risks (validate in P0, per guide philosophy):
    menu, socket/unsocket/readback, WornObject validation in-game.
 2. **P1 core**: full generic catalog, loot conversion, XP/leveling/birthing,
    Soul Feeder, perk overrides, MCM.
-3. **P2 support gems**: All / Added Effect / Elemental + dual-slot linking;
-   hand-placement locations; then Counter / Absorption / Final Stand.
+3. **P2 support gems**: Echo / Conduit / Focus + dual-slot linking;
+   hand-placement locations; then Reprisal / Siphon / Final Stand.
 4. **P3 packaging**: FOMOD (core + Requiem patch page), LoreRim patch pass
    (Requiem perk records, Summermyst coexistence check).
    **Compatibility baseline (verified 2026-07-07)**: MEO.esp declares a
