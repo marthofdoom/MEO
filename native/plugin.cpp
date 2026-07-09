@@ -715,7 +715,8 @@ public:
             // re-equip can take (a blind post-load timer fired during long
             // loading screens and was swallowed; see ScheduleReapplyWornSockets).
             if (g_pendingReapply.exchange(false)) {
-                RunDeferredReapply(1500);  // small fade margin
+                RunDeferredReapply(8000);  // well past the fade — +1.5s was
+                                           // still swallowed (2026-07-09)
             }
         } else if (a_event->opening && a_event->menuName == RE::DialogueMenu::MENU_NAME) {
             // m19e: stock at DIALOGUE open — stocking at BarterMenu open
@@ -2540,8 +2541,15 @@ void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag = false) {
         }
     }
     if (a_reequip) {
+        // m19f: log the game state the pass runs under — if a pass is ever
+        // swallowed again, this line names the condition.
+        spdlog::info("[load] reequip pass: paused={} player3D={} drawn={}",
+                     RE::UI::GetSingleton() && RE::UI::GetSingleton()->GameIsPaused(),
+                     player->Is3DLoaded(), player->IsWeaponDrawn());
         auto* eqm = RE::ActorEquipManager::GetSingleton();
         auto* dobj = RE::BGSDefaultObjectManager::GetSingleton();
+        struct Re { RE::FormID base; std::uint16_t uid; bool isArmor; bool left; };
+        std::vector<Re> requeue;
         for (auto& t : targets) {
             const RE::BGSEquipSlot* slot = nullptr;
             if (!t.isArmor && dobj) {  // weapons need their hand slot; armor is slotless
@@ -2549,10 +2557,40 @@ void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag = false) {
                     t.left ? RE::DEFAULT_OBJECT::kLeftHandEquip
                            : RE::DEFAULT_OBJECT::kRightHandEquip);
             }
-            // Unequip then re-equip the SAME instance (its own xList) — the engine
-            // rebuilds the enchant delivery cache from ExtraEnchantment on equip.
+            // m19f: unequip NOW, equip NEXT TASK (separate frame). The
+            // same-frame unequip+equip cycle is the one structural difference
+            // from the player's manual re-equip (which always works) — the
+            // engine can collapse a same-frame cycle into a no-op.
             eqm->UnequipObject(player, t.base, t.xl, 1, slot, false, true, false, true);
-            eqm->EquipObject(player, t.base, t.xl, 1, slot, false, true, false, true);
+            auto* xid = t.xl ? t.xl->GetByType<RE::ExtraUniqueID>() : nullptr;
+            requeue.push_back({ t.base->GetFormID(), xid ? xid->uniqueID : 0,
+                                t.isArmor, t.left });
+        }
+        if (!requeue.empty()) {
+            SKSE::GetTaskInterface()->AddTask([requeue]() {
+                auto* pl = RE::PlayerCharacter::GetSingleton();
+                auto* mgr = RE::ActorEquipManager::GetSingleton();
+                auto* dob = RE::BGSDefaultObjectManager::GetSingleton();
+                if (!pl || !mgr) {
+                    return;
+                }
+                for (const auto& r : requeue) {
+                    auto* form = RE::TESForm::LookupByID<RE::TESBoundObject>(r.base);
+                    if (!form) {
+                        continue;
+                    }
+                    auto* xl = FindInstanceXList(pl, form, r.uid);  // re-find: frame passed
+                    const RE::BGSEquipSlot* slot = nullptr;
+                    if (!r.isArmor && dob) {
+                        slot = dob->GetObject<RE::BGSEquipSlot>(
+                            r.left ? RE::DEFAULT_OBJECT::kLeftHandEquip
+                                   : RE::DEFAULT_OBJECT::kRightHandEquip);
+                    }
+                    mgr->EquipObject(pl, form, xl, 1, slot, false, true, false, true);
+                }
+                spdlog::info("[load] reequip pass: {} item(s) re-equipped (split frame)",
+                             requeue.size());
+            });
         }
     }
     // Mechanism probe (ENGINE_NOTES §8 epistemic status): the hit path may gate
@@ -2725,7 +2763,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.27.3 (M19e complete: load-anchor reapply, menu identity, spawn+vendor fixes) loaded");
+            console->Print("MEO native v0.27.4 (M19f split-frame reapply) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -2751,7 +2789,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.27.3 (M19e: loading-close-anchored reapply + menu identity + spawn/vendor fixes) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.27.4 (M19f: split-frame re-equip at loading-close+8s) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
