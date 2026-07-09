@@ -28,7 +28,24 @@ def resolve_load_order(mo2_root, profile):
             if l.startswith('+') and not l.rstrip().endswith('_separator')]
     # modlist.txt is stored highest-priority-first: first hit wins.
     search = [os.path.join(mo2_root, 'mods', m) for m in mods]
-    search.append(os.path.join(mo2_root, 'Stock Game', 'Data'))
+    # Stock-game fallback: Wabbajack lists name the bundled game dir all sorts
+    # of ways; also honor gamePath from ModOrganizer.ini.
+    for stock in ('Stock Game', 'Game Root', 'Stock Folder', 'Skyrim Stock',
+                  'STOCK GAME', 'root'):
+        d = os.path.join(mo2_root, stock, 'Data')
+        if os.path.isdir(d):
+            search.append(d)
+    ini = os.path.join(mo2_root, 'ModOrganizer.ini')
+    if os.path.exists(ini):
+        for line in open(ini, encoding='utf-8', errors='replace'):
+            if line.startswith('gamePath='):
+                p = line.split('=', 1)[1].strip()
+                if p.startswith('@ByteArray('):
+                    p = p[len('@ByteArray('):].rstrip(')')
+                p = p.replace('\\\\', '/').replace('\\', '/')
+                if os.path.isdir(os.path.join(p, 'Data')):
+                    search.append(os.path.join(p, 'Data'))
+                break
     # Case-insensitive filename map per directory (Linux).
     dirmaps = []
     for d in search:
@@ -94,10 +111,13 @@ def scan(mo2_root, profile):
                     info = {'edid': edid, 'full': full, 'winner': name}
                     md = d.get('mdata', b'')
                     if len(md) >= 152:
+                        info['flags'] = struct.unpack('<I', md[0:4])[0]
+                        info['resistAV'] = struct.unpack('<i', md[16:20])[0]
                         info['archetype'] = struct.unpack('<I', md[64:68])[0]
                         info['primaryAV'] = struct.unpack('<i', md[68:72])[0]
                         info['castType'] = struct.unpack('<I', md[80:84])[0]
                         info['delivery'] = struct.unpack('<I', md[84:88])[0]
+                        info['secondAV'] = struct.unpack('<i', md[88:92])[0]
                     mgefs[key] = info
                 elif rt == 'ENCH':
                     e = {'edid': edid, 'full': full, 'effects': effects, 'winner': name}
@@ -124,6 +144,41 @@ def scan(mo2_root, profile):
     known = {(r['plugin'].lower(), int(r['fid'], 16))
              for v in cat.values() for r in v['mgef_refs']}
 
+    # Family signatures: what a gem's effect IS, independent of which MGEF
+    # record a mod minted for it — derived from the catalog MGEFs' own winning
+    # records, so it needs no hand-kept effect knowledge. archetype + primary
+    # AV + hostile|detrimental bits identify the mechanic (catches Requiem's
+    # separate "Fortify Magicka (Rank II)" MGEF as Fortify Magicka); resist AV
+    # + second AV split the elements (fire/frost/shock/poison/unresistable all
+    # share archetype+AV=Health and differ only there).
+    def sig_of(m):
+        if m.get('archetype') is None:
+            return None
+        return (m['archetype'], m['primaryAV'], m.get('flags', 0) & 0x5,
+                m.get('resistAV'), m.get('secondAV'))
+
+    covered_sigs = {}
+    for gid, v in cat.items():
+        for r in v['mgef_refs']:
+            m = mgefs.get((r['plugin'].lower(), int(r['fid'], 16)))
+            if m:
+                s = sig_of(m)
+                if s:
+                    covered_sigs.setdefault(s, set()).add(v['name'])
+
+    # Multi-effect enchantments can't map to a single gem; tally them
+    # separately — the loot strip still has to decide their fate.
+    multi = {}
+    for key, e in enchs.items():
+        if e.get('enchType') != 6 or len(e['effects']) <= 1:
+            continue
+        worn = usage.get(key, [])
+        if worn:
+            multi[key] = {'edid': e['edid'], 'full': e['full'],
+                          'n_effects': len(e['effects']), 'items': len(worn),
+                          'item_names': [f"{it['type']}:{it['full'] or it['edid']}"
+                                         for it in worn[:3]]}
+
     groups = {}
     for key, e in enchs.items():
         if len(e['effects']) != 1 or e.get('enchType') != 6:
@@ -132,12 +187,14 @@ def scan(mo2_root, profile):
         if mk in known:
             continue
         m = mgefs.get(mk, {})
+        gems = covered_sigs.get(sig_of(m) or (), None) if m else None
         g = groups.setdefault(mk, {
             'mgef_edid': m.get('edid'), 'mgef_full': m.get('full'),
             'mgef_plugin': mk[0], 'mgef_fid': f"0x{mk[1]:06X}",
             'mgef_winner': m.get('winner'),
             'archetype': m.get('archetype'), 'primaryAV': m.get('primaryAV'),
             'castType': m.get('castType'), 'delivery': m.get('delivery'),
+            'coverage': 'family:' + '/'.join(sorted(gems)) if gems else 'new',
             'enchs': [], 'items': 0, 'item_names': []})
         g['enchs'].append({'edid': e['edid'], 'full': e['full'],
                            'plugin': key[0], 'fid': f"0x{key[1]:06X}",
@@ -149,26 +206,50 @@ def scan(mo2_root, profile):
             g['items'] += 1
             if len(g['item_names']) < 6 and (it['full'] or it['edid']):
                 g['item_names'].append(f"{it['type']}:{it['full'] or it['edid']}")
-    return groups
+    return groups, multi
 
 
 def main():
     mo2_root = sys.argv[1] if len(sys.argv) > 1 else '/mnt/gaming/modlists/LoreRim'
     profile = sys.argv[2] if len(sys.argv) > 2 else 'Default'
     out = sys.argv[3] if len(sys.argv) > 3 else None
-    groups = scan(mo2_root, profile)
+    groups, multi = scan(mo2_root, profile)
     ranked = sorted(groups.values(), key=lambda g: -g['items'])
     if out:
-        json.dump(ranked, open(out, 'w'), indent=1)
+        json.dump({'singles': ranked,
+                   'multi_effect': sorted(multi.values(), key=lambda m: -m['items'])},
+                  open(out, 'w'), indent=1)
         print(f"wrote {out} ({len(ranked)} candidate MGEFs)", file=sys.stderr)
-    print(f"\n{len(ranked)} single-effect weapon/armor enchant MGEFs not in the gem catalog")
-    print(f"{'items':>5}  {'delivery':<9} {'MGEF':<44} {'winner':<28} sample enchants / items")
+
     DELIV = {0: 'self', 1: 'touch', 2: 'aimed', 3: 'targetActor', 4: 'targetLoc'}
-    for g in ranked[:80]:
-        deliv = DELIV.get(g.get('delivery'), '?')
-        names = '; '.join(g['item_names'][:3])
-        print(f"{g['items']:>5}  {deliv:<9} {(g['mgef_edid'] or '?'):<44} "
-              f"{(g['mgef_winner'] or '?'):<28} {names[:70]}")
+
+    def show(rows, limit=40):
+        print(f"{'items':>5}  {'delivery':<9} {'MGEF':<44} {'winner':<26} sample items")
+        for g in rows[:limit]:
+            deliv = DELIV.get(g.get('delivery'), '?')
+            names = '; '.join(n.split(':', 1)[1] for n in g['item_names'][:3])
+            print(f"{g['items']:>5}  {deliv:<9} {(g['mgef_edid'] or '?'):<44} "
+                  f"{(g['mgef_winner'] or '?'):<26} {names[:70]}")
+
+    new = [g for g in ranked if g['coverage'] == 'new']
+    fam = [g for g in ranked if g['coverage'] != 'new']
+    big_new = [g for g in new if g['items'] >= 4]
+    print(f"\n== NEW FAMILIES (no gem covers the effect; >=4 items = generic) "
+          f"— {len(big_new)} big, {len(new) - len(big_new)} minor/artifact ==")
+    show(big_new)
+    print(f"\n== FAMILY-COVERED (different MGEF, same effect as an existing gem"
+          f" — strip targets, not new gems) — {len(fam)} ==")
+    for g in sorted(fam, key=lambda g: -g['items'])[:20]:
+        print(f"{g['items']:>5}  {(g['mgef_edid'] or '?'):<44} -> {g['coverage'][7:]}")
+    n_multi_items = sum(m['items'] for m in multi.values())
+    print(f"\n== MULTI-EFFECT enchantments on worn items (strip decision needed)"
+          f" — {len(multi)} enchants / {n_multi_items} items ==")
+    for m in sorted(multi.values(), key=lambda m: -m['items'])[:12]:
+        names = '; '.join(n.split(':', 1)[1] for n in m['item_names'])
+        print(f"{m['items']:>5}  x{m['n_effects']}  {(m['edid'] or '?'):<40} {names[:60]}")
+    print(f"\n== MINOR/ARTIFACT new-effect MGEFs (<4 items, likely uniques) — "
+          f"{len(new) - len(big_new)} (top 15 by items) ==")
+    show(sorted([g for g in new if g['items'] < 4], key=lambda g: -g['items']), 15)
 
 
 if __name__ == '__main__':
