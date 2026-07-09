@@ -2484,6 +2484,28 @@ void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag = false) {
                 continue;
             }
             auto* xid = xl->GetByType<RE::ExtraUniqueID>();
+            if (a_diag) {
+                // m19e forensics (Marth's "loaded ungemmed" report): the full
+                // truth for every worn piece — uid (or none), each slot's
+                // record (or NONE), and whether an enchant extra is present.
+                std::string slots;
+                if (xid) {
+                    for (int s = 0; s < kMaxSockets; ++s) {
+                        auto it = g_sockets.find(MakeKey(entry->object->GetFormID(),
+                                                         xid->uniqueID,
+                                                         static_cast<std::uint8_t>(s)));
+                        if (it != g_sockets.end()) {
+                            slots += std::format(" s{}={}L{}", s, it->second.gid,
+                                                 it->second.level);
+                        }
+                    }
+                }
+                spdlog::info("[load-diag] worn {:08X} '{}' uid={}{} ench={}",
+                             entry->object->GetFormID(), entry->object->GetName(),
+                             xid ? std::to_string(xid->uniqueID) : "none",
+                             slots.empty() ? " records=NONE" : slots,
+                             xl->HasType(RE::ExtraDataType::kEnchantment));
+            }
             if (!xid) {
                 continue;
             }
@@ -2672,6 +2694,12 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
     }
     spdlog::info("[load] {} socket record(s), nextUID=0x{:X}, starter={}, mentor={}",
                  g_sockets.size(), g_nextUID, g_starterGranted, g_mentorGranted);
+    for (const auto& [key, rec] : g_sockets) {  // m19e forensics
+        spdlog::info("[load]   rec base={:08X} uid={} slot={} gid={} L{} xp={:.0f}",
+                     static_cast<RE::FormID>(key >> 24),
+                     static_cast<std::uint16_t>((key >> 8) & 0xFFFF),
+                     static_cast<int>(key & 0xFF), rec.gid, rec.level, rec.xp);
+    }
 }
 
 void RevertCallback(SKSE::SerializationInterface*) {
