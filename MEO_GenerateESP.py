@@ -261,6 +261,9 @@ MCM_TUNABLES=[
     ("XP & Balance","UI","bXPNotify","Show Gem XP notifications",
      "Show a corner message when your gems gain Gem XP on a kill.",
      'b',1,None,None,None,None),
+    ("XP & Balance","UI","bStationTakeover","Gem menu replaces enchanting table",
+     "Enchanting stations open the gem menu (soul feeding and gem destruction) instead of the vanilla enchanting menu. MEO replaces enchanting entirely; disable only to overlay the vanilla menu instead.",
+     'b',1,None,None,None,None),
 ]
 
 def write_mcm_files(out_dir):

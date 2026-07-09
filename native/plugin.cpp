@@ -495,6 +495,7 @@ float g_worldSocketChance = 0.05f;// [Loot] fWorldSocketChance — world weapon 
 float g_gemLevel2Chance = 0.02f;  // [Loot] fGemLevel2Chance — spawned gem is level II not I
 float g_bossXPMult = 10.0f;       // [XP] fBossXPMult — boss/dragon kill multiplier
 bool  g_xpNotify = true;          // [UI] bXPNotify — "Gem XP +N" on kills
+bool  g_stationTakeover = true;   // [UI] bStationTakeover — gem menu REPLACES the vanilla enchanting menu
 // g_magnitudeMult [XP] fMagnitudeMult is declared up top (StampInstance uses it)
 
 // Apply one INI file's key=value lines onto the config globals. Tolerates the
@@ -528,6 +529,7 @@ static void ApplyIniFile(const char* a_path) {
         else if (key == "fBossXPMult")        g_bossXPMult = val;
         else if (key == "fMagnitudeMult")     g_magnitudeMult = val;
         else if (key == "bXPNotify")          g_xpNotify = val != 0.0f;
+        else if (key == "bStationTakeover")   g_stationTakeover = val != 0.0f;
     }
 }
 
@@ -636,7 +638,10 @@ public:
             ReadConfig();
             RefreshPerks();  // pick up Enchanting skill-ups (interim auto-grant)
         } else if (!a_event->opening && a_event->menuName == RE::CraftingMenu::MENU_NAME) {
-            if (g_menu.station.load()) {
+            // Overlay mode only: leaving the vanilla enchanting UI takes the gem
+            // menu with it. In takeover mode (m18) the crafting menu closing IS
+            // our own dismissal — the gem menu stands alone and closes itself.
+            if (g_menu.station.load() && !g_stationTakeover) {
                 SKSE::GetTaskInterface()->AddTask([]() { CloseGemMenu(); });
             }
         } else if (a_event->opening && a_event->menuName == RE::CraftingMenu::MENU_NAME) {
@@ -648,6 +653,14 @@ public:
                 auto* f = base ? base->As<RE::TESFurniture>() : nullptr;
                 using BT = RE::TESFurniture::WorkBenchData::BenchType;
                 if (f && f->workBenchData.benchType == BT::kEnchanting) {
+                    if (g_stationTakeover) {
+                        // MEO replaces enchanting: dismiss the vanilla menu
+                        // and let the gem menu own the station (m18).
+                        if (auto* q = RE::UIMessageQueue::GetSingleton()) {
+                            q->AddMessage(RE::CraftingMenu::MENU_NAME,
+                                          RE::UI_MESSAGE_TYPE::kHide, nullptr);
+                        }
+                    }
                     OpenGemMenu(true);
                 }
             });
@@ -2160,7 +2173,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.25.1 (M17b socket perks + theft fix) loaded");
+            console->Print("MEO native v0.26.0 (M18 station takeover) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -2186,7 +2199,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.25.1 (M17b: socket perks + gem-return ownership fix) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.26.0 (M18: gem menu replaces the enchanting station menu) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
