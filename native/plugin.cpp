@@ -688,6 +688,8 @@ MenuState g_menu;
 void OpenGemMenu(bool a_station = false);  // defined with the render hooks below
 void StockVendorGems();                    // m19b — defined with the loot rolls below
 void CloseGemMenu();
+extern std::atomic<bool> g_pendingReapply;  // m19e — defined with the load reapply below
+void RunDeferredReapply(int a_delayMs);
 
 // Live MCM apply: SkyUI's Mod Configuration menu is hosted in the Journal
 // (pause) menu, and MCM Helper persists ModSettings to MEO.ini when it closes.
@@ -708,6 +710,13 @@ public:
         if (!a_event->opening && a_event->menuName == RE::JournalMenu::MENU_NAME) {
             ReadConfig();
             RefreshPerks();  // pick up Enchanting skill-ups (interim auto-grant)
+        } else if (!a_event->opening && a_event->menuName == RE::LoadingMenu::MENU_NAME) {
+            // m19e: gameplay just resumed after a load — NOW the worn-socket
+            // re-equip can take (a blind post-load timer fired during long
+            // loading screens and was swallowed; see ScheduleReapplyWornSockets).
+            if (g_pendingReapply.exchange(false)) {
+                RunDeferredReapply(1500);  // small fade margin
+            }
         } else if (a_event->opening && a_event->menuName == RE::DialogueMenu::MENU_NAME) {
             // m19e: stock at DIALOGUE open — stocking at BarterMenu open
             // mutated the merchant chest while the barter UI was building
@@ -2540,21 +2549,36 @@ void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag = false) {
 }
 
 // On load: refresh the enchant immediately (+ diag), then drive ONE real
-// unequip/re-equip once the loaded actor has settled. kPostLoadGame fires while
-// the engine is still finalizing equip, so an equip cycle done THEN can conflict
-// or be undone; ~4s is comfortably past load-finalize (the player's manual fix
-// worked well after that). One pass keeps the re-equip flicker to a single
-// blink and won't interrupt a player who's already moving. A detached timer
-// hands the deferred pass back to the main thread.
+// unequip/re-equip once the game is actually LIVE. m16 used a blind +4s
+// timer; on a heavy-area load (Solitude, 2026-07-09) it fired while the
+// loading screen was still up and the equip cycle was swallowed — worn gems
+// stayed FX/delivery-dead until a manual socket action. The reliable anchor
+// is the Loading Menu CLOSING (gameplay resumed): MenuSink consumes
+// g_pendingReapply on that close (+1.5s of fade margin). A 15s fallback
+// timer covers loads that never show a loading menu.
+std::atomic<bool> g_pendingReapply{ false };
+
+void RunDeferredReapply(int a_delayMs) {
+    std::thread([a_delayMs]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(a_delayMs));
+        SKSE::GetTaskInterface()->AddTask([]() {
+            ReapplyWornSockets(/*rebuild=*/false, /*reequip=*/true);
+        });
+    }).detach();
+}
+
 void ScheduleReapplyWornSockets() {
     SKSE::GetTaskInterface()->AddTask([]() {
         ReapplyWornSockets(/*rebuild=*/true, /*reequip=*/false, /*diag=*/true);
     });
-    std::thread([]() {
-        std::this_thread::sleep_for(std::chrono::milliseconds(4000));
-        SKSE::GetTaskInterface()->AddTask([]() {
-            ReapplyWornSockets(/*rebuild=*/false, /*reequip=*/true);
-        });
+    g_pendingReapply = true;
+    std::thread([]() {  // fallback: if no Loading Menu close consumes the flag
+        std::this_thread::sleep_for(std::chrono::milliseconds(15000));
+        if (g_pendingReapply.exchange(false)) {
+            SKSE::GetTaskInterface()->AddTask([]() {
+                ReapplyWornSockets(/*rebuild=*/false, /*reequip=*/true);
+            });
+        }
     }).detach();
 }
 
@@ -2673,7 +2697,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.27.2 (M19e spawn timing, enemy gate, vendor fix) loaded");
+            console->Print("MEO native v0.27.3 (M19e complete: load-anchor reapply, menu identity, spawn+vendor fixes) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -2699,7 +2723,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.27.2 (M19e: 3D-load spawn trigger, aggression gate, dialogue-open vendor stocking) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.27.3 (M19e: loading-close-anchored reapply + menu identity + spawn/vendor fixes) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
