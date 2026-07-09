@@ -1,0 +1,2 @@
+M17 (3b-2): socket perks — Twinned Fitting (chest 2nd socket, Ench 70) + Master Jeweler (weapon 2nd socket, Ench 100), auto-granted interim; itemCharge-AV load diagnostic
+built from native run 28992521070
