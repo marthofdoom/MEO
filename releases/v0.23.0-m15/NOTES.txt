@@ -1,0 +1,2 @@
+M15: fix on-load socket reactivation (costOverride-loss + timing) + [load-diag] logging; worn sockets re-fire automatically after load, no manual re-socket
+built from native run 28988810767
