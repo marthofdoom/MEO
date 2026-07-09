@@ -220,11 +220,13 @@ Strip classification (Marth 2026-07-09):
   (formEnchanting) or a foreign ExtraEnchantment. Already enforced in the DLL
   (IsSocketable*Base + apply-path + menu listing + NPC stamper); artifacts
   stay enchanted AND cannot take gems.
-- OPEN (Marth to rule): Requiem's tiered 2-effect generics ("of Freezing" =
-  frost+slow tiers; ~560 enchants / ~4,351 items in LoreRim). Literal
-  keep-all-multi-effect retains most generic enchanted weapon loot,
-  contradicting "no findable non-artifact enchantments"; recommended reading
-  is distinctive *packages* keep, generic tier lines strip.
+- RULED (Marth 2026-07-09): Requiem's tiered 2-effect generics ("of
+  Freezing" = frost+slow tiers; ~560 enchants / ~4,351 items in LoreRim)
+  are **stripped**. Artifact-class means distinctive named *packages* only
+  (mage robes, Silent Moons, uniques) — generic "of X" tier lines go even
+  with 2 effects, so gems fully replace generic enchanted loot. Practical
+  test for the tool: an enchantment is a generic tier line if its effects
+  are all family-covered AND it appears on ≥4 items across material tiers.
 **Packaging = standalone Mutagen CLI** (self-contained .exe, any mod manager, we
 own the UX; not a Synthesis patcher). `tools/scan_loadorder.py` is the python
 executable spec / recon prototype for this tool (no dotnet on the dev machine —
