@@ -1,0 +1,2 @@
+M19e: menu selection identity, 3D-load spawn trigger, enemy aggression gate, dialogue-open vendor stocking, tool exclusion, loading-close-anchored reapply, load forensics
+built from native run 29035099035
