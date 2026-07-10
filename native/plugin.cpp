@@ -2630,6 +2630,54 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
         }
         hits.push_back({ obj, &it->second, data.first, worn, left });
     }
+    // m25d (Marth's helmet/cuirass): when the PLAYER sweep misses enchanted
+    // gear, say exactly what and why — an enchanted BASE not in the table is
+    // an installer question; an INSTANCE enchant (on the copy, not the
+    // record) is the player-enchant signature and skipped by design.
+    if (actor->IsPlayerRef()) {
+        for (auto& [obj, data] : actor->GetInventory()) {
+            if (data.first <= 0 || g_convert.contains(obj->GetFormID())) {
+                continue;
+            }
+            RE::EnchantmentItem* baseEnch = nullptr;
+            if (auto* w = obj->As<RE::TESObjectWEAP>()) {
+                baseEnch = w->formEnchanting;
+            } else if (auto* ar = obj->As<RE::TESObjectARMO>()) {
+                baseEnch = ar->formEnchanting;
+            } else {
+                continue;
+            }
+            if (baseEnch) {
+                spdlog::info("[convert-miss] '{}' base {:08X} ench {:08X} — enchanted base "
+                             "not in the conversion table",
+                             obj->GetName(), obj->GetFormID(), baseEnch->GetFormID());
+                continue;
+            }
+            if (!data.second || !data.second->extraLists) {
+                continue;
+            }
+            for (auto* xl : *data.second->extraLists) {
+                if (!xl || !xl->HasType(RE::ExtraDataType::kEnchantment)) {
+                    continue;
+                }
+                auto* xid = xl->GetByType<RE::ExtraUniqueID>();
+                bool  ours = false;
+                for (int s = 0; xid && s < kMaxSockets; ++s) {
+                    if (g_sockets.contains(MakeKey(obj->GetFormID(), xid->uniqueID,
+                                                   static_cast<std::uint8_t>(s)))) {
+                        ours = true;
+                        break;
+                    }
+                }
+                if (!ours) {
+                    spdlog::info("[convert-miss] '{}' base {:08X} — INSTANCE enchant on this "
+                                 "copy (player-made or list-minted), skipped by design",
+                                 obj->GetName(), obj->GetFormID());
+                    break;
+                }
+            }
+        }
+    }
     const std::uint32_t seed = HashU32(actor->GetFormID() ^ 0x4D454F43u);  // 'MEOC'
     const std::uint32_t l2cut = static_cast<std::uint32_t>(g_gemLevel2Chance * 10000.0f);
     int converted = 0;
@@ -3613,7 +3661,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.34.0 (M25 station redesign + ench skill XP + partial conversions) loaded");
+            console->Print("MEO native v0.34.1 (M25d convert-miss diagnostic) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -3644,7 +3692,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.34.0 (M25 station redesign + ench skill XP + partial conversions) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.34.1 (M25d convert-miss diagnostic) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
