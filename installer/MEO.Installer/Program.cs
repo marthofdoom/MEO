@@ -20,7 +20,7 @@ using Mutagen.Bethesda.Skyrim;
 
 const string Usage =
     "usage: MEO.Installer                                     (post-install: auto-detect MO2, write patch + calibration)\n" +
-    "       MEO.Installer <stats|tree|tree-effects|perk|ench|write-patch|strip-report|write-calibration> <MO2 root> <profile> [args]";
+    "       MEO.Installer <stats|tree|tree-effects|perk|ench|item|write-patch|strip-report|write-calibration> <MO2 root> <profile> [args]";
 if (args.Length > 0 && args[0] is "-h" or "--help" or "help")
 {
     Console.WriteLine(Usage);
@@ -136,6 +136,7 @@ try
             positional.ElementAtOrDefault(0) ?? "data/gem_catalog.json",
             positional.ElementAtOrDefault(1)),
         "ench" => Commands.DumpEnch(loadOrder, cache, positional[0]),
+        "item" => Commands.DumpItem(loadOrder, cache, positional[0]),
         "npc" => Commands.DumpNpc(loadOrder, cache, positional[0]),
         "spell" => Commands.DumpSpell(loadOrder, cache, positional[0]),
         "write-calibration" => Commands.WriteCalibration(loadOrder, cache,
@@ -564,6 +565,47 @@ static class Commands
             }
         }
         return 0;
+    }
+
+    // Record inspector: winning WEAP/ARMO by name/editorid — prints the
+    // template chain (the names GenericNamed compares) and the ENCH link,
+    // i.e. exactly the inputs the census classifier sees for the item.
+    public static int DumpItem(
+        LoadOrder<IModListingGetter<ISkyrimModGetter>> lo, ILinkCache cache, string needle)
+    {
+        bool Match(string? s) => s?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false;
+        int shown = 0;
+        foreach (var w in lo.PriorityOrder.Weapon().WinningOverrides())
+        {
+            if (shown >= 8) break;
+            if (!Match(w.Name?.String) && !Match(w.EditorID)) continue;
+            shown++;
+            Console.WriteLine($"WEAP {w.EditorID} '{w.Name?.String}' [{w.FormKey}] " +
+                $"ench={(w.ObjectEffect.IsNull ? "none" : w.ObjectEffect.FormKey.ToString())}");
+            var root = w;
+            for (int i = 0; i < 10 && !root.Template.IsNull; i++)
+            {
+                if (!root.Template.TryResolve(cache, out var t)) break;
+                root = t;
+                Console.WriteLine($"  template -> {root.EditorID} '{root.Name?.String}' [{root.FormKey}]");
+            }
+        }
+        foreach (var a in lo.PriorityOrder.Armor().WinningOverrides())
+        {
+            if (shown >= 16) break;
+            if (!Match(a.Name?.String) && !Match(a.EditorID)) continue;
+            shown++;
+            Console.WriteLine($"ARMO {a.EditorID} '{a.Name?.String}' [{a.FormKey}] " +
+                $"ench={(a.ObjectEffect.IsNull ? "none" : a.ObjectEffect.FormKey.ToString())}");
+            var root = a;
+            for (int i = 0; i < 10 && !root.TemplateArmor.IsNull; i++)
+            {
+                if (!root.TemplateArmor.TryResolve(cache, out var t)) break;
+                root = t;
+                Console.WriteLine($"  template -> {root.EditorID} '{root.Name?.String}' [{root.FormKey}]");
+            }
+        }
+        return shown > 0 ? 0 : Fail($"no winning WEAP/ARMO matching '{needle}'");
     }
 
     public static int DumpSpell(
@@ -1000,15 +1042,34 @@ static class Commands
         // "Spear of Bitter Mercy" is name-shaped like a generic but its
         // enchant exists nowhere else -> keep.
         var enchUse = data.Raw.GroupBy(r => r.Ench).ToDictionary(g => g.Key, g => g.Count());
+        static bool OfShaped(string? name) =>
+            name is { Length: > 4 } && name.Contains(" of ", StringComparison.Ordinal);
+        int renamedBase = 0;
         foreach (var r in data.Raw)
         {
             FormKey? baseKey = null;
             if (GenericNamed(r.Name, r.BaseName)) baseKey = r.Root;
-            else if (enchUse[r.Ench] >= 3) baseKey = GenericShapedBase(r.Name);
+            else if (enchUse[r.Ench] >= 3)
+            {
+                baseKey = GenericShapedBase(r.Name);
+                // Renamed-base generics (Marth 2026-07-09, "keep-named leak"):
+                // Requiem renames template bases ("Glass Bow of Fire" sits on
+                // "Glass Light Bow", "Glass Armor of ..." on "Glass Cuirass"),
+                // so both name tests fail even though the ENCH is a shared
+                // loot recipe. Of-shape + shared ENCH + a template root is
+                // generic — and the root IS the unenchanted conversion base.
+                if (baseKey is null && r.Root is not null && OfShaped(r.Name))
+                {
+                    baseKey = r.Root;
+                    renamedBase++;
+                }
+            }
             var cls = Classify(r.Ench, baseKey is not null);
             if (cls.StartsWith("strip") && baseKey is { } bk) data.StripBase[r.Key] = bk;
             data.Items.Add((r.Key, cls, r.Name, r.Mod, r.Edid));
         }
+        if (renamedBase > 0)
+            Console.WriteLine($"census: {renamedBase} renamed-base generic(s) reclassified via template root");
         // Untemplated twins: NPC-hand records (Dremora fire blades etc.) share
         // a stripped generic's display name but not its template shape. They
         // reach players as kill loot, so surface them for a ruling instead of

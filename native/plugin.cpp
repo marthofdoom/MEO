@@ -698,6 +698,30 @@ void ApplyWornAbility(RE::Actor* a_owner, RE::TESBoundObject* a_base,
     }
 }
 
+// m23c (Marth's stale-Resist-Fire report): Update*Ability REPLACES a worn
+// ability when an enchant extra is present, but when the extra is GONE it
+// early-outs without unregistering — removing the LAST gem from a worn item
+// left its constant effect active until a real unequip. The engine's own
+// complete teardown is the equip cycle (m16-proven, m17b field-validated),
+// and behind the open menu its one-frame blink is invisible.
+void EquipCycleWorn(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList) {
+    auto* em = RE::ActorEquipManager::GetSingleton();
+    if (!em || !a_owner || !a_base || !a_xList) {
+        return;
+    }
+    const RE::BGSEquipSlot* slot = nullptr;
+    if (a_base->Is(RE::FormType::Weapon)) {
+        if (auto* dom = RE::BGSDefaultObjectManager::GetSingleton()) {
+            slot = dom->GetObject<RE::BGSEquipSlot>(
+                a_xList->HasType(RE::ExtraDataType::kWornLeft)
+                    ? RE::DEFAULT_OBJECT::kLeftHandEquip
+                    : RE::DEFAULT_OBJECT::kRightHandEquip);
+        }
+    }
+    em->UnequipObject(a_owner, a_base, a_xList, 1, slot, false, false, false, true);
+    em->EquipObject(a_owner, a_base, a_xList, 1, slot, false, false, false, true);
+}
+
 // ── M4b: every unique gem owns its own Gem XP pool (DESIGN §3) ────────
 // Unsocketing returns THE gem: a loose gem with banked XP is a real
 // instance — level-correct MISC form + ExtraUniqueID + the same co-save
@@ -837,12 +861,18 @@ struct MenuItemRow {
     bool          isArmor = false;    // gates which gems can socket into it
     int           capacity = 1;       // socket slots this item has (1 or 2)
     std::string   slotGem[2];         // per-slot gem label; empty = empty slot
+    int           slotTheme[2] = { -1, -1 };  // Theme index for the accent swatch
+    float         slotXp[2] = { 0.0f, 0.0f };
+    float         slotNeed[2] = { 0.0f, 0.0f };  // 0 = mastered / never levels
 };
 struct MenuGemRow {
     std::string   label;
     RE::FormID    base = 0;
     std::uint16_t uid = 0;       // instance with banked XP, else 0
     bool          isArmor = false;
+    int           theme = -1;    // Theme index for the accent swatch
+    float         xp = -1.0f;    // banked XP (instance rows); -1 = plain gem
+    float         need = 0.0f;
 };
 struct MenuState {
     std::mutex               lock;
@@ -1219,12 +1249,11 @@ void BuildMenuSnapshot() {
                         }
                         if (auto gemIt = g_gemByGid.find(it->second.gid); gemIt != g_gemByGid.end()) {
                             const auto& rg = g_gems[gemIt->second];
-                            const float need = NextThreshold(rg.def, it->second.level);
                             row.slotGem[s] = std::format("{} {}", rg.def->name,
                                                          meo::kRoman[it->second.level - 1]);
-                            if (need > 0.0f) {
-                                row.slotGem[s] += std::format(" ({:.0f}/{:.0f})", it->second.xp, need);
-                            }
+                            row.slotTheme[s] = static_cast<int>(rg.def->theme);
+                            row.slotXp[s] = it->second.xp;
+                            row.slotNeed[s] = NextThreshold(rg.def, it->second.level);
                         } else {
                             row.slotGem[s] = "gem from a missing master";
                         }
@@ -1271,8 +1300,10 @@ void BuildMenuSnapshot() {
                     row.base = obj->GetFormID();
                     row.isArmor = rg.def->isArmor;
                     row.uid = xid->uniqueID;
-                    row.label = std::format("{} ({:.0f}/{:.0f})", obj->GetName(), recIt->second.xp,
-                                            NextThreshold(rg.def, recIt->second.level));
+                    row.label = obj->GetName();
+                    row.theme = static_cast<int>(rg.def->theme);
+                    row.xp = recIt->second.xp;
+                    row.need = NextThreshold(rg.def, recIt->second.level);
                     gems.push_back(std::move(row));
                 }
             }
@@ -1284,6 +1315,7 @@ void BuildMenuSnapshot() {
                 if (plain > 1) {
                     row.label += std::format("  x{}", plain);
                 }
+                row.theme = static_cast<int>(g_gems[it->second.first].def->theme);
                 gems.push_back(std::move(row));
             }
         }
@@ -1340,7 +1372,8 @@ void MenuUnsocket(RE::FormID a_base, std::uint16_t a_uid, std::uint8_t a_slot) {
     // Rebuild from whatever slots remain (strips the enchant + name if none).
     RebuildInstanceEnchant(form, xl);
     if (IsWornXList(xl)) {
-        ApplyWornAbility(player, form, xl, xl->HasType(RE::ExtraDataType::kWornLeft));
+        EquipCycleWorn(player, form, xl);  // m23c: real teardown — Update alone
+                                           // leaves the removed gem's ability live
     }
     spdlog::info("[menu] unsocketed {:08X}/{}[{}]: '{}' L{} xp={:.0f}", a_base, a_uid, a_slot,
                  rec.gid, rec.level, rec.xp);
@@ -1372,7 +1405,7 @@ void DestroyGem(RE::FormID a_base, std::uint16_t a_uid, std::uint8_t a_slot) {
     g_sockets.erase(it);
     RebuildInstanceEnchant(form, xl);  // rebuild from remaining slots (or strip)
     if (IsWornXList(xl)) {
-        ApplyWornAbility(player, form, xl, xl->HasType(RE::ExtraDataType::kWornLeft));
+        EquipCycleWorn(player, form, xl);  // m23c: same stale-ability teardown as unsocket
     }
     if (tier >= 0 && g_filledSoulGems[tier]) {
         player->AddObjectToContainer(g_filledSoulGems[tier], nullptr, 1, nullptr);
@@ -1604,6 +1637,50 @@ namespace menuhook {
     // present hook overrides DisplaySize with these every frame.
     float g_bbW = 0.0f;
     float g_bbH = 0.0f;
+    // m23c: real typefaces, loaded at init scaled to the backbuffer (the
+    // upscaled default bitmap font was the menu's biggest visual weakness).
+    // Optional files — absent means ImGui default at the legacy global scale.
+    ImFont* g_fontBody = nullptr;
+    ImFont* g_fontHead = nullptr;
+    // m23c input-quality state (see InputDispatchHook / DrawGemMenu):
+    // shout-key close triggers on RELEASE with both edges swallowed, gated on
+    // a press seen while open; the cursor position is pushed to ImGui on every
+    // open so the first click lands even before the mouse ever moves.
+    std::atomic<bool>          g_shoutDownSeen{ false };
+    std::atomic<bool>          g_cursorInit{ false };
+    float                      g_cursorX = -1.0f;
+    float                      g_cursorY = -1.0f;
+    std::atomic<std::uint64_t> g_destroyArm{ 0 };  // armed Destroy row (two-click confirm)
+
+    // Accent per GemCatalog Theme (order frozen: kFire..kUtility). The one
+    // visual anchor every style direction shares — gems read by color.
+    inline constexpr ImVec4 kThemeCol[9] = {
+        { 0.90f, 0.42f, 0.18f, 1.0f },  // Fire     — ember
+        { 0.45f, 0.72f, 0.88f, 1.0f },  // Frost    — glacial
+        { 0.62f, 0.62f, 0.95f, 1.0f },  // Shock    — arc indigo
+        { 0.68f, 0.50f, 0.88f, 1.0f },  // Arcane   — violet
+        { 0.80f, 0.28f, 0.38f, 1.0f },  // Drain    — crimson
+        { 0.78f, 0.72f, 0.58f, 1.0f },  // Martial  — steel-tan
+        { 0.52f, 0.70f, 0.42f, 1.0f },  // Roguish  — moss
+        { 0.92f, 0.83f, 0.55f, 1.0f },  // Holy     — pale gold
+        { 0.42f, 0.72f, 0.65f, 1.0f },  // Utility  — teal
+    };
+    ImVec4 ThemeCol(int a_theme) {
+        return (a_theme >= 0 && a_theme < 9) ? kThemeCol[a_theme]
+                                             : ImVec4(0.70f, 0.68f, 0.62f, 1.0f);
+    }
+
+    // Socket pip / gem swatch: a small diamond, the mod's own glyph — drawn
+    // with primitives so no bundled font has to cover U+25C6.
+    void DrawDiamond(ImDrawList* a_dl, ImVec2 a_c, float a_r, ImU32 a_col, bool a_filled) {
+        const ImVec2 p0(a_c.x, a_c.y - a_r), p1(a_c.x + a_r, a_c.y),
+            p2(a_c.x, a_c.y + a_r), p3(a_c.x - a_r, a_c.y);
+        if (a_filled) {
+            a_dl->AddQuadFilled(p0, p1, p2, p3, a_col);
+        } else {
+            a_dl->AddQuad(p0, p1, p2, p3, a_col, 1.4f);
+        }
+    }
 
     // Square corners, dark parchment-on-charcoal, brass accents — closer
     // to Skyrim's UI language than ImGui's default debug grey.
@@ -1616,8 +1693,10 @@ namespace menuhook {
         style.WindowBorderSize = 1.0f;
         style.ChildBorderSize = 1.0f;
         style.WindowPadding = ImVec2(18.0f, 14.0f);
-        style.ItemSpacing = ImVec2(10.0f, 8.0f);
-        style.FramePadding = ImVec2(10.0f, 6.0f);
+        style.ItemSpacing = ImVec2(10.0f, 7.0f);
+        style.FramePadding = ImVec2(10.0f, 7.0f);
+        style.ScrollbarSize = 14.0f;
+        style.SelectableTextAlign = ImVec2(0.0f, 0.5f);
         auto* c = style.Colors;
         c[ImGuiCol_WindowBg]         = ImVec4(0.04f, 0.04f, 0.06f, 0.94f);
         c[ImGuiCol_ChildBg]          = ImVec4(0.06f, 0.06f, 0.08f, 0.55f);
@@ -1644,7 +1723,12 @@ namespace menuhook {
             return;
         }
         io.MouseDrawCursor = true;
-        io.FontGlobalScale = std::max(1.0f, io.DisplaySize.y / 1080.0f);
+        // With a real typeface the font is baked at backbuffer scale; the
+        // global scale is only the legacy fallback for a missing font file.
+        io.FontGlobalScale = g_fontBody ? 1.0f : std::max(1.0f, io.DisplaySize.y / 1080.0f);
+        if (g_fontBody) {
+            ImGui::PushFont(g_fontBody);
+        }
         // Centered on each open (Appearing, not Always) so it can be
         // dragged afterwards; DisplaySize is backbuffer-true by now.
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
@@ -1655,40 +1739,73 @@ namespace menuhook {
                           ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
                               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings)) {
             ImGui::End();
+            if (g_fontBody) {
+                ImGui::PopFont();
+            }
             return;
         }
-        {
-            const char* title = "G E M   S O C K E T I N G";
+        auto* dl = ImGui::GetWindowDrawList();
+        const float lineH = ImGui::GetTextLineHeight();
+        {  // Title in the display face, flanked by drawn rules.
+            const char* title = "GEM SOCKETING";
+            if (g_fontHead) {
+                ImGui::PushFont(g_fontHead);
+            }
+            const ImVec2 ts = ImGui::CalcTextSize(title);
+            const float  tx = (ImGui::GetWindowSize().x - ts.x) * 0.5f;
+            const ImVec2 wp = ImGui::GetWindowPos();
+            const float  ry = wp.y + ImGui::GetCursorPosY() + ts.y * 0.58f;
+            const ImU32  rule = ImGui::GetColorU32(ImGuiCol_Separator);
+            dl->AddLine(ImVec2(wp.x + 26.0f, ry), ImVec2(wp.x + tx - 18.0f, ry), rule);
+            dl->AddLine(ImVec2(wp.x + tx + ts.x + 18.0f, ry),
+                        ImVec2(wp.x + ImGui::GetWindowSize().x - 26.0f, ry), rule);
+            ImGui::SetCursorPosX(tx);
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.78f, 0.70f, 0.45f, 1.0f));
-            ImGui::SetCursorPosX((ImGui::GetWindowSize().x - ImGui::CalcTextSize(title).x) * 0.5f);
             ImGui::TextUnformatted(title);
             ImGui::PopStyleColor();
-            ImGui::Separator();
+            if (g_fontHead) {
+                ImGui::PopFont();
+            }
             ImGui::Spacing();
         }
         std::scoped_lock lk(g_menu.lock);
-        const bool busy = g_menu.busy.load();
-        if (busy) {
-            ImGui::BeginDisabled();
-        }
+        const bool  busy = g_menu.busy.load();
         const float footer = ImGui::GetFrameHeightWithSpacing() + 6.0f;
         const float half = ImGui::GetContentRegionAvail().x * 0.5f;
+        const float rowH = lineH + 10.0f;
+        // Left pane: NEVER disabled — selection is pure UI state (identity-
+        // tracked across rebuilds since m19e), and eating clicks during the
+        // brief busy window read as "the menu misses clicks" in the field.
         ImGui::BeginChild("items", ImVec2(half - 6.0f, -footer), true);
         ImGui::TextDisabled("SOCKETABLE ITEMS");
         ImGui::Separator();
         for (int i = 0; i < static_cast<int>(g_menu.items.size()); ++i) {
-            const auto& row = g_menu.items[i];
-            std::string label = row.label;
-            const int filled = (!row.slotGem[0].empty()) + (!row.slotGem[1].empty());
-            if (filled > 0) {
-                label += (filled == row.capacity) ? "  **" : "  *";  // * = partly, ** = full
-            }
-            label += std::format("##item{}", i);
-            if (ImGui::Selectable(label.c_str(), g_menu.selItem == i)) {
+            const auto&  row = g_menu.items[i];
+            const ImVec2 rp = ImGui::GetCursorScreenPos();
+            // Selection acts on mouse PRESS (IsItemClicked), not release:
+            // raw-delta cursor motion between press and release could leave
+            // the row and cancel a release-click — the missed-click report.
+            // The Selectable return still serves keyboard/gamepad activation.
+            const bool nav = ImGui::Selectable(std::format("##item{}", i).c_str(),
+                                               g_menu.selItem == i, 0, ImVec2(0.0f, rowH));
+            if (nav || ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
                 g_menu.selItem = i;
                 g_menu.selBase = row.base;
                 g_menu.selUid = row.uid;
+                g_destroyArm = 0;
             }
+            // Socket pips: one diamond per slot, filled+tinted when occupied.
+            float cx = rp.x + 12.0f;
+            for (int s = 0; s < row.capacity && s < kMaxSockets; ++s) {
+                const bool has = !row.slotGem[s].empty();
+                const ImU32 col = ImGui::GetColorU32(
+                    has ? ThemeCol(row.slotTheme[s])
+                        : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                DrawDiamond(dl, ImVec2(cx, rp.y + rowH * 0.5f), 4.5f, col, has);
+                cx += 13.0f;
+            }
+            dl->AddText(ImVec2(rp.x + 42.0f, rp.y + (rowH - lineH) * 0.5f),
+                        ImGui::GetColorU32(ImGuiCol_Text), row.label.c_str());
         }
         if (g_menu.items.empty()) {
             ImGui::TextDisabled("No socketable items.");
@@ -1696,47 +1813,107 @@ namespace menuhook {
         ImGui::EndChild();
         ImGui::SameLine();
         ImGui::BeginChild("gems", ImVec2(0, -footer), true);
+        const float innerW = ImGui::GetContentRegionAvail().x;
+        if (busy) {
+            ImGui::BeginDisabled();
+        }
         if (g_menu.selItem >= 0 && g_menu.selItem < static_cast<int>(g_menu.items.size())) {
             const auto sel = g_menu.items[g_menu.selItem];  // copy: queue may rebuild
             ImGui::TextDisabled("%s%s", sel.label.c_str(),
-                                sel.capacity > 1 ? "  [2 linked sockets]" : "");
+                                sel.capacity > 1 ? "  — 2 linked sockets" : "");
             ImGui::Separator();
-            // One line per socket slot. Filled = select to remove (+ station
-            // feed/destroy per slot); empty = a free slot for the gem list below.
+            // One row per socket slot. Filled = click to remove (+ station
+            // feed/destroy); empty = a free slot for the gem list below.
             int freeSlots = 0;
-            for (int s = 0; s < sel.capacity && s < 2; ++s) {
+            for (int s = 0; s < sel.capacity && s < kMaxSockets; ++s) {
+                ImGui::PushID(s);
+                const ImVec2 rp = ImGui::GetCursorScreenPos();
                 if (sel.slotGem[s].empty()) {
                     ++freeSlots;
-                    ImGui::TextDisabled("Socket %d: empty", s + 1);
+                    ImGui::Dummy(ImVec2(0.0f, rowH));
+                    DrawDiamond(dl, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 4.5f,
+                                ImGui::GetColorU32(ImGuiCol_TextDisabled), false);
+                    dl->AddText(ImVec2(rp.x + 28.0f, rp.y + (rowH - lineH) * 0.5f),
+                                ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                                std::format("Socket {} — empty", s + 1).c_str());
+                    ImGui::PopID();
                     continue;
                 }
-                ImGui::PushID(s);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.35f, 1.0f));
-                const std::string lbl =
-                    std::format("Socket {}: {}  — select to remove", s + 1, sel.slotGem[s]);
-                if (ImGui::Selectable(lbl.c_str())) {
+                const ImVec4 tcol = ThemeCol(sel.slotTheme[s]);
+                const bool   nav = ImGui::Selectable("##slot", false, 0, ImVec2(0.0f, rowH));
+                const bool   act = nav || ImGui::IsItemClicked(ImGuiMouseButton_Left);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Remove %s", sel.slotGem[s].c_str());
+                }
+                DrawDiamond(dl, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 5.0f,
+                            ImGui::GetColorU32(tcol), true);
+                dl->AddText(ImVec2(rp.x + 28.0f, rp.y + (rowH - lineH) * 0.5f),
+                            ImGui::GetColorU32(tcol), sel.slotGem[s].c_str());
+                if (sel.slotNeed[s] > 0.0f) {
+                    const std::string xps =
+                        std::format("{:.0f} / {:.0f}", sel.slotXp[s], sel.slotNeed[s]);
+                    dl->AddText(ImVec2(rp.x + innerW - ImGui::CalcTextSize(xps.c_str()).x - 8.0f,
+                                       rp.y + (rowH - lineH) * 0.5f),
+                                ImGui::GetColorU32(ImGuiCol_TextDisabled), xps.c_str());
+                    const float bx0 = rp.x + 28.0f;
+                    const float bx1 = rp.x + innerW - 8.0f;
+                    const float by = rp.y + rowH - 3.0f;
+                    dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx1, by + 2.0f),
+                                      ImGui::GetColorU32(ImGuiCol_ScrollbarBg));
+                    dl->AddRectFilled(
+                        ImVec2(bx0, by),
+                        ImVec2(bx0 + (bx1 - bx0) *
+                                         std::clamp(sel.slotXp[s] / sel.slotNeed[s], 0.0f, 1.0f),
+                               by + 2.0f),
+                        ImGui::GetColorU32(tcol));
+                } else {
+                    dl->AddText(ImVec2(rp.x + innerW - ImGui::CalcTextSize("mastered").x - 8.0f,
+                                       rp.y + (rowH - lineH) * 0.5f),
+                                ImGui::GetColorU32(ImGuiCol_TextDisabled), "mastered");
+                }
+                if (act) {
                     const std::uint8_t slot = static_cast<std::uint8_t>(s);
+                    g_destroyArm = 0;
                     QueueMenuTask([sel, slot]() { MenuUnsocket(sel.base, sel.uid, slot); });
                 }
-                ImGui::PopStyleColor();
                 if (g_menu.station.load()) {
+                    ImGui::Indent(28.0f);
                     if (ImGui::SmallButton("Feed Soul")) {
                         const std::uint8_t slot = static_cast<std::uint8_t>(s);
+                        g_destroyArm = 0;
                         QueueMenuTask([sel, slot]() { FeedSoulToGem(sel.base, sel.uid, slot); });
                     }
                     ImGui::SameLine();
-                    if (ImGui::SmallButton("Destroy")) {
-                        const std::uint8_t slot = static_cast<std::uint8_t>(s);
-                        QueueMenuTask([sel, slot]() { DestroyGem(sel.base, sel.uid, slot); });
+                    // Destroy is the one irreversible action in the menu —
+                    // two-click confirm; arms per (base,uid,slot), disarmed by
+                    // any other click, selection change, or reopen.
+                    const InstKey key = MakeKey(sel.base, sel.uid, static_cast<std::uint8_t>(s));
+                    const bool    armed = g_destroyArm.load() == key;
+                    if (armed) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.38f, 0.30f, 1.0f));
                     }
+                    if (ImGui::SmallButton(armed ? "Confirm destroy" : "Destroy")) {
+                        if (armed) {
+                            const std::uint8_t slot = static_cast<std::uint8_t>(s);
+                            g_destroyArm = 0;
+                            QueueMenuTask([sel, slot]() { DestroyGem(sel.base, sel.uid, slot); });
+                        } else {
+                            g_destroyArm = key;
+                        }
+                    }
+                    if (armed) {
+                        ImGui::PopStyleColor();
+                    }
+                    ImGui::Unindent(28.0f);
                 }
                 ImGui::PopID();
             }
             ImGui::Separator();
             if (freeSlots <= 0) {
                 ImGui::TextDisabled(sel.capacity > 1 ? "Both sockets filled — remove one to swap."
-                                                     : "Socket filled — select it above to remove.");
+                                                     : "Socket filled — click it above to remove.");
             } else {
+                ImGui::TextDisabled(sel.isArmor ? "ARMOR GEMS" : "WEAPON GEMS");
                 int shown = 0;
                 for (int i = 0; i < static_cast<int>(g_menu.gems.size()); ++i) {
                     const auto gem = g_menu.gems[i];  // copy for the closure
@@ -1744,8 +1921,29 @@ namespace menuhook {
                         continue;  // weapon gems only fit weapons; armor only armor
                     }
                     ++shown;
-                    const std::string lbl = gem.label + std::format("##gem{}", i);
-                    if (ImGui::Selectable(lbl.c_str())) {
+                    const ImVec2 rp = ImGui::GetCursorScreenPos();
+                    ImGui::PushID(1000 + i);
+                    const bool nav = ImGui::Selectable("##gem", false, 0, ImVec2(0.0f, rowH));
+                    const bool act = nav || ImGui::IsItemClicked(ImGuiMouseButton_Left);
+                    ImGui::PopID();
+                    const ImVec4 tcol = ThemeCol(gem.theme);
+                    // Plain gems get a slightly dimmed swatch; instances with
+                    // banked XP glow full and show their progress numbers.
+                    DrawDiamond(dl, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 4.5f,
+                                ImGui::GetColorU32(ImVec4(tcol.x, tcol.y, tcol.z,
+                                                          gem.uid ? 1.0f : 0.72f)),
+                                true);
+                    dl->AddText(ImVec2(rp.x + 28.0f, rp.y + (rowH - lineH) * 0.5f),
+                                ImGui::GetColorU32(ImGuiCol_Text), gem.label.c_str());
+                    if (gem.xp >= 0.0f && gem.need > 0.0f) {
+                        const std::string xps = std::format("{:.0f} / {:.0f}", gem.xp, gem.need);
+                        dl->AddText(
+                            ImVec2(rp.x + innerW - ImGui::CalcTextSize(xps.c_str()).x - 8.0f,
+                                   rp.y + (rowH - lineH) * 0.5f),
+                            ImGui::GetColorU32(ImGuiCol_TextDisabled), xps.c_str());
+                    }
+                    if (act) {
+                        g_destroyArm = 0;
                         QueueMenuTask([sel, gem]() {
                             MenuSocket(sel.base, sel.uid, gem.base, gem.uid);
                         });
@@ -1758,16 +1956,25 @@ namespace menuhook {
         } else {
             ImGui::TextDisabled("Select an item.");
         }
-        ImGui::EndChild();
         if (busy) {
             ImGui::EndDisabled();
         }
-        ImGui::TextDisabled("Select an item, then a gem to socket it. Esc / B closes.");
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60.0f);
-        if (ImGui::Button("Close")) {
+        ImGui::EndChild();
+        if (busy) {
+            ImGui::TextDisabled("Working...");
+        } else if (g_menu.station.load()) {
+            ImGui::TextDisabled("Click an item, then a gem. Filled sockets: click to remove; feed souls or destroy here.");
+        } else {
+            ImGui::TextDisabled("Click an item, then a gem to socket it. Esc or the pouch key closes.");
+        }
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 70.0f);
+        if (ImGui::Button("Close") && !busy) {
             CloseGemMenu();
         }
         ImGui::End();
+        if (g_fontBody) {
+            ImGui::PopFont();
+        }
     }
 
     struct WndProcHook {
@@ -1806,6 +2013,29 @@ namespace menuhook {
             io.IniFilename = nullptr;  // never write imgui.ini into the game dir
             io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
             io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+            // m23c: bake real typefaces at backbuffer scale (FontGlobalScale
+            // on the default bitmap font was blurry at any resolution above
+            // 1080p). Both files optional; the draw falls back per-font.
+            {
+                const float uiScale =
+                    std::max(1.0f, static_cast<float>(sd.BufferDesc.Height) / 1080.0f);
+                constexpr const char* kBodyTTF = "Data/SKSE/Plugins/MEO/fonts/body.ttf";
+                constexpr const char* kHeadTTF = "Data/SKSE/Plugins/MEO/fonts/head.ttf";
+                if (std::ifstream(kBodyTTF).good()) {
+                    g_fontBody =
+                        io.Fonts->AddFontFromFileTTF(kBodyTTF, std::floor(19.0f * uiScale));
+                }
+                if (std::ifstream(kHeadTTF).good()) {
+                    g_fontHead =
+                        io.Fonts->AddFontFromFileTTF(kHeadTTF, std::floor(27.0f * uiScale));
+                }
+                if (!g_fontHead) {
+                    g_fontHead = g_fontBody;  // head falls back to body, not to default
+                }
+                spdlog::info("[menu] fonts: body={} head={} (scale {:.2f})",
+                             g_fontBody ? "ok" : "default", g_fontHead ? "ok" : "default",
+                             uiScale);
+            }
             if (!ImGui_ImplWin32_Init(sd.OutputWindow) || !ImGui_ImplDX11_Init(g_device, g_context)) {
                 spdlog::error("[menu] ImGui backend init failed — menu disabled");
                 return;
@@ -1833,6 +2063,17 @@ namespace menuhook {
             ImGui_ImplWin32_NewFrame();
             if (g_bbW > 0.0f) {
                 ImGui::GetIO().DisplaySize = ImVec2(g_bbW, g_bbH);
+            }
+            // m23c: push the cursor position on open — ImGui only ever
+            // learned it from move events, so the first click of a session
+            // (or any click before the mouse moved) landed at an invalid
+            // position and silently missed.
+            if (g_cursorInit.exchange(false)) {
+                if (g_cursorX < 0.0f && g_bbW > 0.0f) {
+                    g_cursorX = g_bbW * 0.5f;
+                    g_cursorY = g_bbH * 0.5f;
+                }
+                ImGui::GetIO().AddMousePosEvent(g_cursorX, g_cursorY);
             }
             ImGui::NewFrame();
             DrawGemMenu();
@@ -1891,21 +2132,19 @@ namespace menuhook {
                 func(a_source, a_events);
                 return;
             }
-            auto&        io = ImGui::GetIO();
-            static float cursorX = -1.0f;
-            static float cursorY = -1.0f;
-            if (cursorX < 0.0f) {
-                cursorX = io.DisplaySize.x * 0.5f;
-                cursorY = io.DisplaySize.y * 0.5f;
+            auto& io = ImGui::GetIO();
+            if (g_cursorX < 0.0f) {
+                g_cursorX = io.DisplaySize.x * 0.5f;
+                g_cursorY = io.DisplaySize.y * 0.5f;
             }
             for (auto* e = *a_events; e; e = e->next) {
                 if (e->eventType == RE::INPUT_EVENT_TYPE::kMouseMove) {
                     auto* m = static_cast<RE::MouseMoveEvent*>(e);
-                    cursorX = std::clamp(cursorX + static_cast<float>(m->mouseInputX), 0.0f,
-                                         io.DisplaySize.x);
-                    cursorY = std::clamp(cursorY + static_cast<float>(m->mouseInputY), 0.0f,
-                                         io.DisplaySize.y);
-                    io.AddMousePosEvent(cursorX, cursorY);
+                    g_cursorX = std::clamp(g_cursorX + static_cast<float>(m->mouseInputX), 0.0f,
+                                           io.DisplaySize.x);
+                    g_cursorY = std::clamp(g_cursorY + static_cast<float>(m->mouseInputY), 0.0f,
+                                           io.DisplaySize.y);
+                    io.AddMousePosEvent(g_cursorX, g_cursorY);
                 } else if (e->eventType == RE::INPUT_EVENT_TYPE::kButton) {
                     auto* b = static_cast<RE::ButtonEvent*>(e);
                     if (!b->IsDown() && !b->IsUp()) {
@@ -1926,8 +2165,19 @@ namespace menuhook {
                     case RE::INPUT_DEVICE::kKeyboard:
                         if ((code == 0x01 || code == 0x0F) && down) {  // Esc / Tab
                             g_menu.wantClose = true;
-                        } else if (down && code == ShoutKey(RE::INPUT_DEVICE::kKeyboard)) {
-                            g_menu.wantClose = true;  // pouch power key = toggle (m18b)
+                        } else if (code == ShoutKey(RE::INPUT_DEVICE::kKeyboard)) {
+                            // m23c: close on RELEASE, both edges swallowed.
+                            // Closing on the press leaked the release to the
+                            // game once the menu shut, and that release cast
+                            // the pouch power again — the close-then-instant-
+                            // reopen Marth hit. Requiring a press seen while
+                            // OPEN also keeps the release of the press that
+                            // opened the menu from closing it on arrival.
+                            if (down) {
+                                g_shoutDownSeen = true;
+                            } else if (g_shoutDownSeen.exchange(false)) {
+                                g_menu.wantClose = true;
+                            }
                         } else if (auto key = DIKToImGuiKey(code); key != ImGuiKey_None) {
                             io.AddKeyEvent(key, down);
                         }
@@ -1937,8 +2187,12 @@ namespace menuhook {
                                 RE::BSWin32GamepadDevice::Key::kB &&
                             down) {
                             g_menu.wantClose = true;
-                        } else if (down && code == ShoutKey(RE::INPUT_DEVICE::kGamepad)) {
-                            g_menu.wantClose = true;  // pouch power button = toggle (m18b)
+                        } else if (code == ShoutKey(RE::INPUT_DEVICE::kGamepad)) {
+                            if (down) {  // same release-toggle as keyboard
+                                g_shoutDownSeen = true;
+                            } else if (g_shoutDownSeen.exchange(false)) {
+                                g_menu.wantClose = true;
+                            }
                         } else if (auto key = GamepadToImGuiKey(code); key != ImGuiKey_None) {
                             io.AddKeyEvent(key, down);
                         }
@@ -1989,6 +2243,9 @@ void OpenGemMenu(bool a_station) {
     BuildMenuSnapshot();
     g_menu.wantClose = false;
     g_menu.station = a_station;
+    menuhook::g_shoutDownSeen = false;  // m23c: opening press's release must not close
+    menuhook::g_cursorInit = true;      // m23c: seed ImGui's cursor pos this frame
+    menuhook::g_destroyArm = 0;
     g_menu.open = true;
     spdlog::info("[menu] opened ({}): {} item(s), {} gem(s)", a_station ? "station" : "pouch",
                  g_menu.items.size(), g_menu.gems.size());
@@ -3051,7 +3308,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.31.1 (M23b conversion-table resolution fix) loaded");
+            console->Print("MEO native v0.32.0 (M23c menu quality + worn-teardown + conversion reach) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -3082,7 +3339,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.31.1 (M23b conversion-table resolution fix) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.32.0 (M23c menu quality + worn-teardown + conversion reach) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
