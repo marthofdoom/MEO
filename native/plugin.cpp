@@ -2599,6 +2599,67 @@ RE::ExtraDataList* FindWornXListFor(RE::Actor* a_actor, RE::TESBoundObject* a_ba
     return nullptr;
 }
 
+// m26 (Marth's rulings 2026-07-10): pre-MEO PLAYER-MADE enchants convert on
+// load like loot. The item already IS the right base, so no remove/re-add —
+// strip the old enchant extras and stamp matching family gems into the same
+// instance (slots up to capacity). ALL GEMS LEVEL I, no magnitude matching —
+// "that's the cost of adding mid-save" (his call: fairness over nostalgia).
+int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
+                           RE::ExtraDataList* a_xList) {
+    auto* xEnch = a_xList->GetByType<RE::ExtraEnchantment>();
+    auto* ench = xEnch ? xEnch->enchantment : nullptr;
+    if (!ench) {
+        return 0;
+    }
+    const int  cap = SocketCapacity(a_base);
+    const bool armor = a_base->Is(RE::FormType::Armor);
+    std::vector<int> picks;
+    for (auto* eff : ench->effects) {
+        if (!eff || !eff->baseEffect) {
+            continue;
+        }
+        int found = -1;
+        for (std::size_t i = 0; i < g_gems.size(); ++i) {
+            if (g_gems[i].mgef == eff->baseEffect && g_gems[i].def->isArmor == armor) {
+                found = static_cast<int>(i);
+                break;
+            }
+        }
+        if (found < 0) {
+            continue;  // rider/companion or unknown family — dropped
+        }
+        bool dup = false;
+        for (int p : picks) {
+            dup = dup || p == found;
+        }
+        if (!dup && static_cast<int>(picks.size()) < cap) {
+            picks.push_back(found);
+        }
+    }
+    if (picks.empty()) {
+        spdlog::info("[convert-miss] '{}' base {:08X} — instance enchant matches no gem "
+                     "family, left alone", a_base->GetName(), a_base->GetFormID());
+        return 0;
+    }
+    const bool worn = IsWornXList(a_xList);
+    a_xList->RemoveByType(RE::ExtraDataType::kEnchantment);
+    a_xList->RemoveByType(RE::ExtraDataType::kTextDisplayData);  // forge rename dies with it
+    std::string what;
+    for (std::size_t s = 0; s < picks.size(); ++s) {
+        StampInstance(a_base, a_xList, picks[s], 1, static_cast<std::uint8_t>(s));
+        if (!what.empty()) {
+            what += " + ";
+        }
+        what += std::format("{} I", g_gems[picks[s]].def->name);
+    }
+    if (worn && a_owner) {
+        EquipCycleWorn(a_owner, a_base, a_xList);  // old ability out, gem live
+    }
+    spdlog::info("[convert] {:08X} player enchant on '{}' -> {}",
+                 a_base->GetFormID(), a_base->GetName(), what);
+    return 1;
+}
+
 int ConvertInventory(RE::TESObjectREFR* a_holder) {
     auto* actor = a_holder ? a_holder->As<RE::Actor>() : nullptr;
     if (!actor || g_convert.empty()) {
@@ -2670,9 +2731,7 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
                     }
                 }
                 if (!ours) {
-                    spdlog::info("[convert-miss] '{}' base {:08X} — INSTANCE enchant on this "
-                                 "copy (player-made or list-minted), skipped by design",
-                                 obj->GetName(), obj->GetFormID());
+                    converted += ConvertInstanceEnchant(actor, obj, xl);  // m26: Marth's ruling
                     break;
                 }
             }
@@ -2716,6 +2775,48 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
                      g_gems[hit.tgt->gemIdx].def->name);
     }
     return converted;
+}
+
+// m26 (Marth: an enchanted name floating over a world item until pickup
+// "is jarring"): loose world refs of convertible generics swap IN PLACE at
+// cell attach — but only disposable clutter. Persistent and quest-aliased
+// refs are exactly the ones scripts point at, so they keep converting on
+// pickup (ContainerSink) instead of being replace-and-deleted here.
+void ConvertWorldRef(RE::TESObjectREFR* a_ref) {
+    if (!a_ref || a_ref->IsDisabled() || a_ref->IsDeleted()) {
+        return;
+    }
+    auto* base = a_ref->GetBaseObject();
+    if (!base) {
+        return;
+    }
+    auto it = g_convert.find(base->GetFormID());
+    if (it == g_convert.end()) {
+        return;
+    }
+    if ((a_ref->formFlags & RE::TESObjectREFR::RecordFlags::kPersistent) != 0) {
+        return;  // scripts/quests may hold this exact ref
+    }
+    if (a_ref->extraList.HasType(RE::ExtraDataType::kAliasInstanceArray)) {
+        return;  // quest-aliased — same caution
+    }
+    auto newRef = a_ref->PlaceObjectAtMe(it->second.base, false);
+    if (!newRef) {
+        return;
+    }
+    if (auto* owner = a_ref->GetOwner()) {
+        newRef->extraList.SetOwner(owner);  // pickup keeps the same theft semantics
+    }
+    const std::uint32_t h = HashU32(a_ref->GetFormID() ^ 0x4D454F57u);
+    const int level =
+        (h % 10000) < static_cast<std::uint32_t>(g_gemLevel2Chance * 10000.0f) ? 2 : 1;
+    StampInstance(it->second.base, &newRef->extraList, it->second.gemIdx, level);
+    newRef->data.angle = a_ref->data.angle;  // keep the shelf pose
+    spdlog::info("[convert] world ref {:08X} '{}' -> '{}' + {} gem",
+                 a_ref->GetFormID(), base->GetName(), it->second.base->GetName(),
+                 g_gems[it->second.gemIdx].def->name);
+    a_ref->Disable();
+    a_ref->SetDelete(true);
 }
 
 void MaybeStampNPCGear(RE::Actor* a_actor) {
@@ -3005,12 +3106,17 @@ public:
         if (!a_event || !a_event->attached || !a_event->reference) {
             return RE::BSEventNotifyControl::kContinue;
         }
-        if (a_event->reference->GetBaseObject() &&
-            a_event->reference->GetBaseObject()->Is(RE::FormType::Weapon)) {
+        if (auto* bo = a_event->reference->GetBaseObject();
+            bo && (bo->Is(RE::FormType::Weapon) || bo->Is(RE::FormType::Armor))) {
             const RE::ObjectRefHandle handle = a_event->reference->GetHandle();
             SKSE::GetTaskInterface()->AddTask([handle]() {
                 if (auto ref = handle.get()) {
-                    MaybeStampWorldWeapon(ref.get());
+                    auto* b = ref->GetBaseObject();
+                    if (b && g_convert.contains(b->GetFormID())) {
+                        ConvertWorldRef(ref.get());  // m26: no jarring names on shelves
+                    } else if (b && b->Is(RE::FormType::Weapon)) {
+                        MaybeStampWorldWeapon(ref.get());
+                    }
                 }
             });
         } else if (a_event->reference->GetBaseObject() &&
@@ -3661,7 +3767,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.34.1 (M25d convert-miss diagnostic) loaded");
+            console->Print("MEO native v0.35.0 (M26 player-enchant + world-ref conversion) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -3692,7 +3798,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.34.1 (M25d convert-miss diagnostic) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.35.0 (M26 player-enchant + world-ref conversion) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
