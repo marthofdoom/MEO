@@ -4152,7 +4152,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.40.0 (M32c pouch persistence + gem recovery) loaded");
+            console->Print("MEO native v0.40.1 (M32d recovery every load + pouch status) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4169,9 +4169,33 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
             }
             EnsurePouchRef();     // m27: gems live in the hidden pouch container
             RouteGemsToPouch();
-            if (g_pouchCreatedThisLoad) {  // m32c: the old pouch died — resurrect
-                g_pouchCreatedThisLoad = false;
-                RecoverStrandedGems();
+            // m32d: recovery runs EVERY load — the creation-only gate missed
+            // saves holding an alive-but-looted pouch (saved between purge
+            // cycles). A healthy load strands nothing and this no-ops; the
+            // only false positive is a gem stored in a WORLD chest, which
+            // the log would name loudly.
+            g_pouchCreatedThisLoad = false;
+            RecoverStrandedGems();
+            if (auto* pouch = PouchRef()) {  // status is never ambiguous again
+                int inst = 0, plain = 0;
+                for (const auto& [obj, data] : pouch->GetInventory(
+                         [](RE::TESBoundObject& o) { return o.Is(RE::FormType::Misc); })) {
+                    if (data.first <= 0 || !g_gemByItem.contains(obj->GetFormID())) {
+                        continue;
+                    }
+                    int withUid = 0;
+                    if (data.second && data.second->extraLists) {
+                        for (auto* xl : *data.second->extraLists) {
+                            withUid += xl && xl->GetByType<RE::ExtraUniqueID>() ? 1 : 0;
+                        }
+                    }
+                    inst += withUid;
+                    plain += data.first - withUid;
+                }
+                spdlog::info("[pouch] ref {:08X} alive: {} gem instance(s), {} plain",
+                             g_pouchRefID, inst, plain);
+            } else {
+                spdlog::warn("[pouch] NO POUCH after ensure — gems would stay in inventory");
             }
         });
         ScheduleReapplyWornSockets();  // re-activate worn gem effects (deferred + retried)
@@ -4189,7 +4213,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.40.0 (M32c pouch persistence + gem recovery) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.40.1 (M32d recovery every load + pouch status) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
