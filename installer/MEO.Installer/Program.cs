@@ -832,6 +832,25 @@ static class Commands
             if (alts > 0) line += $" — minority recipes on {alts} item(s)";
             Console.WriteLine("  " + line);
         }
+        // Human-curated waivers (Marth's tuning loop): effects HE has ruled
+        // perk-domain / redundant — any enchant containing one converts even
+        // though the gem won't carry it. Lives next to the calibration so a
+        // list update keeps the ruling; new pins in the log are the queue.
+        var ruledWaived = new HashSet<FormKey>();
+        var rulingsPath = outPath.Replace(".json", ".rulings.json");
+        if (File.Exists(rulingsPath))
+        {
+            using var doc2 = System.Text.Json.JsonDocument.Parse(File.ReadAllText(rulingsPath));
+            if (doc2.RootElement.TryGetProperty("waivedEffects", out var arr))
+                foreach (var e in arr.EnumerateArray())
+                {
+                    var fk = e.GetProperty("formKey").GetString()!.Split(':');
+                    ruledWaived.Add(new FormKey(ModKey.FromFileName(fk[1]),
+                                                Convert.ToUInt32(fk[0], 16)));
+                }
+            Console.WriteLine($"rulings: {ruledWaived.Count} waived effect(s) from {rulingsPath}");
+        }
+
         // Which companion MGEFs each family's gems will actually CARRY —
         // the lossless-conversion test reads from this, not from wishes.
         var adopted = new Dictionary<string, HashSet<FormKey>>();
@@ -880,6 +899,8 @@ static class Commands
                 if (l.M is not null &&
                     (adopted.GetValueOrDefault(famKey)?.Contains(l.M.FormKey) ?? false))
                     continue;  // rides
+                if (l.M is not null && ruledWaived.Contains(l.M.FormKey))
+                { waived = true; continue; }  // Marth ruled it perk-domain
                 // Machinery = hidden AND valueless. HideInUI alone is not
                 // enough: Requiem hides real procs too (the stagger companion
                 // on 'of Stunning' weapons carries mag 20-30 while hidden —
