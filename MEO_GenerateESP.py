@@ -326,8 +326,11 @@ def write_mcm_files(out_dir):
                   "valueOptions":{"min":mn,"max":mx,"step":step,"formatString":fmt,
                                   "sourceType":"ModSettingFloat","defaultValue":dflt}}
         elif typ=='e':
+            # MCM Helper binds enum values via the settings INI; defaultValue
+            # inside valueOptions is not part of the proven shape (working
+            # mods omit it and carry shortNames) — the INI declares defaults.
             ctrl={"id":f"{key}:{section}","text":label,"type":"enum","help":help_,
-                  "valueOptions":{"options":mn,"sourceType":"ModSettingInt","defaultValue":dflt}}
+                  "valueOptions":{"options":mn,"shortNames":mn,"sourceType":"ModSettingInt"}}
         else:
             ctrl={"id":f"{key}:{section}","text":label,"type":"toggle","help":help_,
                   "valueOptions":{"sourceType":"ModSettingBool","defaultValue":bool(dflt)}}
