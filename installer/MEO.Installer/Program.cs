@@ -901,7 +901,26 @@ static class Commands
             var refs = data.FamilyRefs[famKey];
             if (refs.Count == 0) continue;
             if (!kinBySig.TryGetValue(refs[0].Sig, out var kin) || kin.Count < 2) continue;
-            var tiers = kin.Values.OrderBy(k => k.MinMag).Select(k => k.M).ToList();
+            // Kin, not strangers: raw signatures collide across the whole
+            // magic ecosystem (spell FX, Godform steps, runes). A ladder
+            // rung must ALSO match the primary's cast shape and be a name
+            // relative — '<primary name>' or '<primary name> (Rank N)'.
+            if (!cache.TryResolve<IMagicEffectGetter>(refs[0].Key, out var prim0)) continue;
+            static string Root(string? s)
+            {
+                if (s is null) return "";
+                var p = s.IndexOf('(');
+                return (p > 0 ? s[..p] : s).Trim().ToLowerInvariant();
+            }
+            var primRoot = Root(prim0.Name?.String ?? prim0.EditorID);
+            if (primRoot.Length == 0) continue;
+            var tiers = kin.Values
+                .Where(k => Root(k.M.Name?.String ?? k.M.EditorID) == primRoot &&
+                            k.M.CastType == prim0.CastType &&
+                            k.M.TargetType == prim0.TargetType)
+                .OrderBy(k => k.MinMag).Select(k => k.M)
+                .DistinctBy(m => m.FormKey).ToList();
+            if (tiers.Count < 2 || tiers.Count > 5) continue;  // no plausible ladder
             var lvl = new List<object>();
             for (int l = 0; l < 5; l++)
             {
