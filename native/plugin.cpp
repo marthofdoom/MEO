@@ -137,6 +137,7 @@ struct ResolvedGem {
     const meo::GemDef*                  def = nullptr;
     RE::EffectSetting*                  mgef = nullptr;   // null = disabled (missing master)
     std::array<RE::EffectSetting*, 5>   mgefLv{};  // m28: rank ladder (defaults to mgef)
+    std::vector<std::pair<int, std::string>> lvNotes;  // m29: "level N unlocks ..." lines
     std::string                         liveName;  // m27: winning MGEF renamed the effect
     std::array<RtRider, 4>              riders{};  // m25: Squire-style recipes carry 3
     int                                 nRiders = 0;
@@ -406,6 +407,29 @@ void ResolveCatalog() {
                     rg.mgefLv[l] = m;
                 }
                 ladder += std::format("{}{}", l ? "/" : "", rg.mgefLv[l] == rg.mgef ? "-" : "+");
+            }
+            for (int l = 1; l < 5; ++l) {  // m29: name what each new rung grants
+                if (!rg.mgefLv[l] || rg.mgefLv[l] == rg.mgefLv[l - 1]) {
+                    continue;
+                }
+                const char* d = rg.mgefLv[l]->magicItemDescription.c_str();
+                if (!d || !*d) {
+                    continue;
+                }
+                std::string s(d);
+                if (const auto dot = s.find(". "); dot != std::string::npos) {
+                    s = s.substr(dot + 2);  // drop the base stat sentence
+                } else {
+                    continue;  // single-sentence description: no side grant
+                }
+                std::erase(s, '<');
+                std::erase(s, '>');
+                while (!s.empty() && (s.back() == ' ' || s.back() == '.')) {
+                    s.pop_back();
+                }
+                if (!s.empty()) {
+                    rg.lvNotes.emplace_back(l + 1, s + ".");
+                }
             }
             spdlog::info("[catalog] '{}' rank ladder active ({})", def.gid, ladder);
         }
@@ -989,6 +1013,8 @@ struct MenuItemRow {
     bool          isArmor = false;    // gates which gems can socket into it
     int           capacity = 1;       // socket slots this item has (1 or 2)
     std::string   slotGem[2];         // per-slot gem label; empty = empty slot
+    int           slotGemIdx[2] = { -1, -1 };  // m29: rung notes in tooltips
+    int           slotLevel[2] = { 0, 0 };
     int           slotTheme[2] = { -1, -1 };  // Theme index for the accent swatch
     float         slotXp[2] = { 0.0f, 0.0f };
     float         slotNeed[2] = { 0.0f, 0.0f };  // 0 = mastered / never levels
@@ -1003,6 +1029,8 @@ struct MenuGemRow {
     RE::FormID    base = 0;
     std::uint16_t uid = 0;       // instance with banked XP, else 0
     bool          isArmor = false;
+    int           gemIdx = -1;   // m29: rung notes in tooltips
+    int           level = 1;
     int           theme = -1;    // Theme index for the accent swatch
     float         xp = -1.0f;    // banked XP (instance rows); -1 = plain gem
     float         need = 0.0f;
@@ -1139,6 +1167,13 @@ bool GrantGemXP(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataLis
                ? std::format("Your {} gem has grown to {}.", GemName(rg), meo::kRoman[newLevel - 1])
                : std::format("{}'s {} gem has grown to {}.", who && *who ? who : "Your follower",
                              GemName(rg), meo::kRoman[newLevel - 1]));
+    if (isPlayer) {  // m29: crossing a rank rung announces what it grants
+        for (const auto& [lv, note] : rg.lvNotes) {
+            if (lv == newLevel) {
+                Notify(std::format("Rank attained — {}", note));
+            }
+        }
+    }
     if (newLevel == 5 && rg.items[0]) {
         a_owner->AddObjectToContainer(rg.items[0], nullptr, 1, nullptr);
         Notify(isPlayer ? std::format("Your mastered {} gem births a new gem.", GemName(rg))
@@ -1343,6 +1378,8 @@ void BuildMenuSnapshot() {
                         row.isArmor = rg.def->isArmor;
                         row.uid = xid->uniqueID;
                         row.label = obj->GetName();
+                        row.gemIdx = it->second.first;
+                        row.level = recIt->second.level;
                         row.theme = static_cast<int>(rg.def->theme);
                         row.xp = recIt->second.xp;
                         row.need = NextThreshold(rg.def, recIt->second.level);
@@ -1357,6 +1394,8 @@ void BuildMenuSnapshot() {
                     if (plain > 1) {
                         row.label += std::format("  x{}", plain);
                     }
+                    row.gemIdx = it->second.first;
+                    row.level = it->second.second;
                     row.theme = static_cast<int>(g_gems[it->second.first].def->theme);
                     gems.push_back(std::move(row));
                 }
@@ -1441,6 +1480,8 @@ void BuildMenuSnapshot() {
                             const auto& rg = g_gems[gemIt->second];
                             row.slotGem[s] = std::format("{} {}", GemName(rg),
                                                          meo::kRoman[it->second.level - 1]);
+                            row.slotGemIdx[s] = gemIt->second;
+                            row.slotLevel[s] = it->second.level;
                             row.slotTheme[s] = static_cast<int>(rg.def->theme);
                             row.slotXp[s] = it->second.xp;
                             row.slotNeed[s] = NextThreshold(rg.def, it->second.level);
@@ -2046,6 +2087,26 @@ namespace menuhook {
         }
         auto* dl = ImGui::GetWindowDrawList();
         const float lineH = ImGui::GetTextLineHeight();
+        // m29 (Marth: "gains X at gem level IV" must be readable in game):
+        // hovering a gem or a filled socket lists the rank ladder's grants,
+        // pulled from each rung MGEF's own description — per-list truth.
+        auto rungTooltip = [&](int a_gemIdx, int a_level, const std::string& a_action) {
+            if (!ImGui::IsItemHovered()) {
+                return;
+            }
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted(a_action.c_str());
+            if (a_gemIdx >= 0 && a_gemIdx < static_cast<int>(g_gems.size())) {
+                for (const auto& [lv, note] : g_gems[a_gemIdx].lvNotes) {
+                    const bool active = a_level >= lv;
+                    ImGui::TextColored(active ? skin.accent : ImGui::GetStyleColorVec4(
+                                                                  ImGuiCol_TextDisabled),
+                                       "Level %s: %s%s", meo::kRoman[lv - 1], note.c_str(),
+                                       active ? "  (active)" : "");
+                }
+            }
+            ImGui::EndTooltip();
+        };
         {  // Title in the skin's display face, flanked by drawn rules.
             const char* title = skin.title;
             if (fHead) {
@@ -2153,10 +2214,8 @@ namespace menuhook {
                 const bool   picked = station && g_menu.selSlot == s;
                 const bool   nav = ImGui::Selectable("##slot", picked, 0, ImVec2(0.0f, rowH));
                 const bool   act = nav || ImGui::IsItemClicked(ImGuiMouseButton_Left);
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip(station ? "Select %s" : "Remove %s",
-                                      sel.slotGem[s].c_str());
-                }
+                rungTooltip(sel.slotGemIdx[s], sel.slotLevel[s],
+                            std::format(station ? "Select {}" : "Remove {}", sel.slotGem[s]));
                 DrawDiamond(dlR, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 5.0f,
                             ImGui::GetColorU32(tcol), true);
                 dlR->AddText(ImVec2(rp.x + 28.0f, rp.y + (rowH - lineH) * 0.5f),
@@ -2288,6 +2347,8 @@ namespace menuhook {
                     ImGui::PushID(1000 + i);
                     const bool nav = ImGui::Selectable("##gem", false, 0, ImVec2(0.0f, rowH));
                     const bool act = nav || ImGui::IsItemClicked(ImGuiMouseButton_Left);
+                    rungTooltip(gem.gemIdx, gem.level,
+                                std::format("Socket {}", gem.label));
                     ImGui::PopID();
                     const ImVec4 tcol = ThemeCol(gem.theme);
                     // Plain gems get a slightly dimmed swatch; instances with
@@ -3985,7 +4046,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.37.0 (M28 rank-ladder gem effects) loaded");
+            console->Print("MEO native v0.38.0 (M29 rank ladder shown in game) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4018,7 +4079,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.37.0 (M28 rank-ladder gem effects) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.38.0 (M29 rank ladder shown in game) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
