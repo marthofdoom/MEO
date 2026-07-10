@@ -1,0 +1,2 @@
+M22 per-list rider calibration + M23 loot conversion (covered enchanted generics become socketed gear)
+built from native run 29059541445, installer run 29059289351
