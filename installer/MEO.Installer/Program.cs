@@ -141,9 +141,6 @@ try
         "write-calibration" => Commands.WriteCalibration(loadOrder, cache,
             positional.ElementAtOrDefault(0) ?? "data/gem_catalog.json",
             positional.ElementAtOrDefault(1) ?? "meo_calibration.json"),
-        "write-strip" => Commands.WriteStrip(loadOrder, cache,
-            positional.ElementAtOrDefault(0) ?? "data/gem_catalog.json",
-            positional.ElementAtOrDefault(1) ?? "MEO - Strip.esp"),
         _ => Commands.Fail($"unknown command {cmd}"),
     };
 }
@@ -665,6 +662,7 @@ static class Commands
                 enchWeight[r.Ench] = enchWeight.GetValueOrDefault(r.Ench) + 1;
 
         var fams = new Dictionary<string, Dictionary<string, RecipeAgg>>();
+        var enchFamily = new Dictionary<FormKey, string>();
         var noteWeight = new Dictionary<string, int>();
         void Note(string msg, int weight) =>
             noteWeight[msg] = noteWeight.GetValueOrDefault(msg) + weight;
@@ -689,6 +687,7 @@ static class Commands
                 Console.WriteLine($"DBG\t{best ?? "NO-FAMILY"}\tw={weight}\t" +
                     string.Join(" | ", fx.Select(t => $"{t.M!.EditorID}={t.Sig}")));
             if (best is null) continue;
+            enchFamily[ench] = best;
 
             // Consume the family's own components in catalog order; the first
             // is the primary the ratios normalize against. Prefer FormKey
@@ -792,78 +791,44 @@ static class Commands
             .Select(kv => $"{kv.Key} — {kv.Value} item(s)").ToList();
         foreach (var n in notes) Console.WriteLine("  note: " + n);
 
+        // Loot conversion (Marth's ruling): a covered enchanted generic never
+        // leaves the world — at spawn the DLL swaps it for its unenchanted
+        // base with the matching family's gem socketed and ACTIVE (level I/II
+        // rolled with the same sliders as loose drops). This is the table;
+        // recipes the gems can't express yet (duration-anchored) are absent,
+        // so those items keep spawning enchanted.
+        var honored = new HashSet<string> { "strip-1fx", "strip-2fx-recipe", "strip-3fx-recipe" };
+        var conversions = new List<object>();
+        int noFamily = 0;
+        foreach (var r in data.Raw)
+        {
+            if (!honored.Contains(clsByItem[r.Key])) continue;
+            if (!data.StripBase.TryGetValue(r.Key, out var baseKey)) continue;
+            if (!enchFamily.TryGetValue(r.Ench, out var famKey)) { noFamily++; continue; }
+            conversions.Add(new Dictionary<string, object>
+            {
+                ["plugin"] = r.Key.ModKey.FileName.String,
+                ["fid"] = $"0x{r.Key.ID:X6}",
+                ["basePlugin"] = baseKey.ModKey.FileName.String,
+                ["baseFid"] = $"0x{baseKey.ID:X6}",
+                ["family"] = famKey,
+            });
+        }
+        Console.WriteLine($"conversions: {conversions.Count} enchanted generic(s) -> socketed base" +
+                          (noFamily > 0 ? $" ({noFamily} skipped: ench matched no family)" : ""));
+
         var doc = new Dictionary<string, object>
         {
             ["version"] = 1,
             ["generated"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
             ["families"] = outFams,
+            ["conversions"] = conversions,
             ["notes"] = notes,
         };
         File.WriteAllText(outPath, System.Text.Json.JsonSerializer.Serialize(doc,
             new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
         Console.WriteLine($"wrote {outPath} ({outFams.Count} matched famil(ies), " +
                           "absent families keep compiled defaults)");
-        return 0;
-    }
-
-    // The loot strip (Marth's ruling: SUBSTITUTION, never deletion). Every
-    // winning LVLI entry that resolves to a strip-classified generic is
-    // repointed at that item's unenchanted base, so vendor stock, dungeon
-    // loot, and NPC equip lists all stay populated — enemies spawn armed
-    // with plain steel, and enchantment power comes from gems alone.
-    // Only fully-honored recipes strip (1fx/2fx/3fx all-covered); recipes
-    // the gems can't reproduce yet (duration-anchored riders) stay in loot.
-    public static int WriteStrip(
-        LoadOrder<IModListingGetter<ISkyrimModGetter>> lo, ILinkCache cache,
-        string catalogPath, string outPath)
-    {
-        if (BuildCensus(lo, cache, catalogPath) is not { } data) return 1;
-
-        var honored = new HashSet<string> { "strip-1fx", "strip-2fx-recipe", "strip-3fx-recipe" };
-        var clsByItem = data.Items.ToDictionary(i => i.Key, i => i.Cls);
-        var nameByItem = data.Items.ToDictionary(i => i.Key, i => i.Name);
-        var subst = new Dictionary<FormKey, FormKey>();
-        int deferred = 0;
-        foreach (var (item, baseKey) in data.StripBase)
-        {
-            if (!honored.Contains(clsByItem[item])) { deferred++; continue; }
-            // Never substitute toward an enchanted base (malformed chains).
-            if (cache.TryResolve<IWeaponGetter>(baseKey, out var bw) && !bw.ObjectEffect.IsNull) continue;
-            if (cache.TryResolve<IArmorGetter>(baseKey, out var ba) && !ba.ObjectEffect.IsNull) continue;
-            subst[item] = baseKey;
-        }
-        Console.WriteLine($"substitution table: {subst.Count} item(s) " +
-                          $"({deferred} deferred: recipe not honored by gems yet)");
-
-        var patch = new SkyrimMod(
-            ModKey.FromNameAndExtension(Path.GetFileName(outPath)), SkyrimRelease.SkyrimSE)
-        { IsSmallMaster = true };
-        int lists = 0, entries = 0, shown = 0;
-        foreach (var l in lo.PriorityOrder.LeveledItem().WinningOverrides())
-        {
-            if (!(l.Entries?.Any(en => en.Data is not null &&
-                    subst.ContainsKey(en.Data.Reference.FormKey)) ?? false)) continue;
-            var over = patch.LeveledItems.GetOrAddAsOverride(l);
-            foreach (var en in over.Entries!)
-            {
-                if (en.Data is null || !subst.TryGetValue(en.Data.Reference.FormKey, out var bk))
-                    continue;
-                if (shown++ < 3)
-                {
-                    var bn = cache.TryResolve<IWeaponGetter>(bk, out var bw2) ? bw2.Name?.String
-                           : cache.TryResolve<IArmorGetter>(bk, out var ba2) ? ba2.Name?.String
-                           : bk.ToString();
-                    Console.WriteLine($"  e.g. {l.EditorID}: " +
-                        $"'{nameByItem.GetValueOrDefault(en.Data.Reference.FormKey)}' -> '{bn}'");
-                }
-                en.Data.Reference.SetTo(bk);
-                entries++;
-            }
-            lists++;
-        }
-        Console.WriteLine($"strip: {entries} entr(ies) substituted across {lists} leveled list(s)");
-        patch.WriteToBinary(outPath);
-        Console.WriteLine($"wrote {outPath} (ESL-flagged; masters computed at write)");
         return 0;
     }
 

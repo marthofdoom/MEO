@@ -230,6 +230,25 @@ struct CalRider {
 };
 std::unordered_map<std::string, std::vector<CalRider>> g_calibration;
 
+// m23 loot conversion (Marth: covered enchanted generics CONVERT, never
+// vanish): at spawn/acquire, "Iron Sword of Embers" becomes an Iron Sword
+// with a Fire gem socketed and ACTIVE, level I/II rolled with the same
+// sliders as loose drops. The installer derives this table per list.
+struct CalConversion {
+    std::string plugin;
+    RE::FormID  fid = 0;
+    std::string basePlugin;
+    RE::FormID  baseFid = 0;
+    std::string family;
+};
+std::vector<CalConversion> g_calConversions;
+
+struct ConvTarget {
+    RE::TESBoundObject* base = nullptr;
+    int                 gemIdx = -1;
+};
+std::unordered_map<RE::FormID, ConvTarget> g_convert;  // runtime item id -> target
+
 static void LoadCalibration() {
     constexpr const char* kPath = "Data/SKSE/Plugins/MEO/meo_calibration.json";
     std::ifstream f(kPath);
@@ -253,11 +272,26 @@ static void LoadCalibration() {
             }
             g_calibration[fam] = std::move(rs);
         }
-        spdlog::info("calibration: {} family recipe(s) loaded from {}", g_calibration.size(), kPath);
+        if (j.contains("conversions")) {
+            for (const auto& c : j.at("conversions")) {
+                CalConversion cc;
+                cc.plugin = c.at("plugin").get<std::string>();
+                cc.fid = static_cast<RE::FormID>(
+                    std::stoul(c.at("fid").get<std::string>(), nullptr, 16));
+                cc.basePlugin = c.at("basePlugin").get<std::string>();
+                cc.baseFid = static_cast<RE::FormID>(
+                    std::stoul(c.at("baseFid").get<std::string>(), nullptr, 16));
+                cc.family = c.at("family").get<std::string>();
+                g_calConversions.push_back(std::move(cc));
+            }
+        }
+        spdlog::info("calibration: {} family recipe(s), {} conversion(s) loaded from {}",
+                     g_calibration.size(), g_calConversions.size(), kPath);
     } catch (const std::exception& ex) {
         spdlog::error("calibration parse failed ({}): {} — compiled defaults in force",
                       kPath, ex.what());
         g_calibration.clear();
+        g_calConversions.clear();
     }
 }
 
@@ -386,6 +420,22 @@ void ResolveCatalog() {
     g_treeMode = dh->LookupModByName("MEO - Patch.esp") != nullptr;
     if (g_treeMode) {
         spdlog::info("[perks] MEO - Patch.esp present: perk tree mode, auto-grant off");
+    }
+    // m23: resolve the loot-conversion table against the live load order.
+    int convOk = 0, convSkip = 0;
+    for (const auto& cc : g_calConversions) {
+        auto* item = dh->LookupForm<RE::TESBoundObject>(cc.fid, cc.plugin);
+        auto* base = dh->LookupForm<RE::TESBoundObject>(cc.baseFid, cc.basePlugin);
+        const auto gid = g_gemByGid.find(cc.family);
+        if (!item || !base || gid == g_gemByGid.end() || !g_gems[gid->second].mgef) {
+            ++convSkip;
+            continue;
+        }
+        g_convert[item->GetFormID()] = { base, gid->second };
+        ++convOk;
+    }
+    if (convOk + convSkip > 0) {
+        spdlog::info("[convert] table resolved: {} live, {} skipped", convOk, convSkip);
     }
     spdlog::info("catalog resolved: {}/{} gems live (weapon+armor), {} socketable gem items, pouch={}, "
                  "mentor={}, soulCairn={}, bossType={}",
@@ -2033,6 +2083,74 @@ Arch DetectArchetype(RE::Actor* a_actor) {
 // Deterministic per-reference roll (same discipline as world weapons): a given
 // NPC decides once, forever. The gem is LIVE on the enemy (ApplyWornAbility) —
 // you fight the effect; at death it converts to a lootable loose gem (below).
+// ── m23: loot conversion (Marth: covered enchants CONVERT to socketed) ──
+// Any inventory item in the conversion table is swapped, via engine flows
+// (RemoveItem/AddObjectToContainer with a pre-stamped ExtraDataList), for
+// its unenchanted base carrying the matching family's gem — level I/II
+// rolled with the same fGemLevel2Chance as loose drops, deterministic per
+// holder+item. Idempotent by construction: the converted base is not in
+// the table, so a second sweep finds nothing.
+int ConvertInventory(RE::TESObjectREFR* a_holder) {
+    if (!a_holder || g_convert.empty()) {
+        return 0;
+    }
+    auto* actor = a_holder->As<RE::Actor>();
+    struct Hit {
+        RE::TESBoundObject* old;
+        const ConvTarget*   tgt;
+        std::int32_t        count;
+        bool                worn;
+        bool                left;
+    };
+    std::vector<Hit> hits;
+    for (auto& [obj, data] : a_holder->GetInventory()) {
+        auto it = g_convert.find(obj->GetFormID());
+        if (it == g_convert.end() || data.first <= 0) {
+            continue;
+        }
+        bool worn = false, left = false;
+        if (data.second && data.second->IsWorn()) {
+            worn = true;
+            if (data.second->extraLists) {
+                for (auto* xl : *data.second->extraLists) {
+                    if (xl && xl->HasType(RE::ExtraDataType::kWornLeft)) {
+                        left = true;
+                    }
+                }
+            }
+        }
+        hits.push_back({ obj, &it->second, data.first, worn, left });
+    }
+    const std::uint32_t seed = HashU32(a_holder->GetFormID() ^ 0x4D454F43u);  // 'MEOC'
+    const std::uint32_t l2cut = static_cast<std::uint32_t>(g_gemLevel2Chance * 10000.0f);
+    int converted = 0;
+    for (const auto& hit : hits) {
+        a_holder->RemoveItem(hit.old, hit.count, RE::ITEM_REMOVE_REASON::kRemove,
+                             nullptr, nullptr);
+        for (std::int32_t i = 0; i < hit.count; ++i) {
+            auto* xl = new RE::ExtraDataList();
+            const std::uint32_t hi =
+                HashU32(seed ^ hit.old->GetFormID() ^ static_cast<std::uint32_t>(i));
+            const int level = (hi % 10000) < l2cut ? 2 : 1;
+            StampInstance(hit.tgt->base, xl, hit.tgt->gemIdx, level);
+            a_holder->AddObjectToContainer(hit.tgt->base, xl, 1, nullptr);
+            // The list picked this enemy to fight with an enchanted weapon;
+            // the converted gem stays worn and ACTIVE (Marth's ruling).
+            if (actor && hit.worn && i == 0) {
+                RE::ActorEquipManager::GetSingleton()->EquipObject(
+                    actor, hit.tgt->base, xl, 1, nullptr, false, false, false, true);
+                ApplyWornAbility(actor, hit.tgt->base, xl, hit.left);
+            }
+            ++converted;
+        }
+        spdlog::info("[convert] {:08X} '{}': '{}' x{} -> '{}' + {} gem",
+                     a_holder->GetFormID(), a_holder->GetName(), hit.old->GetName(),
+                     hit.count, hit.tgt->base->GetName(),
+                     g_gems[hit.tgt->gemIdx].def->name);
+    }
+    return converted;
+}
+
 void MaybeStampNPCGear(RE::Actor* a_actor) {
     if (!a_actor || g_npcSocketChance <= 0.0f || !g_kwNPC || a_actor->IsPlayerRef() ||
         a_actor->IsPlayerTeammate() || a_actor->IsDead()) {
@@ -2262,6 +2380,9 @@ void StockVendorGems() {
             }
         }
     }
+    // m23: vendor stock is LVLI-generated in place (no container events),
+    // so convert enchanted generics here, at dialogue time.
+    ConvertInventory(target);
     int  itemCount = 0;
     bool hasGem = false;
     for (auto& [obj, data] : target->GetInventory()) {
@@ -2332,6 +2453,7 @@ public:
             SKSE::GetTaskInterface()->AddTask([handle]() {
                 if (auto ref = handle.get()) {
                     if (auto* actor = ref->As<RE::Actor>()) {
+                        ConvertInventory(actor);
                         MaybeStampNPCGear(actor);
                     }
                 }
@@ -2425,6 +2547,16 @@ public:
             return RE::BSEventNotifyControl::kContinue;
         }
         const RE::FormID base = a_event->baseObj;
+        // m23: a convertible enchanted generic just landed somewhere (chest
+        // generation, corpse loot, purchase, pickup) — convert it in place.
+        if (g_convert.contains(base)) {
+            const RE::FormID holder = a_event->newContainer;
+            SKSE::GetTaskInterface()->AddTask([holder]() {
+                if (auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(holder)) {
+                    ConvertInventory(ref);
+                }
+            });
+        }
         bool ours = false;
         for (const auto& [key, rec] : g_sockets) {
             if (static_cast<RE::FormID>(key >> 24) == base) {
@@ -2465,6 +2597,7 @@ public:
         SKSE::GetTaskInterface()->AddTask([id]() {
             if (auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(id)) {
                 if (auto* actor = ref->As<RE::Actor>()) {
+                    ConvertInventory(actor);
                     MaybeStampNPCGear(actor);
                 }
             }
@@ -2879,7 +3012,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.30.0 (M22 per-list calibration) loaded");
+            console->Print("MEO native v0.31.0 (M22 calibration + M23 loot conversion) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -2889,6 +3022,11 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetTaskInterface()->AddTask([]() {
             EnsurePlayerSetup();
             RefreshPerks();
+            // m23: convert enchanted generics the player already owns
+            // (mid-save installs; new acquisitions convert via ContainerSink).
+            if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+                ConvertInventory(player);
+            }
         });
         ScheduleReapplyWornSockets();  // re-activate worn gem effects (deferred + retried)
         break;
@@ -2905,7 +3043,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.30.0 (M22: per-list rider calibration) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.31.0 (M22 calibration + M23 loot conversion) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
