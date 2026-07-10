@@ -579,8 +579,12 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         health = xHealth->health;
     }
     xText->GetDisplayName(a_base, health);
-    spdlog::info("[rebuild] {:08X}/{}: '{}' ({} gem(s))", a_base->GetFormID(), uid, newName,
-                 filled.size());
+    std::string mags;
+    for (std::size_t i = 0; i < effects.size(); ++i) {
+        mags += std::format("{}{:.1f}", i ? "/" : "", effects[i].effectItem.magnitude);
+    }
+    spdlog::info("[rebuild] {:08X}/{}: '{}' ({} gem(s), mag {})", a_base->GetFormID(), uid,
+                 newName, filled.size(), mags);
 }
 
 // Socket one gem into slot a_slot, then rebuild the instance's combined enchant.
@@ -896,6 +900,7 @@ struct MenuState {
 MenuState g_menu;
 
 void OpenGemMenu(bool a_station = false);  // defined with the render hooks below
+void DispelStaleGemEffects();              // m24b/c — defined with the load-refresh code
 void StockVendorGems();                    // m19b — defined with the loot rolls below
 void CloseGemMenu();
 extern std::atomic<bool> g_pendingReapply;  // m19e — defined with the load reapply below
@@ -996,6 +1001,9 @@ bool GrantGemXP(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataLis
     RebuildInstanceEnchant(a_base, a_xList);
     if (IsWornXList(a_xList)) {  // non-worn (fed at a station) re-applies on equip
         ApplyWornAbility(a_owner, a_base, a_xList, a_left);
+        if (a_owner->IsPlayerRef()) {
+            DispelStaleGemEffects();  // m24c: replace can leave the old-level ability stacking
+        }
     }
     const bool isPlayer = a_owner->IsPlayerRef();
     const char* who = a_owner->GetName();
@@ -1604,6 +1612,12 @@ void QueueMenuTask(std::function<void()> a_fn) {
     g_menu.busy = true;
     SKSE::GetTaskInterface()->AddTask([fn = std::move(a_fn)]() {
         fn();
+        // m24c (Marth: adding a 2nd gem "changed" the 1st gem's magnitude):
+        // Update*Ability's replace can leave the PREVIOUS combined ability
+        // alive next to the new one — two Resist Fire entries summing in the
+        // effects list. Same engine gap as the unsocket orphan, socket
+        // direction. Sweep after every menu action, not just on load.
+        DispelStaleGemEffects();
         BuildMenuSnapshot();
         g_menu.busy = false;
     });
@@ -1795,9 +1809,13 @@ namespace menuhook {
                                 ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x * 0.62f, io.DisplaySize.y * 0.68f),
                                  ImGuiCond_Appearing);
+        // m24c: resizable (drag any edge); ImGui keeps the chosen size for
+        // the rest of the session since the window persists in the context.
+        ImGui::SetNextWindowSizeConstraints(ImVec2(640.0f, 420.0f),
+                                            ImVec2(io.DisplaySize.x, io.DisplaySize.y));
         if (!ImGui::Begin("Gem Socketing", nullptr,
-                          ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
-                              ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings)) {
+                          ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
+                              ImGuiWindowFlags_NoSavedSettings)) {
             ImGui::End();
             if (fBody) {
                 ImGui::PopFont();
@@ -1837,6 +1855,10 @@ namespace menuhook {
         // tracked across rebuilds since m19e), and eating clicks during the
         // brief busy window read as "the menu misses clicks" in the field.
         ImGui::BeginChild("items", ImVec2(half - 6.0f, -footer), true);
+        // m24c (Marth: long lists "leave the pane"): rows were drawn through
+        // the OUTER window's draw list, which ignores the child's clip rect.
+        // Each pane draws through its own list so scrolled-out rows clip.
+        auto* dlL = ImGui::GetWindowDrawList();
         ImGui::TextDisabled("SOCKETABLE ITEMS");
         ImGui::Separator();
         for (int i = 0; i < static_cast<int>(g_menu.items.size()); ++i) {
@@ -1861,10 +1883,10 @@ namespace menuhook {
                 const ImU32 col = ImGui::GetColorU32(
                     has ? ThemeCol(row.slotTheme[s])
                         : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-                DrawDiamond(dl, ImVec2(cx, rp.y + rowH * 0.5f), 4.5f, col, has);
+                DrawDiamond(dlL, ImVec2(cx, rp.y + rowH * 0.5f), 4.5f, col, has);
                 cx += 13.0f;
             }
-            dl->AddText(ImVec2(rp.x + 42.0f, rp.y + (rowH - lineH) * 0.5f),
+            dlL->AddText(ImVec2(rp.x + 42.0f, rp.y + (rowH - lineH) * 0.5f),
                         ImGui::GetColorU32(ImGuiCol_Text), row.label.c_str());
         }
         if (g_menu.items.empty()) {
@@ -1873,6 +1895,7 @@ namespace menuhook {
         ImGui::EndChild();
         ImGui::SameLine();
         ImGui::BeginChild("gems", ImVec2(0, -footer), true);
+        auto* dlR = ImGui::GetWindowDrawList();  // m24c: pane-clipped drawing
         const float innerW = ImGui::GetContentRegionAvail().x;
         if (busy) {
             ImGui::BeginDisabled();
@@ -1891,9 +1914,9 @@ namespace menuhook {
                 if (sel.slotGem[s].empty()) {
                     ++freeSlots;
                     ImGui::Dummy(ImVec2(0.0f, rowH));
-                    DrawDiamond(dl, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 4.5f,
+                    DrawDiamond(dlR, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 4.5f,
                                 ImGui::GetColorU32(ImGuiCol_TextDisabled), false);
-                    dl->AddText(ImVec2(rp.x + 28.0f, rp.y + (rowH - lineH) * 0.5f),
+                    dlR->AddText(ImVec2(rp.x + 28.0f, rp.y + (rowH - lineH) * 0.5f),
                                 ImGui::GetColorU32(ImGuiCol_TextDisabled),
                                 std::format("Socket {} — empty", s + 1).c_str());
                     ImGui::PopID();
@@ -1905,29 +1928,29 @@ namespace menuhook {
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("Remove %s", sel.slotGem[s].c_str());
                 }
-                DrawDiamond(dl, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 5.0f,
+                DrawDiamond(dlR, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 5.0f,
                             ImGui::GetColorU32(tcol), true);
-                dl->AddText(ImVec2(rp.x + 28.0f, rp.y + (rowH - lineH) * 0.5f),
+                dlR->AddText(ImVec2(rp.x + 28.0f, rp.y + (rowH - lineH) * 0.5f),
                             ImGui::GetColorU32(tcol), sel.slotGem[s].c_str());
                 if (sel.slotNeed[s] > 0.0f) {
                     const std::string xps =
                         std::format("{:.0f} / {:.0f}", sel.slotXp[s], sel.slotNeed[s]);
-                    dl->AddText(ImVec2(rp.x + innerW - ImGui::CalcTextSize(xps.c_str()).x - 8.0f,
+                    dlR->AddText(ImVec2(rp.x + innerW - ImGui::CalcTextSize(xps.c_str()).x - 8.0f,
                                        rp.y + (rowH - lineH) * 0.5f),
                                 ImGui::GetColorU32(ImGuiCol_TextDisabled), xps.c_str());
                     const float bx0 = rp.x + 28.0f;
                     const float bx1 = rp.x + innerW - 8.0f;
                     const float by = rp.y + rowH - 3.0f;
-                    dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx1, by + 2.0f),
+                    dlR->AddRectFilled(ImVec2(bx0, by), ImVec2(bx1, by + 2.0f),
                                       ImGui::GetColorU32(ImGuiCol_ScrollbarBg));
-                    dl->AddRectFilled(
+                    dlR->AddRectFilled(
                         ImVec2(bx0, by),
                         ImVec2(bx0 + (bx1 - bx0) *
                                          std::clamp(sel.slotXp[s] / sel.slotNeed[s], 0.0f, 1.0f),
                                by + 2.0f),
                         ImGui::GetColorU32(tcol));
                 } else {
-                    dl->AddText(ImVec2(rp.x + innerW - ImGui::CalcTextSize("mastered").x - 8.0f,
+                    dlR->AddText(ImVec2(rp.x + innerW - ImGui::CalcTextSize("mastered").x - 8.0f,
                                        rp.y + (rowH - lineH) * 0.5f),
                                 ImGui::GetColorU32(ImGuiCol_TextDisabled), "mastered");
                 }
@@ -1989,15 +2012,15 @@ namespace menuhook {
                     const ImVec4 tcol = ThemeCol(gem.theme);
                     // Plain gems get a slightly dimmed swatch; instances with
                     // banked XP glow full and show their progress numbers.
-                    DrawDiamond(dl, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 4.5f,
+                    DrawDiamond(dlR, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 4.5f,
                                 ImGui::GetColorU32(ImVec4(tcol.x, tcol.y, tcol.z,
                                                           gem.uid ? 1.0f : 0.72f)),
                                 true);
-                    dl->AddText(ImVec2(rp.x + 28.0f, rp.y + (rowH - lineH) * 0.5f),
+                    dlR->AddText(ImVec2(rp.x + 28.0f, rp.y + (rowH - lineH) * 0.5f),
                                 ImGui::GetColorU32(ImGuiCol_Text), gem.label.c_str());
                     if (gem.xp >= 0.0f && gem.need > 0.0f) {
                         const std::string xps = std::format("{:.0f} / {:.0f}", gem.xp, gem.need);
-                        dl->AddText(
+                        dlR->AddText(
                             ImVec2(rp.x + innerW - ImGui::CalcTextSize(xps.c_str()).x - 8.0f,
                                    rp.y + (rowH - lineH) * 0.5f),
                             ImGui::GetColorU32(ImGuiCol_TextDisabled), xps.c_str());
@@ -2303,6 +2326,8 @@ void OpenGemMenu(bool a_station) {
     if (g_menu.open.load()) {
         return;
     }
+    ReadConfig();  // m24c: MCM Helper flushes iMenuStyle on ITS close — read
+                   // fresh at every open so the skin dropdown takes effect now
     g_menu.selBase = 0;  // fresh open: no remembered selection
     g_menu.selUid = 0;
     g_menu.selItem = 0;
@@ -3456,7 +3481,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.33.0 (M24 runtime menu skins) loaded");
+            console->Print("MEO native v0.33.1 (M24c stacking sweep + pane clip + resize + live skin) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -3487,7 +3512,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.33.0 (M24 runtime menu skins) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.33.1 (M24c stacking sweep + pane clip + resize + live skin) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
