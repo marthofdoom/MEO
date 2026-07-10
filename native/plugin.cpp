@@ -757,6 +757,7 @@ float g_vendorGemChance = 0.04f;  // [Loot] fVendorGemChance — per stock item,
 float g_bossXPMult = 10.0f;       // [XP] fBossXPMult — boss/dragon kill multiplier
 bool  g_xpNotify = true;          // [UI] bXPNotify — "Gem XP +N" on kills
 bool  g_stationTakeover = true;   // [UI] bStationTakeover — gem menu REPLACES the vanilla enchanting menu
+int   g_menuStyle = 0;            // [UI] iMenuStyle — gem menu skin 0..3 (m24 MCM dropdown)
 // g_magnitudeMult [XP] fMagnitudeMult is declared up top (StampInstance uses it)
 
 // Apply one INI file's key=value lines onto the config globals. Tolerates the
@@ -793,6 +794,7 @@ static void ApplyIniFile(const char* a_path) {
         else if (key == "fMagnitudeMult")     g_magnitudeMult = val;
         else if (key == "bXPNotify")          g_xpNotify = val != 0.0f;
         else if (key == "bStationTakeover")   g_stationTakeover = val != 0.0f;
+        else if (key == "iMenuStyle")         g_menuStyle = std::clamp(static_cast<int>(val), 0, 3);
     }
 }
 
@@ -805,9 +807,9 @@ void ReadConfig() {
     if (g_xpPerKill != 1.0f) {
         spdlog::warn("DEV: fXPPerKill={} override", g_xpPerKill);
     }
-    spdlog::info("config: drop={:.3f} world={:.3f} lvl2={:.3f} xp={:.2f} boss={:.1f} mag={:.2f} notify={}",
+    spdlog::info("config: drop={:.3f} world={:.3f} lvl2={:.3f} xp={:.2f} boss={:.1f} mag={:.2f} notify={} skin={}",
                  g_gemDropChance, g_worldSocketChance, g_gemLevel2Chance, g_xpPerKill,
-                 g_bossXPMult, g_magnitudeMult, g_xpNotify);
+                 g_bossXPMult, g_magnitudeMult, g_xpNotify, g_menuStyle);
 }
 
 // DESIGN §6 perks. Until the C# installer replaces the load order's enchanting
@@ -1642,6 +1644,7 @@ namespace menuhook {
     // Optional files — absent means ImGui default at the legacy global scale.
     ImFont* g_fontBody = nullptr;
     ImFont* g_fontHead = nullptr;
+    ImFont* g_fontSans = nullptr;  // Quicksilver skin face (m24)
     // m23c input-quality state (see InputDispatchHook / DrawGemMenu):
     // shout-key close triggers on RELEASE with both edges swallowed, gated on
     // a press seen while open; the cursor position is pushed to ImGui on every
@@ -1682,9 +1685,54 @@ namespace menuhook {
         }
     }
 
-    // Square corners, dark parchment-on-charcoal, brass accents — closer
-    // to Skyrim's UI language than ImGui's default debug grey.
-    void ApplyMenuStyle() {
+    // m24: four runtime skins, an MCM dropdown away (Marth's "diabolical
+    // idea" — ship ALL directions, pick live). Palettes are the mockup
+    // artifact's values verbatim; the nine gem THEME colors stay fixed
+    // across skins so gems always read by color. Square corners and flat
+    // fills throughout — ImGui's honest range, closer to Skyrim's UI
+    // language than its default debug grey.
+    struct MenuSkin {
+        const char* name;
+        ImVec4      winBg, panel, border, text, dim, sel, accent, btn, track, danger;
+        bool        sans;   // Quicksilver: sans face + spaced HUD title
+        const char* title;
+    };
+    inline constexpr MenuSkin kSkins[4] = {
+        { "Ebony & Brass",
+          { 0.04f, 0.04f, 0.06f, 0.95f }, { 0.07f, 0.07f, 0.10f, 0.95f },
+          { 0.55f, 0.48f, 0.27f, 0.60f }, { 0.91f, 0.89f, 0.84f, 1.00f },
+          { 0.58f, 0.55f, 0.47f, 1.00f }, { 0.34f, 0.29f, 0.16f, 0.85f },
+          { 0.78f, 0.70f, 0.45f, 1.00f }, { 0.13f, 0.11f, 0.07f, 0.90f },
+          { 1.00f, 1.00f, 1.00f, 0.08f }, { 0.76f, 0.29f, 0.24f, 1.00f },
+          false, "GEM SOCKETING" },
+        { "Dwemer Parchment",
+          { 0.92f, 0.88f, 0.80f, 0.97f }, { 0.95f, 0.92f, 0.85f, 1.00f },
+          { 0.54f, 0.45f, 0.25f, 0.85f }, { 0.21f, 0.17f, 0.12f, 1.00f },
+          { 0.48f, 0.43f, 0.34f, 1.00f }, { 0.86f, 0.81f, 0.66f, 1.00f },
+          { 0.43f, 0.29f, 0.16f, 1.00f }, { 0.89f, 0.84f, 0.72f, 1.00f },
+          { 0.00f, 0.00f, 0.00f, 0.10f }, { 0.55f, 0.23f, 0.18f, 1.00f },
+          false, "GEM SOCKETING" },
+        { "Soul Cairn",
+          { 0.07f, 0.06f, 0.13f, 0.95f }, { 0.10f, 0.08f, 0.19f, 0.95f },
+          { 0.35f, 0.31f, 0.55f, 0.70f }, { 0.85f, 0.84f, 0.92f, 1.00f },
+          { 0.55f, 0.52f, 0.66f, 1.00f }, { 0.16f, 0.14f, 0.31f, 0.90f },
+          { 0.53f, 0.85f, 0.92f, 1.00f }, { 0.13f, 0.10f, 0.23f, 0.90f },
+          { 1.00f, 1.00f, 1.00f, 0.08f }, { 0.76f, 0.29f, 0.24f, 1.00f },
+          false, "GEM SOCKETING" },
+        { "Quicksilver",
+          { 0.04f, 0.05f, 0.06f, 0.88f }, { 0.07f, 0.08f, 0.10f, 0.92f },
+          { 0.22f, 0.25f, 0.29f, 1.00f }, { 0.83f, 0.85f, 0.88f, 1.00f },
+          { 0.47f, 0.50f, 0.54f, 1.00f }, { 0.14f, 0.19f, 0.23f, 0.90f },
+          { 0.56f, 0.72f, 0.80f, 1.00f }, { 0.09f, 0.11f, 0.13f, 0.90f },
+          { 1.00f, 1.00f, 1.00f, 0.07f }, { 0.76f, 0.29f, 0.24f, 1.00f },
+          true, "G E M   S O C K E T I N G" },
+    };
+    ImVec4 Mix(const ImVec4& a, const ImVec4& b, float t) {
+        return { a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w };
+    }
+    int g_appliedSkin = -1;
+
+    void ApplyMenuStyle(const MenuSkin& s) {
         auto& style = ImGui::GetStyle();
         style.WindowRounding = 0.0f;
         style.ChildRounding = 0.0f;
@@ -1698,22 +1746,23 @@ namespace menuhook {
         style.ScrollbarSize = 14.0f;
         style.SelectableTextAlign = ImVec2(0.0f, 0.5f);
         auto* c = style.Colors;
-        c[ImGuiCol_WindowBg]         = ImVec4(0.04f, 0.04f, 0.06f, 0.94f);
-        c[ImGuiCol_ChildBg]          = ImVec4(0.06f, 0.06f, 0.08f, 0.55f);
-        c[ImGuiCol_Border]           = ImVec4(0.55f, 0.50f, 0.35f, 0.60f);
-        c[ImGuiCol_Text]             = ImVec4(0.91f, 0.89f, 0.85f, 1.00f);
-        c[ImGuiCol_TextDisabled]     = ImVec4(0.58f, 0.55f, 0.47f, 1.00f);
-        c[ImGuiCol_Header]           = ImVec4(0.34f, 0.29f, 0.16f, 0.85f);
-        c[ImGuiCol_HeaderHovered]    = ImVec4(0.44f, 0.38f, 0.20f, 0.75f);
-        c[ImGuiCol_HeaderActive]     = ImVec4(0.52f, 0.45f, 0.24f, 0.90f);
-        c[ImGuiCol_Button]           = ImVec4(0.20f, 0.18f, 0.12f, 0.85f);
-        c[ImGuiCol_ButtonHovered]    = ImVec4(0.40f, 0.35f, 0.19f, 0.90f);
-        c[ImGuiCol_ButtonActive]     = ImVec4(0.52f, 0.45f, 0.24f, 1.00f);
-        c[ImGuiCol_Separator]        = ImVec4(0.55f, 0.50f, 0.35f, 0.50f);
-        c[ImGuiCol_ScrollbarBg]      = ImVec4(0.04f, 0.04f, 0.06f, 0.60f);
-        c[ImGuiCol_ScrollbarGrab]    = ImVec4(0.38f, 0.34f, 0.24f, 0.80f);
-        c[ImGuiCol_TitleBg]          = ImVec4(0.04f, 0.04f, 0.06f, 1.00f);
-        c[ImGuiCol_TitleBgActive]    = ImVec4(0.04f, 0.04f, 0.06f, 1.00f);
+        c[ImGuiCol_WindowBg]         = s.winBg;
+        c[ImGuiCol_ChildBg]          = s.panel;
+        c[ImGuiCol_PopupBg]          = s.panel;  // tooltips follow the skin
+        c[ImGuiCol_Border]           = s.border;
+        c[ImGuiCol_Separator]        = s.border;
+        c[ImGuiCol_Text]             = s.text;
+        c[ImGuiCol_TextDisabled]     = s.dim;
+        c[ImGuiCol_Header]           = s.sel;
+        c[ImGuiCol_HeaderHovered]    = Mix(s.sel, s.accent, 0.25f);
+        c[ImGuiCol_HeaderActive]     = Mix(s.sel, s.accent, 0.40f);
+        c[ImGuiCol_Button]           = s.btn;
+        c[ImGuiCol_ButtonHovered]    = Mix(s.btn, s.accent, 0.25f);
+        c[ImGuiCol_ButtonActive]     = Mix(s.btn, s.accent, 0.40f);
+        c[ImGuiCol_ScrollbarBg]      = s.track;
+        c[ImGuiCol_ScrollbarGrab]    = ImVec4(s.dim.x, s.dim.y, s.dim.z, 0.60f);
+        c[ImGuiCol_TitleBg]          = s.winBg;
+        c[ImGuiCol_TitleBgActive]    = s.winBg;
     }
 
     void DrawGemMenu() {
@@ -1723,11 +1772,21 @@ namespace menuhook {
             return;
         }
         io.MouseDrawCursor = true;
+        // m24: skin from the MCM dropdown; restyle only when it changes.
+        const int       skinIdx = std::clamp(g_menuStyle, 0, 3);
+        const MenuSkin& skin = kSkins[skinIdx];
+        if (g_appliedSkin != skinIdx) {
+            ApplyMenuStyle(skin);
+            g_appliedSkin = skinIdx;
+            spdlog::info("[menu] skin: {}", skin.name);
+        }
+        ImFont* fBody = skin.sans ? (g_fontSans ? g_fontSans : g_fontBody) : g_fontBody;
+        ImFont* fHead = skin.sans ? fBody : (g_fontHead ? g_fontHead : g_fontBody);
         // With a real typeface the font is baked at backbuffer scale; the
         // global scale is only the legacy fallback for a missing font file.
-        io.FontGlobalScale = g_fontBody ? 1.0f : std::max(1.0f, io.DisplaySize.y / 1080.0f);
-        if (g_fontBody) {
-            ImGui::PushFont(g_fontBody);
+        io.FontGlobalScale = fBody ? 1.0f : std::max(1.0f, io.DisplaySize.y / 1080.0f);
+        if (fBody) {
+            ImGui::PushFont(fBody);
         }
         // Centered on each open (Appearing, not Always) so it can be
         // dragged afterwards; DisplaySize is backbuffer-true by now.
@@ -1739,17 +1798,17 @@ namespace menuhook {
                           ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
                               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings)) {
             ImGui::End();
-            if (g_fontBody) {
+            if (fBody) {
                 ImGui::PopFont();
             }
             return;
         }
         auto* dl = ImGui::GetWindowDrawList();
         const float lineH = ImGui::GetTextLineHeight();
-        {  // Title in the display face, flanked by drawn rules.
-            const char* title = "GEM SOCKETING";
-            if (g_fontHead) {
-                ImGui::PushFont(g_fontHead);
+        {  // Title in the skin's display face, flanked by drawn rules.
+            const char* title = skin.title;
+            if (fHead) {
+                ImGui::PushFont(fHead);
             }
             const ImVec2 ts = ImGui::CalcTextSize(title);
             const float  tx = (ImGui::GetWindowSize().x - ts.x) * 0.5f;
@@ -1760,10 +1819,10 @@ namespace menuhook {
             dl->AddLine(ImVec2(wp.x + tx + ts.x + 18.0f, ry),
                         ImVec2(wp.x + ImGui::GetWindowSize().x - 26.0f, ry), rule);
             ImGui::SetCursorPosX(tx);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.78f, 0.70f, 0.45f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, skin.accent);
             ImGui::TextUnformatted(title);
             ImGui::PopStyleColor();
-            if (g_fontHead) {
+            if (fHead) {
                 ImGui::PopFont();
             }
             ImGui::Spacing();
@@ -1890,7 +1949,7 @@ namespace menuhook {
                     const InstKey key = MakeKey(sel.base, sel.uid, static_cast<std::uint8_t>(s));
                     const bool    armed = g_destroyArm.load() == key;
                     if (armed) {
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.38f, 0.30f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_Text, skin.danger);
                     }
                     if (ImGui::SmallButton(armed ? "Confirm destroy" : "Destroy")) {
                         if (armed) {
@@ -1972,7 +2031,7 @@ namespace menuhook {
             CloseGemMenu();
         }
         ImGui::End();
-        if (g_fontBody) {
+        if (fBody) {
             ImGui::PopFont();
         }
     }
@@ -2029,12 +2088,17 @@ namespace menuhook {
                     g_fontHead =
                         io.Fonts->AddFontFromFileTTF(kHeadTTF, std::floor(27.0f * uiScale));
                 }
+                constexpr const char* kSansTTF = "Data/SKSE/Plugins/MEO/fonts/sans.ttf";
+                if (std::ifstream(kSansTTF).good()) {
+                    g_fontSans =
+                        io.Fonts->AddFontFromFileTTF(kSansTTF, std::floor(16.5f * uiScale));
+                }
                 if (!g_fontHead) {
                     g_fontHead = g_fontBody;  // head falls back to body, not to default
                 }
-                spdlog::info("[menu] fonts: body={} head={} (scale {:.2f})",
+                spdlog::info("[menu] fonts: body={} head={} sans={} (scale {:.2f})",
                              g_fontBody ? "ok" : "default", g_fontHead ? "ok" : "default",
-                             uiScale);
+                             g_fontSans ? "ok" : "default", uiScale);
             }
             if (!ImGui_ImplWin32_Init(sd.OutputWindow) || !ImGui_ImplDX11_Init(g_device, g_context)) {
                 spdlog::error("[menu] ImGui backend init failed — menu disabled");
@@ -3308,7 +3372,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.32.0 (M23c menu quality + worn-teardown + conversion reach) loaded");
+            console->Print("MEO native v0.33.0 (M24 runtime menu skins) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -3339,7 +3403,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.32.0 (M23c menu quality + worn-teardown + conversion reach) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.33.0 (M24 runtime menu skins) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }

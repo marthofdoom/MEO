@@ -287,6 +287,10 @@ MCM_TUNABLES=[
     ("XP & Balance","UI","bStationTakeover","Gem menu replaces enchanting table",
      "Enchanting stations open the gem menu (soul feeding and gem destruction) instead of the vanilla enchanting menu. MEO replaces enchanting entirely; disable only to overlay the vanilla menu instead.",
      'b',1,None,None,None,None),
+    # type 'e' = enum dropdown; the options list rides in the min slot.
+    ("XP & Balance","UI","iMenuStyle","Gem menu style",
+     "Visual skin for the gem socketing menu. Applies the next time the menu opens.",
+     'e',0,["Ebony & Brass","Dwemer Parchment","Soul Cairn","Quicksilver"],None,None,None),
 ]
 
 def write_mcm_files(out_dir):
@@ -300,6 +304,9 @@ def write_mcm_files(out_dir):
             ctrl={"id":f"{key}:{section}","text":label,"type":"slider","help":help_,
                   "valueOptions":{"min":mn,"max":mx,"step":step,"formatString":fmt,
                                   "sourceType":"ModSettingFloat","defaultValue":dflt}}
+        elif typ=='e':
+            ctrl={"id":f"{key}:{section}","text":label,"type":"enum","help":help_,
+                  "valueOptions":{"options":mn,"sourceType":"ModSettingInt","defaultValue":dflt}}
         else:
             ctrl={"id":f"{key}:{section}","text":label,"type":"toggle","help":help_,
                   "valueOptions":{"sourceType":"ModSettingBool","defaultValue":bool(dflt)}}
@@ -319,7 +326,7 @@ def write_mcm_files(out_dir):
     for section,items in by_sec.items():
         lines.append(f"[{section}]")
         for key,dflt,typ in items:
-            lines.append(f"{key} = {int(dflt)}" if typ=='b' else f"{key} = {float(dflt):.6f}")
+            lines.append(f"{key} = {int(dflt)}" if typ in 'be' else f"{key} = {float(dflt):.6f}")
     sdir=os.path.join(out_dir,'MCM','Settings'); os.makedirs(sdir,exist_ok=True)
     with open(os.path.join(sdir,'MEO.ini'),'w',encoding='utf-8-sig') as f:
         f.write("\n".join(lines)+"\n")
