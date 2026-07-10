@@ -2725,6 +2725,22 @@ RE::ExtraDataList* FindWornXListFor(RE::Actor* a_actor, RE::TESBoundObject* a_ba
 // strip the old enchant extras and stamp matching family gems into the same
 // instance (slots up to capacity). ALL GEMS LEVEL I, no magnitude matching —
 // "that's the cost of adding mid-save" (his call: fairness over nostalgia).
+// m27b (the helmet, finally named): lists RANK-TIER their fortify MGEFs
+// ('Fortify Magicka (Rank II)' is a separate record from the catalog's
+// fortifymagicka reference), so pointer identity misses kin effects. Two
+// MGEFs with the same mechanical signature are the same gameplay effect —
+// the installer's rule, mirrored here.
+bool SameEffectSig(const RE::EffectSetting* a_a, const RE::EffectSetting* a_b) {
+    using F = RE::EffectSetting::EffectSettingData::Flag;
+    return a_a && a_b &&
+           a_a->data.archetype == a_b->data.archetype &&
+           a_a->data.primaryAV == a_b->data.primaryAV &&
+           a_a->data.secondaryAV == a_b->data.secondaryAV &&
+           a_a->data.resistVariable == a_b->data.resistVariable &&
+           a_a->data.flags.all(F::kDetrimental) == a_b->data.flags.all(F::kDetrimental) &&
+           a_a->data.flags.all(F::kHostile) == a_b->data.flags.all(F::kHostile);
+}
+
 int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
                            RE::ExtraDataList* a_xList) {
     auto* xEnch = a_xList->GetByType<RE::ExtraEnchantment>();
@@ -2744,6 +2760,15 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
             if (g_gems[i].mgef == eff->baseEffect && g_gems[i].def->isArmor == armor) {
                 found = static_cast<int>(i);
                 break;
+            }
+        }
+        if (found < 0) {  // ranked/kin variant — signature identity
+            for (std::size_t i = 0; i < g_gems.size(); ++i) {
+                if (g_gems[i].mgef && g_gems[i].def->isArmor == armor &&
+                    SameEffectSig(g_gems[i].mgef, eff->baseEffect)) {
+                    found = static_cast<int>(i);
+                    break;
+                }
             }
         }
         if (found < 0) {
@@ -3924,7 +3949,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.36.0 (M27 gem pouch storage + live naming + gem models) loaded");
+            console->Print("MEO native v0.36.1 (M27b signature matching for ranked effects) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -3957,7 +3982,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.36.0 (M27 gem pouch storage + live naming + gem models) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.36.1 (M27b signature matching for ranked effects) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
