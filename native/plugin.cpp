@@ -2643,7 +2643,16 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
     }
     if (picks.empty()) {
         spdlog::info("[convert-miss] '{}' base {:08X} — instance enchant matches no gem "
-                     "family, left alone", a_base->GetName(), a_base->GetFormID());
+                     "family, left alone; effects:", a_base->GetName(), a_base->GetFormID());
+        for (auto* eff : ench->effects) {
+            if (eff && eff->baseEffect) {
+                // names the exact MGEF a new family would need (m26c)
+                spdlog::info("[convert-miss]   '{}' ({:08X}) mag={:.1f} dur={:.0f}",
+                             eff->baseEffect->GetName(), eff->baseEffect->GetFormID(),
+                             eff->effectItem.magnitude,
+                             static_cast<float>(eff->effectItem.duration));
+            }
+        }
         return 0;
     }
     const bool worn = IsWornXList(a_xList);
@@ -3772,7 +3781,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.35.1 (M26b soul-feed XP retune) loaded");
+            console->Print("MEO native v0.35.2 (M26c no-family effect dump) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -3803,7 +3812,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.35.1 (M26b soul-feed XP retune) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.35.2 (M26c no-family effect dump) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
