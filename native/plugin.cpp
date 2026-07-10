@@ -2631,7 +2631,10 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
             }
         }
         if (found < 0) {
-            continue;  // rider/companion or unknown family — dropped
+            spdlog::info("[convert]   dropping non-gem effect '{}' ({:08X}) mag={:.1f} — no family",
+                         eff->baseEffect->GetName(), eff->baseEffect->GetFormID(),
+                         eff->effectItem.magnitude);
+            continue;
         }
         bool dup = false;
         for (int p : picks) {
@@ -2639,6 +2642,9 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
         }
         if (!dup && static_cast<int>(picks.size()) < cap) {
             picks.push_back(found);
+        } else if (!dup) {
+            spdlog::info("[convert]   dropping overflow effect '{}' — out of sockets (cap {})",
+                         eff->baseEffect->GetName(), cap);
         }
     }
     if (picks.empty()) {
@@ -3427,13 +3433,20 @@ void DispelStaleGemEffects() {
     if (!mt || !changes || !changes->entryList) {
         return;
     }
-    std::unordered_set<RE::FormID> valid;  // enchants live on currently-worn gear
+    // m26e (Marth's "removed a non gem effect"): protect enchants attached
+    // to ANY inventory item, worn or not. The old worn-only set raced
+    // EquipCycleWorn — mid-cycle the item is briefly unworn, its own live
+    // enchant fell out of the set, and the sweep dispelled it; if the
+    // deferred re-equip then deduped against stale bookkeeping (§8 rule),
+    // the effect stayed MISSING. An orphan is an enchant attached to
+    // NOTHING, not one attached to something momentarily unequipped.
+    std::unordered_set<RE::FormID> valid;
     for (auto* entry : *changes->entryList) {
         if (!entry || !entry->object || !entry->extraLists) {
             continue;
         }
         for (auto* xl : *entry->extraLists) {
-            if (!xl || !IsWornXList(xl)) {
+            if (!xl) {
                 continue;
             }
             if (auto* xe = xl->GetByType<RE::ExtraEnchantment>(); xe && xe->enchantment) {
@@ -3781,7 +3794,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.35.2 (M26c no-family effect dump) loaded");
+            console->Print("MEO native v0.35.3 (M26e sweep race fix + drop logging) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -3812,7 +3825,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.35.2 (M26c no-family effect dump) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.35.3 (M26e sweep race fix + drop logging) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }

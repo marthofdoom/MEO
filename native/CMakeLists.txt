@@ -3,7 +3,7 @@
 # adapt working sources, don't write build systems from memory).
 cmake_minimum_required(VERSION 3.21)
 
-project(MEO VERSION 0.35.2 LANGUAGES CXX)
+project(MEO VERSION 0.35.3 LANGUAGES CXX)
 
 find_package(CommonLibSSE CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
