@@ -180,7 +180,12 @@ RE::BGSKeyword*         g_reusableSoulGemKW = nullptr;
 bool                    g_mentorGranted = false;  // co-save v4
 bool                    g_armorStarterGranted = false;  // co-save v6
 // DESIGN §3 soul-feed Gem XP by soul size (petty..grand; black counts grand).
-constexpr float kSoulFeedXP[5] = { 5.0f, 12.0f, 25.0f, 60.0f, 200.0f };
+// m26b (Marth 2026-07-10): soul feeding was power-leveling gems (a grand
+// soul = half a level-I threshold) — cut ~80%. Socketed gem POWER is
+// untouched ("skill gems are perfect"); this is only the soul->XP rate.
+// Destroy-reclaim uses the same table, so the soul<->XP exchange stays
+// symmetric. Enchanting SKILL xp per soul (kSoulSkillXP) unchanged.
+constexpr float kSoulFeedXP[5] = { 1.0f, 2.5f, 5.0f, 12.0f, 40.0f };
 // Filled vanilla soul gems (Skyrim.esm), petty..grand — gem destruction
 // reclaims 1/10 of banked Gem XP into the largest of these it can afford.
 constexpr RE::FormID kFilledSoulGemIDs[5] = { 0x02E4E3, 0x02E4E5, 0x02E4F3, 0x02E4FB, 0x02E4FF };
@@ -3767,7 +3772,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.35.0 (M26 player-enchant + world-ref conversion) loaded");
+            console->Print("MEO native v0.35.1 (M26b soul-feed XP retune) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -3798,7 +3803,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.35.0 (M26 player-enchant + world-ref conversion) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.35.1 (M26b soul-feed XP retune) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
