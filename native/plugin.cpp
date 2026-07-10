@@ -228,6 +228,7 @@ void EnsurePouchRef() {
 // exists in neither the player nor the pouch is re-minted with its banked
 // level and XP. Runs only on pouch creation; healthy loads never trigger it.
 void GiveGemInstance(int a_gemIdx, int a_level, float a_xp);
+void Notify(const std::string& a_msg);
 void RecoverStrandedGems() {
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* pouch = PouchRef();
