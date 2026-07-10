@@ -135,7 +135,7 @@ struct RtRider {
 struct ResolvedGem {
     const meo::GemDef*                  def = nullptr;
     RE::EffectSetting*                  mgef = nullptr;   // null = disabled (missing master)
-    std::array<RtRider, 2>              riders{};
+    std::array<RtRider, 4>              riders{};  // m25: Squire-style recipes carry 3
     int                                 nRiders = 0;
     std::array<RE::TESObjectMISC*, 5>   items{};
 };
@@ -316,8 +316,8 @@ void ResolveCatalog() {
         }
         if (auto cal = g_calibration.find(def.gid); cal != g_calibration.end()) {
             for (const auto& cr : cal->second) {
-                if (rg.nRiders >= 2) {
-                    spdlog::warn("gem '{}': calibration has >2 riders — extras dropped", def.gid);
+                if (rg.nRiders >= 4) {
+                    spdlog::warn("gem '{}': calibration has >4 riders — extras dropped", def.gid);
                     break;
                 }
                 auto* m = dh->LookupForm<RE::EffectSetting>(cr.fid, cr.plugin);
@@ -763,6 +763,7 @@ float g_bossXPMult = 10.0f;       // [XP] fBossXPMult — boss/dragon kill multi
 bool  g_xpNotify = true;          // [UI] bXPNotify — "Gem XP +N" on kills
 bool  g_stationTakeover = true;   // [UI] bStationTakeover — gem menu REPLACES the vanilla enchanting menu
 int   g_menuStyle = 0;            // [UI] iMenuStyle — gem menu skin 0..3 (m24 MCM dropdown)
+float g_enchSkillXPMult = 1.0f;   // [XP] fEnchSkillXP — Enchanting SKILL xp per soul fed (m25)
 // g_magnitudeMult [XP] fMagnitudeMult is declared up top (StampInstance uses it)
 
 // Apply one INI file's key=value lines onto the config globals. Tolerates the
@@ -800,6 +801,7 @@ static void ApplyIniFile(const char* a_path) {
         else if (key == "bXPNotify")          g_xpNotify = val != 0.0f;
         else if (key == "bStationTakeover")   g_stationTakeover = val != 0.0f;
         else if (key == "iMenuStyle")         g_menuStyle = std::clamp(static_cast<int>(val), 0, 3);
+        else if (key == "fEnchSkillXP")       g_enchSkillXPMult = val;
     }
 }
 
@@ -872,6 +874,11 @@ struct MenuItemRow {
     float         slotXp[2] = { 0.0f, 0.0f };
     float         slotNeed[2] = { 0.0f, 0.0f };  // 0 = mastered / never levels
 };
+struct MenuSoulRow {
+    std::string label;   // "Grand Soul Gem  x3"
+    RE::FormID  base = 0;
+    int         soul = 1;   // contained soul 1..5 — the feed tier
+};
 struct MenuGemRow {
     std::string   label;
     RE::FormID    base = 0;
@@ -889,7 +896,9 @@ struct MenuState {
     std::atomic<bool>        station{ false };   // opened at an enchanting station (feed/destroy)
     std::vector<MenuItemRow> items;
     std::vector<MenuGemRow>  gems;
+    std::vector<MenuSoulRow> souls;   // m25 station redesign: feed fuel list
     int                      selItem = 0;
+    int                      selSlot = -1;  // m25: station mode's selected socket
     // m19e: selection is IDENTITY, not index — rows are label-sorted and a
     // socket/unsocket changes the label, moving the row. After each rebuild
     // the index is re-derived from (base, uid); a raw index silently landed
@@ -1183,9 +1192,10 @@ void BuildMenuSnapshot() {
     }
     std::vector<MenuItemRow> items;
     std::vector<MenuGemRow>  gems;
+    std::vector<MenuSoulRow> souls;
     auto inv = player->GetInventory([](RE::TESBoundObject& o) {
         return o.Is(RE::FormType::Weapon) || o.Is(RE::FormType::Armor) ||
-               o.Is(RE::FormType::Misc);
+               o.Is(RE::FormType::Misc) || o.Is(RE::FormType::SoulGem);  // m25: fuel list
     });
     for (const auto& [obj, data] : inv) {
         if (data.first <= 0) {
@@ -1287,6 +1297,47 @@ void BuildMenuSnapshot() {
                 }
                 items.push_back(std::move(row));
             }
+        } else if (auto* sg = obj->As<RE::TESSoulGem>(); sg) {
+            // m25 station redesign: the right pane's fuel list. Reusable gems
+            // (Azura's Star) stay excluded, matching the feed path.
+            if (g_reusableSoulGemKW && sg->HasKeyword(g_reusableSoulGemKW)) {
+                continue;
+            }
+            const int   baseSoul = static_cast<int>(sg->GetContainedSoul());
+            std::int32_t plainCnt = data.first;
+            std::array<std::int32_t, 6> bySoul{};
+            if (data.second && data.second->extraLists) {
+                for (auto* xs : *data.second->extraLists) {
+                    if (!xs) {
+                        continue;
+                    }
+                    const std::int32_t c = std::max(xs->GetCount(), 1);
+                    int s = baseSoul;
+                    if (auto* es = xs->GetByType<RE::ExtraSoul>()) {
+                        s = static_cast<int>(es->GetContainedSoul());
+                    }
+                    if (s >= 1 && s <= 5) {
+                        bySoul[s] += c;
+                    }
+                    plainCnt -= c;
+                }
+            }
+            if (plainCnt > 0 && baseSoul >= 1 && baseSoul <= 5) {
+                bySoul[baseSoul] += plainCnt;
+            }
+            for (int s = 1; s <= 5; ++s) {
+                if (bySoul[s] <= 0) {
+                    continue;
+                }
+                MenuSoulRow row;
+                row.base = obj->GetFormID();
+                row.soul = s;
+                row.label = obj->GetName();
+                if (bySoul[s] > 1) {
+                    row.label += std::format("  x{}", bySoul[s]);
+                }
+                souls.push_back(std::move(row));
+            }
         } else {
             auto it = g_gemByItem.find(obj->GetFormID());
             if (it == g_gemByItem.end()) {
@@ -1341,7 +1392,11 @@ void BuildMenuSnapshot() {
         return a.label < b.label;
     });
     std::scoped_lock lk(g_menu.lock);
+    std::sort(souls.begin(), souls.end(), [](const MenuSoulRow& a, const MenuSoulRow& b) {
+        return a.soul != b.soul ? a.soul < b.soul : a.label < b.label;
+    });
     g_menu.items = std::move(items);
+    g_menu.souls = std::move(souls);
     g_menu.gems = std::move(gems);
     int found = -1;
     if (g_menu.selBase) {  // re-locate the selected ITEM after the resort
@@ -1534,7 +1589,10 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
 
 // M10 (stage 2a): consume the smallest filled, non-reusable soul gem and
 // grant its Gem XP (DESIGN §3) to one socketed gem. Enchanting-station only.
-void FeedSoulToGem(RE::FormID a_itemBase, std::uint16_t a_uid, std::uint8_t a_slot) {
+// a_soulLevel 0 = auto (smallest filled wins); 1..5 = feed exactly that tier
+// (m25 station redesign: the player clicks the soul gem to burn).
+void FeedSoulToGem(RE::FormID a_itemBase, std::uint16_t a_uid, std::uint8_t a_slot,
+                   int a_soulLevel = 0) {
     static const char* kSoulNames[5] = { "petty", "lesser", "common", "greater", "grand" };
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* itemForm = RE::TESForm::LookupByID<RE::TESBoundObject>(a_itemBase);
@@ -1557,6 +1615,9 @@ void FeedSoulToGem(RE::FormID a_itemBase, std::uint16_t a_uid, std::uint8_t a_sl
     RE::ExtraDataList* bestXL = nullptr;
     int                bestSoul = 99;
     auto consider = [&](RE::TESSoulGem* sg, RE::ExtraDataList* xs, int soul) {
+        if (a_soulLevel > 0 && soul != a_soulLevel) {
+            return;  // m25: the menu names the exact tier to burn
+        }
         if (soul >= 1 && soul < bestSoul) {
             bestSoul = soul; bestGem = sg; bestXL = xs;
         }
@@ -1597,6 +1658,15 @@ void FeedSoulToGem(RE::FormID a_itemBase, std::uint16_t a_uid, std::uint8_t a_sl
     const int   idx = std::clamp(bestSoul, 1, 5) - 1;
     const float xp = kSoulFeedXP[idx] * (g_hasSoulFeeder ? 2.0f : 1.0f);  // Soul Feeder: x2
     player->RemoveItem(bestGem, 1, RE::ITEM_REMOVE_REASON::kRemove, bestXL, nullptr);
+    // m25 (Marth: "this needs to yield more"): soul feeding IS this list's
+    // enchanting practice — MEO replaced the vanilla table flow that used to
+    // train the skill, so the skill trains here. Roughly a vanilla enchant's
+    // worth per soul of the same size, MCM-scalable.
+    static constexpr float kSoulSkillXP[5] = { 15.0f, 35.0f, 75.0f, 125.0f, 200.0f };
+    if (g_enchSkillXPMult > 0.0f) {
+        player->AddSkillExperience(RE::ActorValue::kEnchanting,
+                                   kSoulSkillXP[idx] * g_enchSkillXPMult);
+    }
     auto gemIt = g_gemByGid.find(recIt->second.gid);
     if (gemIt == g_gemByGid.end()) {
         return;
@@ -1605,7 +1675,9 @@ void FeedSoulToGem(RE::FormID a_itemBase, std::uint16_t a_uid, std::uint8_t a_sl
     const bool grew = GrantGemXP(player, itemForm, xl, left, recIt->second, gemIt->second, xp, a_uid);
     Notify(grew ? std::format("Fed a {} soul (+{:.0f} Gem XP).", kSoulNames[idx], xp)
                 : "That gem is already mastered — the soul is spent for nothing.");
-    spdlog::info("[feed] {} soul -> {}/{} : +{:.0f} xp", kSoulNames[idx], a_itemBase, a_uid, xp);
+    spdlog::info("[feed] {} soul -> {:08X}/{} : +{:.0f} gem xp, +{:.0f} ench skill xp",
+                 kSoulNames[idx], a_itemBase, a_uid, xp,
+                 kSoulSkillXP[idx] * g_enchSkillXPMult);
 }
 
 void QueueMenuTask(std::function<void()> a_fn) {
@@ -1874,6 +1946,7 @@ namespace menuhook {
                 g_menu.selItem = i;
                 g_menu.selBase = row.base;
                 g_menu.selUid = row.uid;
+                g_menu.selSlot = -1;  // m25: feed target follows the item
                 g_destroyArm = 0;
             }
             // Socket pips: one diamond per slot, filled+tinted when occupied.
@@ -1905,8 +1978,12 @@ namespace menuhook {
             ImGui::TextDisabled("%s%s", sel.label.c_str(),
                                 sel.capacity > 1 ? "  — 2 linked sockets" : "");
             ImGui::Separator();
-            // One row per socket slot. Filled = click to remove (+ station
-            // feed/destroy); empty = a free slot for the gem list below.
+            // m25 station redesign (Marth): at a bench the right pane is
+            // SELECT-a-gem (top, highlight like the item pane) + the SOUL GEM
+            // list (below) — click a soul to burn it into the selected gem.
+            // Pouch mode keeps the socket/swap flow: click a filled socket to
+            // remove, pick a loose gem for an empty one.
+            const bool station = g_menu.station.load();
             int freeSlots = 0;
             for (int s = 0; s < sel.capacity && s < kMaxSockets; ++s) {
                 ImGui::PushID(s);
@@ -1923,10 +2000,12 @@ namespace menuhook {
                     continue;
                 }
                 const ImVec4 tcol = ThemeCol(sel.slotTheme[s]);
-                const bool   nav = ImGui::Selectable("##slot", false, 0, ImVec2(0.0f, rowH));
+                const bool   picked = station && g_menu.selSlot == s;
+                const bool   nav = ImGui::Selectable("##slot", picked, 0, ImVec2(0.0f, rowH));
                 const bool   act = nav || ImGui::IsItemClicked(ImGuiMouseButton_Left);
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Remove %s", sel.slotGem[s].c_str());
+                    ImGui::SetTooltip(station ? "Select %s" : "Remove %s",
+                                      sel.slotGem[s].c_str());
                 }
                 DrawDiamond(dlR, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 5.0f,
                             ImGui::GetColorU32(tcol), true);
@@ -1955,30 +2034,39 @@ namespace menuhook {
                                 ImGui::GetColorU32(ImGuiCol_TextDisabled), "mastered");
                 }
                 if (act) {
-                    const std::uint8_t slot = static_cast<std::uint8_t>(s);
-                    g_destroyArm = 0;
-                    QueueMenuTask([sel, slot]() { MenuUnsocket(sel.base, sel.uid, slot); });
-                }
-                if (g_menu.station.load()) {
-                    ImGui::Indent(28.0f);
-                    if (ImGui::SmallButton("Feed Soul")) {
+                    if (station) {
+                        g_menu.selSlot = s;
+                        g_destroyArm = 0;
+                    } else {
                         const std::uint8_t slot = static_cast<std::uint8_t>(s);
                         g_destroyArm = 0;
-                        QueueMenuTask([sel, slot]() { FeedSoulToGem(sel.base, sel.uid, slot); });
+                        QueueMenuTask([sel, slot]() { MenuUnsocket(sel.base, sel.uid, slot); });
+                    }
+                }
+                ImGui::PopID();
+            }
+            if (station) {
+                const bool haveTarget = g_menu.selSlot >= 0 && g_menu.selSlot < sel.capacity &&
+                                        !sel.slotGem[g_menu.selSlot].empty();
+                if (haveTarget) {
+                    const std::uint8_t slot = static_cast<std::uint8_t>(g_menu.selSlot);
+                    ImGui::Indent(28.0f);
+                    if (ImGui::SmallButton("Unsocket")) {
+                        g_destroyArm = 0;
+                        g_menu.selSlot = -1;
+                        QueueMenuTask([sel, slot]() { MenuUnsocket(sel.base, sel.uid, slot); });
                     }
                     ImGui::SameLine();
-                    // Destroy is the one irreversible action in the menu —
-                    // two-click confirm; arms per (base,uid,slot), disarmed by
-                    // any other click, selection change, or reopen.
-                    const InstKey key = MakeKey(sel.base, sel.uid, static_cast<std::uint8_t>(s));
+                    // Destroy stays the menu's one irreversible act — 2-click.
+                    const InstKey key = MakeKey(sel.base, sel.uid, slot);
                     const bool    armed = g_destroyArm.load() == key;
                     if (armed) {
                         ImGui::PushStyleColor(ImGuiCol_Text, skin.danger);
                     }
                     if (ImGui::SmallButton(armed ? "Confirm destroy" : "Destroy")) {
                         if (armed) {
-                            const std::uint8_t slot = static_cast<std::uint8_t>(s);
                             g_destroyArm = 0;
+                            g_menu.selSlot = -1;
                             QueueMenuTask([sel, slot]() { DestroyGem(sel.base, sel.uid, slot); });
                         } else {
                             g_destroyArm = key;
@@ -1989,8 +2077,50 @@ namespace menuhook {
                     }
                     ImGui::Unindent(28.0f);
                 }
-                ImGui::PopID();
-            }
+                ImGui::Separator();
+                ImGui::TextDisabled("SOUL GEMS");
+                if (!haveTarget) {
+                    ImGui::TextDisabled("Select a socketed gem above to feed.");
+                }
+                int shownSouls = 0;
+                for (int i = 0; i < static_cast<int>(g_menu.souls.size()); ++i) {
+                    const auto soul = g_menu.souls[i];  // copy for the closure
+                    ++shownSouls;
+                    const ImVec2 rp = ImGui::GetCursorScreenPos();
+                    ImGui::PushID(2000 + i);
+                    const bool nav = ImGui::Selectable("##soul", false, 0, ImVec2(0.0f, rowH));
+                    const bool act = nav || ImGui::IsItemClicked(ImGuiMouseButton_Left);
+                    ImGui::PopID();
+                    // Bigger soul = bigger diamond; dimmed until a target gem
+                    // is selected above.
+                    const ImVec4 sc = skin.accent;
+                    DrawDiamond(dlR, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f),
+                                3.0f + 0.7f * static_cast<float>(soul.soul),
+                                ImGui::GetColorU32(ImVec4(sc.x, sc.y, sc.z,
+                                                          haveTarget ? 1.0f : 0.45f)),
+                                true);
+                    dlR->AddText(ImVec2(rp.x + 28.0f, rp.y + (rowH - lineH) * 0.5f),
+                                ImGui::GetColorU32(haveTarget ? ImGuiCol_Text
+                                                              : ImGuiCol_TextDisabled),
+                                soul.label.c_str());
+                    const std::string gain = std::format(
+                        "+{:.0f} gem xp", kSoulFeedXP[soul.soul - 1] *
+                                              (g_hasSoulFeeder ? 2.0f : 1.0f));
+                    dlR->AddText(ImVec2(rp.x + innerW - ImGui::CalcTextSize(gain.c_str()).x - 8.0f,
+                                       rp.y + (rowH - lineH) * 0.5f),
+                                ImGui::GetColorU32(ImGuiCol_TextDisabled), gain.c_str());
+                    if (act && haveTarget) {
+                        const std::uint8_t slot = static_cast<std::uint8_t>(g_menu.selSlot);
+                        const int          tier = soul.soul;
+                        QueueMenuTask([sel, slot, tier]() {
+                            FeedSoulToGem(sel.base, sel.uid, slot, tier);
+                        });
+                    }
+                }
+                if (shownSouls == 0) {
+                    ImGui::TextDisabled("No filled soul gems in your inventory.");
+                }
+            } else {
             ImGui::Separator();
             if (freeSlots <= 0) {
                 ImGui::TextDisabled(sel.capacity > 1 ? "Both sockets filled — remove one to swap."
@@ -2035,6 +2165,7 @@ namespace menuhook {
                 if (shown == 0) {
                     ImGui::TextDisabled(sel.isArmor ? "No loose armor gems." : "No loose weapon gems.");
                 }
+            }
             }
         } else {
             ImGui::TextDisabled("Select an item.");
@@ -2331,6 +2462,7 @@ void OpenGemMenu(bool a_station) {
     g_menu.selBase = 0;  // fresh open: no remembered selection
     g_menu.selUid = 0;
     g_menu.selItem = 0;
+    g_menu.selSlot = -1;
     BuildMenuSnapshot();
     g_menu.wantClose = false;
     g_menu.station = a_station;
@@ -3481,7 +3613,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.33.1 (M24c stacking sweep + pane clip + resize + live skin) loaded");
+            console->Print("MEO native v0.34.0 (M25 station redesign + ench skill XP + partial conversions) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -3512,7 +3644,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.33.1 (M24c stacking sweep + pane clip + resize + live skin) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.34.0 (M25 station redesign + ench skill XP + partial conversions) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }

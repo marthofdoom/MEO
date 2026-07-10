@@ -700,11 +700,12 @@ static class Commands
         var clsByItem = data.Items.ToDictionary(i => i.Key, i => i.Cls);
         var enchWeight = new Dictionary<FormKey, int>();
         foreach (var r in data.Raw)
-            if (clsByItem[r.Key].StartsWith("strip"))
+            if (clsByItem[r.Key].StartsWith("strip") || clsByItem[r.Key] == "keep-generic-multifx")
                 enchWeight[r.Ench] = enchWeight.GetValueOrDefault(r.Ench) + 1;
 
         var fams = new Dictionary<string, Dictionary<string, RecipeAgg>>();
         var enchFamily = new Dictionary<FormKey, string>();
+        var enchDurLeftover = new HashSet<FormKey>();
         var noteWeight = new Dictionary<string, int>();
         void Note(string msg, int weight) =>
             noteWeight[msg] = noteWeight.GetValueOrDefault(msg) + weight;
@@ -746,6 +747,8 @@ static class Commands
                 matched.Add(pool2[idx]);
                 pool2.RemoveAt(idx);
             }
+            if (pool2.Any(x => x.Dur > 0 && (x.Sig is null || !data.Covered.Contains(x.Sig))))
+                enchDurLeftover.Add(ench);
             var prim = matched[0];
             if (prim.Mag <= 0)
             {
@@ -839,14 +842,19 @@ static class Commands
         // rolled with the same sliders as loose drops). This is the table;
         // recipes the gems can't express yet (duration-anchored) are absent,
         // so those items keep spawning enchanted.
-        var honored = new HashSet<string> { "strip-1fx", "strip-2fx-recipe", "strip-3fx-recipe" };
+        var honored = new HashSet<string> { "strip-1fx", "strip-2fx-recipe", "strip-3fx-recipe",
+                                            "strip-2fx-uncovered", "keep-generic-multifx" };
         var conversions = new List<object>();
-        int noFamily = 0;
+        int noFamily = 0, durDeferred = 0, partial = 0;
         foreach (var r in data.Raw)
         {
             if (!honored.Contains(clsByItem[r.Key])) continue;
             if (!data.StripBase.TryGetValue(r.Key, out var baseKey)) continue;
             if (!enchFamily.TryGetValue(r.Ench, out var famKey)) { noFamily++; continue; }
+            // Partial recipes with an uncovered DURATION companion (stun,
+            // paralyze) stay enchanted until duration-anchored riders exist.
+            if (enchDurLeftover.Contains(r.Ench)) { durDeferred++; continue; }
+            if (clsByItem[r.Key] is "strip-2fx-uncovered" or "keep-generic-multifx") partial++;
             conversions.Add(new Dictionary<string, object>
             {
                 ["plugin"] = r.Key.ModKey.FileName.String,
@@ -856,8 +864,9 @@ static class Commands
                 ["family"] = famKey,
             });
         }
-        Console.WriteLine($"conversions: {conversions.Count} enchanted generic(s) -> socketed base" +
-                          (noFamily > 0 ? $" ({noFamily} skipped: ench matched no family)" : ""));
+        Console.WriteLine($"conversions: {conversions.Count} enchanted generic(s) -> socketed base " +
+                          $"({partial} partial-recipe, {durDeferred} duration-deferred" +
+                          (noFamily > 0 ? $", {noFamily} no-family)" : ")"));
 
         var doc = new Dictionary<string, object>
         {
@@ -1065,7 +1074,11 @@ static class Commands
                 }
             }
             var cls = Classify(r.Ench, baseKey is not null);
-            if (cls.StartsWith("strip") && baseKey is { } bk) data.StripBase[r.Key] = bk;
+            // m25: partial generics (family + companions we don't cover) are
+            // conversion candidates too — record their base (Marth's Squire
+            // cuirass blockade: Fortify Light Armor + 3 armor-pen companions).
+            if ((cls.StartsWith("strip") || cls == "keep-generic-multifx") && baseKey is { } bk)
+                data.StripBase[r.Key] = bk;
             data.Items.Add((r.Key, cls, r.Name, r.Mod, r.Edid));
         }
         if (renamedBase > 0)
