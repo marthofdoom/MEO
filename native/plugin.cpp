@@ -2691,6 +2691,7 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
         }
         hits.push_back({ obj, &it->second, data.first, worn, left });
     }
+    int converted = 0;
     // m25d (Marth's helmet/cuirass): when the PLAYER sweep misses enchanted
     // gear, say exactly what and why — an enchanted BASE not in the table is
     // an installer question; an INSTANCE enchant (on the copy, not the
@@ -2739,7 +2740,6 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
     }
     const std::uint32_t seed = HashU32(actor->GetFormID() ^ 0x4D454F43u);  // 'MEOC'
     const std::uint32_t l2cut = static_cast<std::uint32_t>(g_gemLevel2Chance * 10000.0f);
-    int converted = 0;
     for (const auto& hit : hits) {
         actor->RemoveItem(hit.old, hit.count, RE::ITEM_REMOVE_REASON::kRemove,
                           nullptr, nullptr);
