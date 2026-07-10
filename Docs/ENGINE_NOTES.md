@@ -255,6 +255,22 @@ installed in `SKSEPluginLoad` — before the renderer exists):
   the dropped ref → `PickUpObject`). `d3d11.h` pulls `windows.h`, which
   NG never includes: guard with `WIN32_LEAN_AND_MEAN` + `NOMINMAX` or its
   min/max macros break `std::max`/`std::clamp` everywhere.
+- **`TESDataHandler::LookupForm<T>` silently rejects abstract intermediates
+  (found in-field 2026-07-09, shipped as v0.31.0's dead conversion table —
+  "0 live, 10146 skipped").** The template gates on `form->Is(T::FORMTYPE)`,
+  and intermediate classes like `RE::TESBoundObject` define no `FORMTYPE` of
+  their own — they inherit `TESForm`'s `FormType::None`, so the check fails
+  for EVERY real form and the lookup returns nullptr. Compiles clean; fails
+  100% at runtime. The trap is asymmetric: `TESForm::LookupByID<T>` routes
+  through `form->As<T>()`, which handles intermediates fine — only the
+  `TESDataHandler::LookupForm<T>`/`LookupFormRaw<T>` pair uses the broken
+  `Is(FORMTYPE)` gate. Rule: give the data-handler templates CONCRETE record
+  classes only (`TESObjectWEAP`, `BGSPerk`, ...); for an intermediate, look
+  up as plain `TESForm` (non-template overload) and cast with
+  `->As<RE::TESBoundObject>()` — that cast IS field-proven
+  (MenuUnsocket/DestroyGem run it constantly).
+  Fixed v0.31.1-m23b, with the skip counter split by reason (item/base/gem)
+  so a resolution failure can never again read as one silent number.
 - **Spawn-and-pickup is THEFT in owned locations (found in-game 2026-07-08,
   fixed v0.25.1-m17b).** A `PlaceObjectAtMe` ref has NO owner, so ownership
   falls back to the cell/location owner; `PickUpObject` on it near guards =

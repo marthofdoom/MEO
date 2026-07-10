@@ -422,20 +422,28 @@ void ResolveCatalog() {
         spdlog::info("[perks] MEO - Patch.esp present: perk tree mode, auto-grant off");
     }
     // m23: resolve the loot-conversion table against the live load order.
-    int convOk = 0, convSkip = 0;
+    // NOT LookupForm<TESBoundObject>: that template gates on T::FORMTYPE, and
+    // TESBoundObject is an intermediate class with no FORMTYPE of its own
+    // (inherits TESForm's FormType::None), so it rejects EVERY real form —
+    // shipped as 0.31.0's "0 live, 10146 skipped". Look up as TESForm and
+    // As<> down, the cast MenuUnsocket/DestroyGem already prove in the field.
+    int convOk = 0, convItemMiss = 0, convBaseMiss = 0, convGemMiss = 0;
     for (const auto& cc : g_calConversions) {
-        auto* item = dh->LookupForm<RE::TESBoundObject>(cc.fid, cc.plugin);
-        auto* base = dh->LookupForm<RE::TESBoundObject>(cc.baseFid, cc.basePlugin);
+        auto* itemForm = dh->LookupForm(cc.fid, cc.plugin);
+        auto* baseForm = dh->LookupForm(cc.baseFid, cc.basePlugin);
+        auto* item = itemForm ? itemForm->As<RE::TESBoundObject>() : nullptr;
+        auto* base = baseForm ? baseForm->As<RE::TESBoundObject>() : nullptr;
         const auto gid = g_gemByGid.find(cc.family);
-        if (!item || !base || gid == g_gemByGid.end() || !g_gems[gid->second].mgef) {
-            ++convSkip;
-            continue;
-        }
+        if (!item) { ++convItemMiss; continue; }
+        if (!base) { ++convBaseMiss; continue; }
+        if (gid == g_gemByGid.end() || !g_gems[gid->second].mgef) { ++convGemMiss; continue; }
         g_convert[item->GetFormID()] = { base, gid->second };
         ++convOk;
     }
-    if (convOk + convSkip > 0) {
-        spdlog::info("[convert] table resolved: {} live, {} skipped", convOk, convSkip);
+    if (convOk + convItemMiss + convBaseMiss + convGemMiss > 0) {
+        spdlog::info("[convert] table resolved: {} live, {} skipped (item {}, base {}, gem {})",
+                     convOk, convItemMiss + convBaseMiss + convGemMiss,
+                     convItemMiss, convBaseMiss, convGemMiss);
     }
     spdlog::info("catalog resolved: {}/{} gems live (weapon+armor), {} socketable gem items, pouch={}, "
                  "mentor={}, soulCairn={}, bossType={}",
@@ -3043,7 +3051,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.31.0 (M22 calibration + M23 loot conversion) loaded");
+            console->Print("MEO native v0.31.1 (M23b conversion-table resolution fix) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -3074,7 +3082,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.31.0 (M22 calibration + M23 loot conversion) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.31.1 (M23b conversion-table resolution fix) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
