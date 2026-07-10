@@ -2215,7 +2215,7 @@ namespace menuhook {
                 const bool   nav = ImGui::Selectable("##slot", picked, 0, ImVec2(0.0f, rowH));
                 const bool   act = nav || ImGui::IsItemClicked(ImGuiMouseButton_Left);
                 rungTooltip(sel.slotGemIdx[s], sel.slotLevel[s],
-                            std::format(station ? "Select {}" : "Remove {}", sel.slotGem[s]));
+                            std::string(station ? "Select " : "Remove ") + sel.slotGem[s]);
                 DrawDiamond(dlR, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 5.0f,
                             ImGui::GetColorU32(tcol), true);
                 dlR->AddText(ImVec2(rp.x + 28.0f, rp.y + (rowH - lineH) * 0.5f),
