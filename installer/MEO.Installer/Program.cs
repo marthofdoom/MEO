@@ -779,11 +779,11 @@ static class Commands
             }
             enchLeftover[ench] = pool2;  // unmatched companions — the loss audit's input
             var prim = matched[0];
-            if (prim.Mag <= 0)
-            {
-                Note($"{best}: primary magnitude 0 (duration-anchored recipe, can't normalize)", weight);
-                continue;
-            }
+            // m32: a zero-magnitude primary (paralyze, soul trap) can't ratio-
+            // normalize — its riders ride ABSOLUTE instead: flat magnitude and
+            // duration observed from the recipe itself. This is what unpins
+            // the 'of Stunning' line: those ARE the paralysis family's recipe.
+            var abs = prim.Mag <= 0;
             // A conditional companion (Requiem's double-shock-vs-Dwemer bonus)
             // only fires under its conditions; gem riders carry none, so
             // copying it would apply the bonus always. Skip and say so.
@@ -793,15 +793,15 @@ static class Commands
                 Note($"{best}: conditional companion '{d.M!.Name?.String ?? d.M.EditorID}' " +
                      $"({d.Conds} cond(s)) not carried", weight);
             var famRec = fams.TryGetValue(best, out var f) ? f : fams[best] = [];
-            var key = string.Join("+", riders.Select(t => t.M!.FormKey));
+            var key = string.Join("+", riders.Select(t => t.M!.FormKey)) + (abs ? "|abs" : "");
             var rec = famRec.TryGetValue(key, out var got) ? got : famRec[key] = new()
-            { Mgefs = riders.Select(t => t.M!).ToList() };
+            { Mgefs = riders.Select(t => t.M!).ToList(), Abs = abs };
             rec.Weight += weight;
             rec.Enchs++;
             for (int i = 0; i < riders.Count; i++)
             {
                 if (rec.Obs.Count <= i) rec.Obs.Add([]);
-                rec.Obs[i].Add((riders[i].Mag / prim.Mag, riders[i].Dur));
+                rec.Obs[i].Add((abs ? riders[i].Mag : riders[i].Mag / prim.Mag, riders[i].Dur));
             }
         }
 
@@ -840,17 +840,19 @@ static class Commands
             for (int i = 0; i < Math.Min(dom.Mgefs.Count, 4); i++)
             {
                 var m = dom.Mgefs[i];
-                var ratio = (float)Math.Round(Median(dom.Obs[i].Select(o => o.Ratio).ToList()), 3);
+                var val = (float)Math.Round(Median(dom.Obs[i].Select(o => o.Ratio).ToList()), 3);
                 var dur = (int)Median(dom.Obs[i].Select(o => (float)o.Dur).ToList());
-                riderJson.Add(new Dictionary<string, object>
+                if (val <= 0 && dur <= 0) continue;  // m32: a nothing rider (REQ_DEPRECATED_*)
+                var rj = new Dictionary<string, object>
                 {
                     ["plugin"] = m.FormKey.ModKey.FileName.String,
                     ["fid"] = $"0x{m.FormKey.ID:X6}",
-                    ["ratio"] = ratio,
                     ["dur"] = dur,
                     ["mgef"] = m.EditorID ?? m.Name?.String ?? "?",
-                });
-                parts.Add($"{m.Name?.String ?? m.EditorID} x{ratio}/{dur}s");
+                };
+                rj[dom.Abs ? "mag" : "ratio"] = val;  // m32: absolute recipes
+                riderJson.Add(rj);
+                parts.Add($"{m.Name?.String ?? m.EditorID} {(dom.Abs ? "@" : "x")}{val}/{dur}s");
             }
             outFams[famKey] = new Dictionary<string, object>
             {
@@ -1045,6 +1047,7 @@ static class Commands
 
     sealed class RecipeAgg
     {
+        public bool Abs;   // m32: riders carry flat magnitude, not a ratio
         public int Weight;
         public int Enchs;
         public List<IMagicEffectGetter> Mgefs = [];

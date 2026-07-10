@@ -129,7 +129,8 @@ constexpr RE::FormID  kPouchSpellID = 0x803;  // MEO.esp-local
 // recipe lines), else from the compiled catalog defaults.
 struct RtRider {
     RE::EffectSetting* mgef = nullptr;
-    float              ratio = 0.0f;  // rider magnitude = primary × ratio
+    float              ratio = 0.0f;
+    float              absMag = 0.0f;  // m32: flat-magnitude rider
     float              dur = 0.0f;
 };
 
@@ -295,7 +296,8 @@ void SetupLog() {
 struct CalRider {
     std::string plugin;
     RE::FormID  fid = 0;
-    float       ratio = 0.0f;
+    float       ratio = 0.0f;   // ratio mode: magnitude = primary x ratio
+    float       absMag = 0.0f;  // m32 absolute mode: flat magnitude (dur-anchored primaries)
     float       dur = 0.0f;
 };
 std::unordered_map<std::string, std::vector<CalRider>> g_calibration;
@@ -340,7 +342,8 @@ static void LoadCalibration() {
                 cr.plugin = r.at("plugin").get<std::string>();
                 cr.fid = static_cast<RE::FormID>(
                     std::stoul(r.at("fid").get<std::string>(), nullptr, 16));
-                cr.ratio = r.at("ratio").get<float>();
+                cr.ratio = r.value("ratio", 0.0f);
+                cr.absMag = r.value("mag", 0.0f);  // m32: absolute recipes
                 cr.dur = r.value("dur", 0.0f);
                 rs.push_back(std::move(cr));
             }
@@ -464,7 +467,7 @@ void ResolveCatalog() {
                                  def.gid, cr.fid, cr.plugin);
                     continue;
                 }
-                rg.riders[rg.nRiders++] = { m, cr.ratio, cr.dur };
+                rg.riders[rg.nRiders++] = { m, cr.ratio, cr.absMag, cr.dur };
             }
             if (def.nRiders > 0 && rg.nRiders == 0) {
                 spdlog::info("gem '{}': calibration cleared compiled rider default "
@@ -479,7 +482,7 @@ void ResolveCatalog() {
                                  def.gid, def.riders[r].mgefID, def.riders[r].plugin);
                     continue;
                 }
-                rg.riders[rg.nRiders++] = { m, def.riders[r].ratio, def.riders[r].duration };
+                rg.riders[rg.nRiders++] = { m, def.riders[r].ratio, 0.0f, def.riders[r].duration };
             }
         }
         const int levels = def.singleLevel ? 1 : 5;
@@ -677,7 +680,10 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
                 continue;
             }
             auto& reff = effects[e++];
-            reff.effectItem.magnitude = primaryMag * rd.ratio;
+            reff.effectItem.magnitude =
+                rd.absMag > 0.0f
+                    ? rd.absMag * g_magnitudeMult * (1.0f + 0.08f * g_attuneRank)  // m32
+                    : primaryMag * rd.ratio;
             reff.effectItem.area = 0;
             reff.effectItem.duration = static_cast<std::uint32_t>(rd.dur);
             reff.baseEffect = rd.mgef;
@@ -4046,7 +4052,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.38.0 (M29 rank ladder shown in game) loaded");
+            console->Print("MEO native v0.39.0 (M32 absolute riders — nothing stays pinned) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4079,7 +4085,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.38.0 (M29 rank ladder shown in game) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.39.0 (M32 absolute riders — nothing stays pinned) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
