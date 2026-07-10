@@ -1244,6 +1244,40 @@ static class Commands
             Console.WriteLine($"      e.g. {string.Join("; ", a.Examples)}");
         }
 
+        // Player-learnable coverage (Marth 2026-07-10: the in-game no-family
+        // dump is bootstrap-only — the INSTALLER must surface this per list).
+        // Any enchant on a disenchantable item is learnable at a pre-MEO
+        // table, so its effects can live on in player-made instance enchants
+        // ('Glass Helmet' case). Effects here with no gem family are the
+        // future no-family conversions — catalog candidates for THIS list.
+        var disallowKw = new FormKey(ModKey.FromFileName("Skyrim.esm"), 0x0C27BD);
+        var learnable = new HashSet<FormKey>();
+        foreach (var w in lo.PriorityOrder.Weapon().WinningOverrides())
+            if (!w.ObjectEffect.IsNull &&
+                !(w.Keywords?.Any(k => k.FormKey == disallowKw) ?? false))
+                learnable.Add(w.ObjectEffect.FormKey);
+        foreach (var a in lo.PriorityOrder.Armor().WinningOverrides())
+            if (!a.ObjectEffect.IsNull &&
+                !(a.Keywords?.Any(k => k.FormKey == disallowKw) ?? false))
+                learnable.Add(a.ObjectEffect.FormKey);
+        var learnMiss = new Dictionary<FormKey, (IMagicEffectGetter M, int Enchs)>();
+        foreach (var ek in learnable)
+        {
+            if (!data.EnchInfo.TryGetValue(ek, out var info) || info.Fx is null) continue;
+            foreach (var fx in info.Fx)
+                if (fx.Sig is not null && fx.M is not null && !data.Covered.Contains(fx.Sig))
+                    learnMiss[fx.M.FormKey] = (fx.M,
+                        learnMiss.GetValueOrDefault(fx.M.FormKey).Enchs + 1);
+        }
+        var visMiss = learnMiss.Values.Where(v => !v.M.Flags.HasFlag(MagicEffect.Flag.HideInUI))
+            .OrderByDescending(v => v.Enchs).ToList();
+        Console.WriteLine($"\nplayer-learnable enchant effects with NO gem family: " +
+            $"{learnMiss.Count} ({visMiss.Count} visible = catalog candidates; rest hidden machinery)");
+        foreach (var lm in visMiss)
+            Console.WriteLine($"  [{lm.Enchs} learnable ench(s)] '{lm.M.Name?.String ?? lm.M.EditorID}' " +
+                $"({lm.M.EditorID} [{lm.M.FormKey}]) arch={lm.M.Archetype.Type} " +
+                $"av={lm.M.Archetype.ActorValue}");
+
         int lvliTouched = 0, entriesTotal = 0;
         var top = new List<(string, int)>();
         foreach (var l in lo.PriorityOrder.LeveledItem().WinningOverrides())
