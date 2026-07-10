@@ -136,6 +136,7 @@ struct RtRider {
 struct ResolvedGem {
     const meo::GemDef*                  def = nullptr;
     RE::EffectSetting*                  mgef = nullptr;   // null = disabled (missing master)
+    std::array<RE::EffectSetting*, 5>   mgefLv{};  // m28: rank ladder (defaults to mgef)
     std::string                         liveName;  // m27: winning MGEF renamed the effect
     std::array<RtRider, 4>              riders{};  // m25: Squire-style recipes carry 3
     int                                 nRiders = 0;
@@ -297,6 +298,10 @@ struct CalRider {
     float       dur = 0.0f;
 };
 std::unordered_map<std::string, std::vector<CalRider>> g_calibration;
+// m28: rank ladder — gem level -> the list's kin MGEF of that tier (higher
+// ranks carry protection keywords the list's spells check on the target).
+struct CalLevel { std::string plugin; RE::FormID fid = 0; };
+std::unordered_map<std::string, std::array<CalLevel, 5>> g_calLevels;
 
 // m23 loot conversion (Marth: covered enchanted generics CONVERT, never
 // vanish): at spawn/acquire, "Iron Sword of Embers" becomes an Iron Sword
@@ -339,6 +344,20 @@ static void LoadCalibration() {
                 rs.push_back(std::move(cr));
             }
             g_calibration[fam] = std::move(rs);
+            if (val.contains("levels")) {
+                std::array<CalLevel, 5> lv{};
+                int i = 0;
+                for (const auto& l : val.at("levels")) {
+                    if (i >= 5) {
+                        break;
+                    }
+                    lv[i].plugin = l.at("plugin").get<std::string>();
+                    lv[i].fid = static_cast<RE::FormID>(
+                        std::stoul(l.at("fid").get<std::string>(), nullptr, 16));
+                    ++i;
+                }
+                g_calLevels[fam] = lv;
+            }
         }
         if (j.contains("conversions")) {
             for (const auto& c : j.at("conversions")) {
@@ -378,6 +397,18 @@ void ResolveCatalog() {
         ResolvedGem rg;
         rg.def = &def;
         rg.mgef = dh->LookupForm<RE::EffectSetting>(def.mgefID, def.plugin);
+        rg.mgefLv.fill(rg.mgef);
+        if (auto lvIt = g_calLevels.find(def.gid); lvIt != g_calLevels.end() && rg.mgef) {
+            std::string ladder;
+            for (int l = 0; l < 5; ++l) {
+                if (auto* m = dh->LookupForm<RE::EffectSetting>(lvIt->second[l].fid,
+                                                               lvIt->second[l].plugin)) {
+                    rg.mgefLv[l] = m;
+                }
+                ladder += std::format("{}{}", l ? "/" : "", rg.mgefLv[l] == rg.mgef ? "-" : "+");
+            }
+            spdlog::info("[catalog] '{}' rank ladder active ({})", def.gid, ladder);
+        }
         if (rg.mgef) {
             const char* live = rg.mgef->GetName();
             if (live && *live) {
@@ -614,7 +645,7 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         eff.effectItem.magnitude = primaryMag;
         eff.effectItem.area = 0;
         eff.effectItem.duration = static_cast<std::uint32_t>(filled[i].rg->def->duration);
-        eff.baseEffect = filled[i].rg->mgef;
+        eff.baseEffect = filled[i].rg->mgefLv[filled[i].lvIdx];  // m28: rank ladder
         eff.cost = 0.0f;
         for (int r = 0; r < filled[i].rg->nRiders; ++r) {
             const auto& rd = filled[i].rg->riders[r];
@@ -3608,6 +3639,11 @@ void DispelStaleGemEffects() {
         if (rg.mgef) {
             gemFx.insert(rg.mgef);
         }
+        for (auto* m : rg.mgefLv) {
+            if (m) {
+                gemFx.insert(m);
+            }
+        }
         for (int r = 0; r < rg.nRiders; ++r) {
             if (rg.riders[r].mgef) {
                 gemFx.insert(rg.riders[r].mgef);
@@ -3949,7 +3985,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.36.1 (M27b signature matching for ranked effects) loaded");
+            console->Print("MEO native v0.37.0 (M28 rank-ladder gem effects) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -3982,7 +4018,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.36.1 (M27b signature matching for ranked effects) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.37.0 (M28 rank-ladder gem effects) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }

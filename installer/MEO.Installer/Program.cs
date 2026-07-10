@@ -562,6 +562,12 @@ static class Commands
                     $"arch={m.Archetype.Type} av={m.Archetype.ActorValue} resist={m.ResistValue} " +
                     $"av2={m.SecondActorValue} mag={x.Data?.Magnitude} dur={x.Data?.Duration} " +
                     $"conds={x.Conditions.Count} mgefConds={m.Conditions.Count}");
+                if (m.Description?.String is { Length: > 0 } md)
+                    Console.WriteLine($"      desc: \"{(md.Length > 140 ? md[..140] + "…" : md)}\"");
+                if (m.Keywords is { Count: > 0 })
+                    Console.WriteLine("      kw: " + string.Join(", ", m.Keywords.Select(k =>
+                        k.TryResolve(cache, out var kg) ? kg.EditorID ?? k.FormKey.ToString()
+                                                        : k.FormKey.ToString())));
             }
         }
         return 0;
@@ -629,7 +635,7 @@ static class Commands
                     $"conds={x.Conditions.Count} mgefConds={m.Conditions.Count}");
                 if (m.Description?.String is { Length: > 0 } d)
                     Console.WriteLine($"      \"{(d.Length > 140 ? d[..140] + "…" : d)}\"");
-                foreach (var c in x.Conditions)
+                void ShowCond(IConditionGetter c, string tag)
                 {
                     var cf = c as IConditionFloatGetter;
                     var fn = c.Data.GetType().Name.Replace("ConditionDataBinaryOverlay", "");
@@ -639,17 +645,25 @@ static class Commands
                         .Select(p =>
                         {
                             var v = p.GetValue(c.Data);
-                            // FormLinkOrIndex -> resolve to an EditorID
                             var linkObj = v?.GetType().GetProperty("Link")?.GetValue(v);
                             if (linkObj?.GetType().GetProperty("FormKey")?.GetValue(linkObj)
-                                is FormKey fk &&
-                                cache.TryResolve<IKeywordGetter>(fk, out var kw))
-                                return $"{p.Name}={kw.EditorID}";
+                                is FormKey fk)
+                            {
+                                if (cache.TryResolve<IKeywordGetter>(fk, out var kw))
+                                    return $"{p.Name}={kw.EditorID}";
+                                if (cache.TryResolve<IMagicEffectGetter>(fk, out var mg))
+                                    return $"{p.Name}={mg.EditorID}";
+                                if (cache.TryResolve<ISpellGetter>(fk, out var sp))
+                                    return $"{p.Name}={sp.EditorID}";
+                                return $"{p.Name}={fk}";
+                            }
                             return $"{p.Name}={v}";
                         }));
-                    Console.WriteLine($"      cond: {fn}({ps}) {cf?.CompareOperator} {cf?.ComparisonValue} " +
+                    Console.WriteLine($"      {tag}: {fn}({ps}) {cf?.CompareOperator} {cf?.ComparisonValue} " +
                                       $"runOn={c.Data.RunOnType}");
                 }
+                foreach (var c in x.Conditions) ShowCond(c, "cond");
+                foreach (var c in m.Conditions) ShowCond(c, "mgefCond");
             }
         }
         return 0;
@@ -864,6 +878,44 @@ static class Commands
                                     Convert.ToUInt32(((string)d["fid"])[2..], 16)));
             }
             adopted[famKey] = set;
+        }
+        // m28 (Marth + records): lists RANK-TIER kin MGEFs of one signature,
+        // and the higher ranks carry protection KEYWORDS the attacking spells
+        // check (REQ_ProtectionFromAbsorbSpells on Fortify Magicka Rank II).
+        // Map gem levels onto that ladder so leveling EARNS the protections:
+        // kin ordered by observed enchant magnitude, spread across levels 1-5.
+        var kinBySig = new Dictionary<string, Dictionary<FormKey, (IMagicEffectGetter M, float MinMag)>>();
+        foreach (var info in data.EnchInfo.Values)
+        {
+            if (info.Fx is null) continue;
+            foreach (var fx in info.Fx)
+            {
+                if (fx.Sig is null || fx.M is null || fx.Mag <= 0) continue;
+                var d = kinBySig.TryGetValue(fx.Sig, out var got) ? got : kinBySig[fx.Sig] = [];
+                d[fx.M.FormKey] = d.TryGetValue(fx.M.FormKey, out var prev)
+                    ? (fx.M, Math.Min(prev.MinMag, fx.Mag)) : (fx.M, fx.Mag);
+            }
+        }
+        foreach (var (famKey, obj) in outFams)
+        {
+            var refs = data.FamilyRefs[famKey];
+            if (refs.Count == 0) continue;
+            if (!kinBySig.TryGetValue(refs[0].Sig, out var kin) || kin.Count < 2) continue;
+            var tiers = kin.Values.OrderBy(k => k.MinMag).Select(k => k.M).ToList();
+            var lvl = new List<object>();
+            for (int l = 0; l < 5; l++)
+            {
+                var m = tiers[Math.Min(tiers.Count - 1, l * tiers.Count / 5)];
+                lvl.Add(new Dictionary<string, object>
+                {
+                    ["plugin"] = m.FormKey.ModKey.FileName.String,
+                    ["fid"] = $"0x{m.FormKey.ID:X6}",
+                    ["mgef"] = m.EditorID ?? "?",
+                });
+            }
+            ((Dictionary<string, object>)obj)["levels"] = lvl;
+            Console.WriteLine($"  {famKey}: {tiers.Count}-rank ladder -> levels " +
+                string.Join(" | ", tiers.Select(m => m.Name?.String ?? m.EditorID)));
         }
         var notes = noteWeight.OrderByDescending(kv => kv.Value)
             .Select(kv => $"{kv.Key} — {kv.Value} item(s)").ToList();
