@@ -907,9 +907,15 @@ static class Commands
         // Map gem levels onto that ladder so leveling EARNS the protections:
         // kin ordered by observed enchant magnitude, spread across levels 1-5.
         var kinBySig = new Dictionary<string, Dictionary<FormKey, (IMagicEffectGetter M, float MinMag)>>();
-        foreach (var info in data.EnchInfo.Values)
+        // m32c (Marth: 'why does fortify magicka do irresistible fire at
+        // level V?'): a Vonos ARTIFACT effect shared sig+name-root and won
+        // the top rung. Kin may only come from GENERIC (strip-class) enchants
+        // — uniques keep their tricks.
+        var genericEnchs = data.Raw.Where(r => clsByItem[r.Key].StartsWith("strip"))
+            .Select(r => r.Ench).ToHashSet();
+        foreach (var (enchKey, info) in data.EnchInfo)
         {
-            if (info.Fx is null) continue;
+            if (info.Fx is null || !genericEnchs.Contains(enchKey)) continue;
             foreach (var fx in info.Fx)
             {
                 if (fx.Sig is null || fx.M is null || fx.Mag <= 0) continue;

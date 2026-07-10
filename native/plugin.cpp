@@ -191,6 +191,7 @@ RE::TESObjectCONT*      g_pouchCont = nullptr;
 // made literal. Created once per save (co-save v7 keeps the ref id), gems
 // route here on arrival; the menu reads it; socketing consumes from it.
 RE::FormID g_pouchRefID = 0;
+bool       g_pouchCreatedThisLoad = false;  // gates the stranded-gem recovery
 RE::TESObjectREFR* PouchRef() {
     if (!g_pouchRefID) {
         return nullptr;
@@ -206,16 +207,79 @@ void EnsurePouchRef() {
     if (!player) {
         return;
     }
-    auto ref = player->PlaceObjectAtMe(g_pouchCont, false);
+    // forcePersist = TRUE (2026-07-10 field loss: a temp+disabled ref was
+    // engine-purged mid-play FOUR times in one session, annihilating its
+    // contents — 17 gems. Only a genuinely persistent ref survives.)
+    auto ref = player->PlaceObjectAtMe(g_pouchCont, true);
     if (!ref) {
         spdlog::error("[pouch] container ref creation failed - gems stay in inventory");
         return;
     }
-    ref->formFlags |= RE::TESObjectREFR::RecordFlags::kPersistent;  // survive cell resets
-    ref->Disable();                                                 // never visible
+    ref->formFlags |= RE::TESObjectREFR::RecordFlags::kPersistent;
+    ref->Disable();  // never visible
+    const bool recreated = g_pouchRefID != 0;
     g_pouchRefID = ref->GetFormID();
-    spdlog::info("[pouch] hidden gem container created {:08X}", g_pouchRefID);
+    g_pouchCreatedThisLoad = true;
+    spdlog::info("[pouch] hidden gem container created {:08X}{}", g_pouchRefID,
+                 recreated ? " (previous ref DEAD — recovery pass will run)" : "");
 }
+// m32c: when the pouch had to be recreated, its contents died with the old
+// ref — but the RECORDS live in the co-save. Any loose-gem record whose uid
+// exists in neither the player nor the pouch is re-minted with its banked
+// level and XP. Runs only on pouch creation; healthy loads never trigger it.
+void GiveGemInstance(int a_gemIdx, int a_level, float a_xp);
+void RecoverStrandedGems() {
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    auto* pouch = PouchRef();
+    if (!player || !pouch) {
+        return;
+    }
+    std::unordered_set<InstKey> live;
+    auto collect = [&](RE::TESObjectREFR* a_h) {
+        for (const auto& [obj, data] : a_h->GetInventory(
+                 [](RE::TESBoundObject& o) { return o.Is(RE::FormType::Misc); })) {
+            if (data.first <= 0 || !g_gemByItem.contains(obj->GetFormID()) ||
+                !data.second || !data.second->extraLists) {
+                continue;
+            }
+            for (auto* xl : *data.second->extraLists) {
+                if (auto* xid = xl ? xl->GetByType<RE::ExtraUniqueID>() : nullptr) {
+                    live.insert(MakeKey(obj->GetFormID(), xid->uniqueID));
+                }
+            }
+        }
+    };
+    collect(player);
+    collect(pouch);
+    struct Rz { int idx; int level; float xp; InstKey key; };
+    std::vector<Rz> res;
+    for (const auto& [key, rec] : g_sockets) {
+        if ((key & 0xFF) != 0) {
+            continue;  // gem instances bank in slot 0
+        }
+        const auto base = static_cast<RE::FormID>(key >> 24);
+        if (!g_gemByItem.contains(base) || live.contains(key)) {
+            continue;  // not a loose-gem record, or its gem is accounted for
+        }
+        auto gemIt = g_gemByGid.find(rec.gid);
+        if (gemIt == g_gemByGid.end()) {
+            continue;
+        }
+        res.push_back({ gemIt->second, rec.level, rec.xp, key });
+    }
+    for (const auto& r : res) {
+        spdlog::info("[pouch] RECOVERING stranded gem '{}' L{} xp={:.0f}",
+                     g_gems[r.idx].def->gid, r.level, r.xp);
+        g_sockets.erase(r.key);
+        GiveGemInstance(r.idx, r.level, r.xp);
+    }
+    if (!res.empty()) {
+        Notify(std::format("MEO: recovered {} lost gem(s) into your pouch, XP intact.",
+                           res.size()));
+        spdlog::info("[pouch] {} stranded gem(s) recovered", res.size());
+    }
+}
+
 void RouteGemsToPouch() {
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* pouch = PouchRef();
@@ -833,9 +897,12 @@ bool IsSocketableArmorBase(const RE::TESObjectARMO* a_armo) {
     // NB: HasPartOf() is .all() (every bit must match), so it must be called
     // per-slot and OR'd — a combined mask would demand one piece fill all slots.
     using S = RE::BGSBipedObjectForm::BipedObjectSlot;
-    return a_armo->HasPartOf(S::kHead) || a_armo->HasPartOf(S::kBody) ||
-           a_armo->HasPartOf(S::kHands) || a_armo->HasPartOf(S::kAmulet) ||
-           a_armo->HasPartOf(S::kRing);
+    // kHair: vanilla-line helmets occupy biped slot 31 (Hair), not 30 —
+    // head gear was silently ineligible until 2026-07-10 (Marth's helmet
+    // "became unslotted" once its conversion record was removed).
+    return a_armo->HasPartOf(S::kHead) || a_armo->HasPartOf(S::kHair) ||
+           a_armo->HasPartOf(S::kBody) || a_armo->HasPartOf(S::kHands) ||
+           a_armo->HasPartOf(S::kAmulet) || a_armo->HasPartOf(S::kRing);
 }
 
 // Re-apply a socketed instance's ability to an already-worn item after a
@@ -2096,12 +2163,37 @@ namespace menuhook {
         // m29 (Marth: "gains X at gem level IV" must be readable in game):
         // hovering a gem or a filled socket lists the rank ladder's grants,
         // pulled from each rung MGEF's own description — per-list truth.
+        auto gemBasics = [&](int a_idx, int a_level) -> std::string {
+            const auto& rg = g_gems[a_idx];
+            const int   li = std::clamp(a_level, 1, 5) - 1;
+            auto*       m = rg.mgefLv[li] ? rg.mgefLv[li] : rg.mgef;
+            const float mag = rg.def->magnitude[li] * g_magnitudeMult *
+                              (1.0f + 0.08f * g_attuneRank);
+            const char* d = m ? m->magicItemDescription.c_str() : nullptr;
+            if (d && *d) {
+                std::string s(d);
+                if (const auto dot = s.find(". "); dot != std::string::npos) {
+                    s = s.substr(0, dot + 1);  // the base line only
+                }
+                const std::string tok = "<mag>";
+                if (const auto p = s.find(tok); p != std::string::npos) {
+                    s = s.substr(0, p) + std::format("{:.0f}", mag) + s.substr(p + tok.size());
+                }
+                std::erase(s, '<');
+                std::erase(s, '>');
+                return s;
+            }
+            return std::format("{}: {:.0f}", GemName(rg), mag);
+        };
         auto rungTooltip = [&](int a_gemIdx, int a_level, const std::string& a_action) {
             if (!ImGui::IsItemHovered()) {
                 return;
             }
             ImGui::BeginTooltip();
             ImGui::TextUnformatted(a_action.c_str());
+            if (a_gemIdx >= 0 && a_gemIdx < static_cast<int>(g_gems.size())) {
+                ImGui::TextUnformatted(gemBasics(a_gemIdx, a_level).c_str());  // m32c
+            }
             if (a_gemIdx >= 0 && a_gemIdx < static_cast<int>(g_gems.size())) {
                 for (const auto& [lv, note] : g_gems[a_gemIdx].lvNotes) {
                     const bool active = a_level >= lv;
@@ -2846,8 +2938,15 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
     if (!ench) {
         return 0;
     }
-    const int  cap = SocketCapacity(a_base);
     const bool armor = a_base->Is(RE::FormType::Armor);
+    const bool eligible = armor ? IsSocketableArmorBase(a_base->As<RE::TESObjectARMO>())
+                                : IsSocketableWeaponBase(a_base->As<RE::TESObjectWEAP>());
+    if (!eligible) {  // m32c: boots etc. can't socket — converting would strand them
+        spdlog::info("[convert-miss] '{}' base {:08X} — not socketable gear, "
+                     "player enchant left alone", a_base->GetName(), a_base->GetFormID());
+        return 0;
+    }
+    const int  cap = SocketCapacity(a_base);
     std::vector<int> picks;
     for (auto* eff : ench->effects) {
         if (!eff || !eff->baseEffect) {
@@ -4052,7 +4151,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.39.0 (M32 absolute riders — nothing stays pinned) loaded");
+            console->Print("MEO native v0.40.0 (M32c pouch persistence + gem recovery) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4069,6 +4168,10 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
             }
             EnsurePouchRef();     // m27: gems live in the hidden pouch container
             RouteGemsToPouch();
+            if (g_pouchCreatedThisLoad) {  // m32c: the old pouch died — resurrect
+                g_pouchCreatedThisLoad = false;
+                RecoverStrandedGems();
+            }
         });
         ScheduleReapplyWornSockets();  // re-activate worn gem effects (deferred + retried)
         break;
@@ -4085,7 +4188,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.39.0 (M32 absolute riders — nothing stays pinned) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.40.0 (M32c pouch persistence + gem recovery) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
