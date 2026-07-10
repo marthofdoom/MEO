@@ -2084,17 +2084,38 @@ Arch DetectArchetype(RE::Actor* a_actor) {
 // NPC decides once, forever. The gem is LIVE on the enemy (ApplyWornAbility) —
 // you fight the effect; at death it converts to a lootable loose gem (below).
 // ── m23: loot conversion (Marth: covered enchants CONVERT to socketed) ──
-// Any inventory item in the conversion table is swapped, via engine flows
-// (RemoveItem/AddObjectToContainer with a pre-stamped ExtraDataList), for
-// its unenchanted base carrying the matching family's gem — level I/II
-// rolled with the same fGemLevel2Chance as loose drops, deterministic per
-// holder+item. Idempotent by construction: the converted base is not in
-// the table, so a second sweep finds nothing.
+// Any actor-held item in the conversion table is swapped for its
+// unenchanted base carrying the matching family's gem — level I/II rolled
+// with the same fGemLevel2Chance as loose drops, deterministic per
+// holder+item. Instance creation uses the proven gem-return flow
+// (PlaceObjectAtMe -> stamp the engine-created extraList -> PickUpObject);
+// ExtraDataList has no plugin-side constructor. Non-actor containers are
+// skipped ON PURPOSE: their items convert the moment they land on an
+// actor (looting, purchase, pickup). Idempotent by construction: the
+// converted base is not in the table, so a second sweep finds nothing.
+RE::ExtraDataList* FindWornXListFor(RE::Actor* a_actor, RE::TESBoundObject* a_base) {
+    auto* changes = a_actor->GetInventoryChanges();
+    if (!changes || !changes->entryList) {
+        return nullptr;
+    }
+    for (auto* entry : *changes->entryList) {
+        if (!entry || entry->object != a_base || !entry->extraLists) {
+            continue;
+        }
+        for (auto* xl : *entry->extraLists) {
+            if (xl && IsWornXList(xl)) {
+                return xl;
+            }
+        }
+    }
+    return nullptr;
+}
+
 int ConvertInventory(RE::TESObjectREFR* a_holder) {
-    if (!a_holder || g_convert.empty()) {
+    auto* actor = a_holder ? a_holder->As<RE::Actor>() : nullptr;
+    if (!actor || g_convert.empty()) {
         return 0;
     }
-    auto* actor = a_holder->As<RE::Actor>();
     struct Hit {
         RE::TESBoundObject* old;
         const ConvTarget*   tgt;
@@ -2103,7 +2124,7 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
         bool                left;
     };
     std::vector<Hit> hits;
-    for (auto& [obj, data] : a_holder->GetInventory()) {
+    for (auto& [obj, data] : actor->GetInventory()) {
         auto it = g_convert.find(obj->GetFormID());
         if (it == g_convert.end() || data.first <= 0) {
             continue;
@@ -2121,30 +2142,40 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
         }
         hits.push_back({ obj, &it->second, data.first, worn, left });
     }
-    const std::uint32_t seed = HashU32(a_holder->GetFormID() ^ 0x4D454F43u);  // 'MEOC'
+    const std::uint32_t seed = HashU32(actor->GetFormID() ^ 0x4D454F43u);  // 'MEOC'
     const std::uint32_t l2cut = static_cast<std::uint32_t>(g_gemLevel2Chance * 10000.0f);
     int converted = 0;
     for (const auto& hit : hits) {
-        a_holder->RemoveItem(hit.old, hit.count, RE::ITEM_REMOVE_REASON::kRemove,
-                             nullptr, nullptr);
+        actor->RemoveItem(hit.old, hit.count, RE::ITEM_REMOVE_REASON::kRemove,
+                          nullptr, nullptr);
         for (std::int32_t i = 0; i < hit.count; ++i) {
-            auto* xl = new RE::ExtraDataList();
+            auto ref = actor->PlaceObjectAtMe(hit.tgt->base, false);
+            if (!ref) {
+                spdlog::error("[convert] PlaceObjectAtMe failed for '{}' — plain base given",
+                              hit.tgt->base->GetName());
+                actor->AddObjectToContainer(hit.tgt->base, nullptr, 1, nullptr);
+                continue;
+            }
+            auto& xl = ref->extraList;
+            xl.SetOwner(actor->GetActorBase());  // m17b: never a theft flag
             const std::uint32_t hi =
                 HashU32(seed ^ hit.old->GetFormID() ^ static_cast<std::uint32_t>(i));
             const int level = (hi % 10000) < l2cut ? 2 : 1;
-            StampInstance(hit.tgt->base, xl, hit.tgt->gemIdx, level);
-            a_holder->AddObjectToContainer(hit.tgt->base, xl, 1, nullptr);
-            // The list picked this enemy to fight with an enchanted weapon;
-            // the converted gem stays worn and ACTIVE (Marth's ruling).
-            if (actor && hit.worn && i == 0) {
-                RE::ActorEquipManager::GetSingleton()->EquipObject(
-                    actor, hit.tgt->base, xl, 1, nullptr, false, false, false, true);
-                ApplyWornAbility(actor, hit.tgt->base, xl, hit.left);
-            }
+            StampInstance(hit.tgt->base, &xl, hit.tgt->gemIdx, level);
+            actor->PickUpObject(ref.get(), 1, false, false);
             ++converted;
         }
+        // The list picked this enemy to fight with an enchanted weapon; the
+        // converted gem stays worn and ACTIVE (Marth's ruling).
+        if (hit.worn) {
+            RE::ActorEquipManager::GetSingleton()->EquipObject(
+                actor, hit.tgt->base, nullptr, 1, nullptr, false, false, false, true);
+            if (auto* wxl = FindWornXListFor(actor, hit.tgt->base)) {
+                ApplyWornAbility(actor, hit.tgt->base, wxl, hit.left);
+            }
+        }
         spdlog::info("[convert] {:08X} '{}': '{}' x{} -> '{}' + {} gem",
-                     a_holder->GetFormID(), a_holder->GetName(), hit.old->GetName(),
+                     actor->GetFormID(), actor->GetName(), hit.old->GetName(),
                      hit.count, hit.tgt->base->GetName(),
                      g_gems[hit.tgt->gemIdx].def->name);
     }
