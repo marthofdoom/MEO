@@ -20,7 +20,7 @@ using Mutagen.Bethesda.Skyrim;
 
 const string Usage =
     "usage: MEO.Installer                                     (post-install: auto-detect MO2, write patch + calibration)\n" +
-    "       MEO.Installer <stats|tree|tree-effects|perk|ench|item|write-patch|strip-report|write-calibration> <MO2 root> <profile> [args]";
+    "       MEO.Installer <stats|tree|tree-effects|perk|ench|item|write-patch|strip-report|write-calibration> <MO2-or-game root> <profile-or-plugins.txt|auto> [args]";
 if (args.Length > 0 && args[0] is "-h" or "--help" or "help")
 {
     Console.WriteLine(Usage);
@@ -32,7 +32,7 @@ if (args.Length is > 0 and < 3)
     return 1;
 }
 
-string cmd, mo2Root, profile;
+string cmd = "", mo2Root = "", profile = "";
 // Trailing options: --sub <esp> replaces the same-named plugin's file (test a
 // regenerated plugin in place), --add <esp> appends at the end of the order.
 var subs = new List<string>();
@@ -47,7 +47,19 @@ if (installMode)
     var exeDir = Path.GetDirectoryName(Environment.ProcessPath)
                  ?? Directory.GetCurrentDirectory();
     var root = Mo2LoadOrder.FindRootAbove(exeDir);
-    if (root is null)
+    // Vanilla compatibility: the mod unzipped into <game>/Data with no mod
+    // manager — the game folder above the exe is the whole load order.
+    var gameRoot = root is null ? Mo2LoadOrder.FindGameRootAbove(exeDir) : null;
+    if (root is null && gameRoot is not null)
+    {
+        Console.WriteLine($"game root (no MO2): {gameRoot}");
+        (mo2Root, profile, cmd) = (gameRoot, "auto", "write-patch");
+        var vOut = Path.GetDirectoryName(Environment.ProcessPath) ?? gameRoot;
+        positional.Add(Path.Combine(vOut, "MEO - Patch.esp"));
+        Console.WriteLine("NOTE: after the run, enable 'MEO - Patch.esp' in the in-game " +
+                          "CREATIONS/MODS menu or your plugins.txt.");
+    }
+    else if (root is null)
     {
         if (Console.IsInputRedirected)
         {
@@ -64,15 +76,18 @@ if (installMode)
             return Pause(1, installMode);
         }
     }
-    Console.WriteLine($"MO2 root: {root}");
-    var picked = Mo2LoadOrder.PickProfile(root);
-    if (picked is null) return Pause(Commands.Fail("no profiles found under " + root), installMode);
-    (mo2Root, profile, cmd) = (root, picked, "write-patch");
-    var outDir = exeDir.StartsWith(Path.Combine(root, "mods"), StringComparison.OrdinalIgnoreCase)
-        ? exeDir
-        : Path.Combine(root, "mods", "MEO");
-    Directory.CreateDirectory(outDir);
-    positional.Add(Path.Combine(outDir, "MEO - Patch.esp"));
+    if (root is not null)  // MO2 flow; the game-root flow set everything above
+    {
+        Console.WriteLine($"MO2 root: {root}");
+        var picked = Mo2LoadOrder.PickProfile(root);
+        if (picked is null) return Pause(Commands.Fail("no profiles found under " + root), installMode);
+        (mo2Root, profile, cmd) = (root, picked, "write-patch");
+        var outDir = exeDir.StartsWith(Path.Combine(root, "mods"), StringComparison.OrdinalIgnoreCase)
+            ? exeDir
+            : Path.Combine(root, "mods", "MEO");
+        Directory.CreateDirectory(outDir);
+        positional.Add(Path.Combine(outDir, "MEO - Patch.esp"));
+    }
 }
 else
 {
@@ -1423,9 +1438,66 @@ static class Mo2LoadOrder
         return profiles.FirstOrDefault(p => p.Equals(a, StringComparison.OrdinalIgnoreCase)) ?? def;
     }
 
+    // ── Vanilla / non-MO2 compatibility ──────────────────────────────
+    // A plain game install has no profiles: the load order is Data/ plus the
+    // game's own plugins.txt (%LOCALAPPDATA%/Skyrim Special Edition). The
+    // <root> argument may be the game folder (holds Data/Skyrim.esm) and the
+    // <profile> argument a plugins.txt path, or "auto" to use the game's own.
+    public static bool IsGameRoot(string root) =>
+        File.Exists(Path.Combine(root, "Data", "Skyrim.esm"));
+
+    public static string? FindGameRootAbove(string start)
+    {
+        for (var d = new DirectoryInfo(start); d is not null; d = d.Parent)
+            if (IsGameRoot(d.FullName))
+                return d.FullName;
+        return null;
+    }
+
+    public static List<(string Name, string Path)> ResolveGame(
+        string gameRoot, string pluginsArg, out List<string> missing)
+    {
+        var dataDir = Path.Combine(gameRoot, "Data");
+        string? pluginsPath = null;
+        if (!string.IsNullOrEmpty(pluginsArg) && pluginsArg != "auto" &&
+            File.Exists(pluginsArg))
+            pluginsPath = pluginsArg;
+        else
+        {
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var cand = Path.Combine(local, "Skyrim Special Edition", "plugins.txt");
+            if (File.Exists(cand)) pluginsPath = cand;
+        }
+        var plugins = pluginsPath is null
+            ? new List<string>()
+            : File.ReadLines(pluginsPath)
+                .Where(l => l.StartsWith('*'))
+                .Select(l => l[1..].Trim())
+                .ToList();
+        if (pluginsPath is null)
+            Console.WriteLine("no plugins.txt found — base game + DLC only " +
+                              "(pass a plugins.txt path as the profile argument)");
+        else
+            Console.WriteLine($"plugins.txt: {pluginsPath}");
+        var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in Directory.EnumerateFiles(dataDir))
+            files.TryAdd(Path.GetFileName(f), f);
+        var outList = new List<(string, string)>();
+        missing = [];
+        foreach (var p in BaseMasters.Concat(plugins).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (files.TryGetValue(p, out var full)) outList.Add((p, full));
+            else missing.Add(p);
+        }
+        return outList;
+    }
+
     public static List<(string Name, string Path)> Resolve(
         string mo2Root, string profile, out List<string> missing)
     {
+        if (!File.Exists(Path.Combine(mo2Root, "ModOrganizer.ini")) && IsGameRoot(mo2Root))
+            return ResolveGame(mo2Root, profile, out missing);  // vanilla / manual install
+
         var prof = Path.Combine(mo2Root, "profiles", profile);
         var plugins = File.ReadLines(Path.Combine(prof, "plugins.txt"))
             .Where(l => l.StartsWith('*'))
