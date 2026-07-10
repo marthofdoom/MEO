@@ -2106,7 +2106,8 @@ namespace menuhook {
             }
             WndProcHook::func = reinterpret_cast<WNDPROC>(SetWindowLongPtrA(
                 sd.OutputWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(WndProcHook::thunk)));
-            ApplyMenuStyle();
+            g_appliedSkin = std::clamp(g_menuStyle, 0, 3);
+            ApplyMenuStyle(kSkins[g_appliedSkin]);
             g_bbW = static_cast<float>(sd.BufferDesc.Width);
             g_bbH = static_cast<float>(sd.BufferDesc.Height);
             g_d3dReady.store(true);
