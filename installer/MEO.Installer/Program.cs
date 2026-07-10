@@ -705,7 +705,8 @@ static class Commands
 
         var fams = new Dictionary<string, Dictionary<string, RecipeAgg>>();
         var enchFamily = new Dictionary<FormKey, string>();
-        var enchDurLeftover = new HashSet<FormKey>();
+        var enchLeftover =
+            new Dictionary<FormKey, List<(string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds)>>();
         var noteWeight = new Dictionary<string, int>();
         void Note(string msg, int weight) =>
             noteWeight[msg] = noteWeight.GetValueOrDefault(msg) + weight;
@@ -747,8 +748,7 @@ static class Commands
                 matched.Add(pool2[idx]);
                 pool2.RemoveAt(idx);
             }
-            if (pool2.Any(x => x.Dur > 0 && (x.Sig is null || !data.Covered.Contains(x.Sig))))
-                enchDurLeftover.Add(ench);
+            enchLeftover[ench] = pool2;  // unmatched companions — the loss audit's input
             var prim = matched[0];
             if (prim.Mag <= 0)
             {
@@ -803,12 +803,12 @@ static class Commands
                 Console.WriteLine("  " + line);
                 continue;
             }
-            if (dom.Mgefs.Count > 2)
-                Note($"{famKey}: recipe has {dom.Mgefs.Count} riders, DLL carries 2 — truncated",
+            if (dom.Mgefs.Count > 4)
+                Note($"{famKey}: recipe has {dom.Mgefs.Count} riders, DLL carries 4 — truncated",
                      dom.Weight);
             var riderJson = new List<object>();
             var parts = new List<string>();
-            for (int i = 0; i < Math.Min(dom.Mgefs.Count, 2); i++)
+            for (int i = 0; i < Math.Min(dom.Mgefs.Count, 4); i++)
             {
                 var m = dom.Mgefs[i];
                 var ratio = (float)Math.Round(Median(dom.Obs[i].Select(o => o.Ratio).ToList()), 3);
@@ -832,6 +832,20 @@ static class Commands
             if (alts > 0) line += $" — minority recipes on {alts} item(s)";
             Console.WriteLine("  " + line);
         }
+        // Which companion MGEFs each family's gems will actually CARRY —
+        // the lossless-conversion test reads from this, not from wishes.
+        var adopted = new Dictionary<string, HashSet<FormKey>>();
+        foreach (var (famKey, obj) in outFams)
+        {
+            var set = new HashSet<FormKey>();
+            foreach (var rj in (List<object>)((Dictionary<string, object>)obj)["riders"])
+            {
+                var d = (Dictionary<string, object>)rj;
+                set.Add(new FormKey(ModKey.FromFileName((string)d["plugin"]),
+                                    Convert.ToUInt32(((string)d["fid"])[2..], 16)));
+            }
+            adopted[famKey] = set;
+        }
         var notes = noteWeight.OrderByDescending(kv => kv.Value)
             .Select(kv => $"{kv.Key} — {kv.Value} item(s)").ToList();
         foreach (var n in notes) Console.WriteLine("  note: " + n);
@@ -845,15 +859,49 @@ static class Commands
         var honored = new HashSet<string> { "strip-1fx", "strip-2fx-recipe", "strip-3fx-recipe",
                                             "strip-2fx-uncovered", "keep-generic-multifx" };
         var conversions = new List<object>();
-        int noFamily = 0, durDeferred = 0, partial = 0;
+        int noFamily = 0, pinned = 0, partial = 0, machineryWaived = 0;
+        var pinnedByEnch = new Dictionary<FormKey, string>();
+        var waivedFx = new Dictionary<string, int>();
         foreach (var r in data.Raw)
         {
             if (!honored.Contains(clsByItem[r.Key])) continue;
             if (!data.StripBase.TryGetValue(r.Key, out var baseKey)) continue;
             if (!enchFamily.TryGetValue(r.Ench, out var famKey)) { noFamily++; continue; }
-            // Partial recipes with an uncovered DURATION companion (stun,
-            // paralyze) stay enchanted until duration-anchored riders exist.
-            if (enchDurLeftover.Contains(r.Ench)) { durDeferred++; continue; }
+            // Lossless gate (Marth's ruling, 2026-07-10): convert ONLY when
+            // every UNCOVERED companion is either carried by the family's
+            // adopted riders or is hidden framework machinery (HideInUI —
+            // Requiem/perk-applied bookkeeping, not loot value). Anything
+            // else pins the item: it stays enchanted rather than lose value.
+            var lost = new List<string>();
+            bool waived = false;
+            foreach (var l in enchLeftover.GetValueOrDefault(r.Ench) ?? [])
+            {
+                if (l.Sig is not null && data.Covered.Contains(l.Sig)) continue;  // family-expressible
+                if (l.M is not null &&
+                    (adopted.GetValueOrDefault(famKey)?.Contains(l.M.FormKey) ?? false))
+                    continue;  // rides
+                // Machinery = hidden AND valueless. HideInUI alone is not
+                // enough: Requiem hides real procs too (the stagger companion
+                // on 'of Stunning' weapons carries mag 20-30 while hidden —
+                // 2026-07-10 audit). A zero-magnitude hidden effect is
+                // bookkeeping (REQ_DEPRECATED_*), safe to wave through.
+                if (l.M is not null && l.Mag <= 0 &&
+                    l.M.Flags.HasFlag(MagicEffect.Flag.HideInUI))
+                {
+                    waived = true;
+                    var wk = $"{l.M.EditorID} arch={l.M.Archetype.Type} mag={l.Mag} dur={l.Dur}";
+                    waivedFx[wk] = waivedFx.GetValueOrDefault(wk) + 1;
+                    continue;  // hidden machinery — audited below
+                }
+                lost.Add(l.M?.Name?.String ?? l.M?.EditorID ?? l.Sig ?? "?");
+            }
+            if (lost.Count > 0)
+            {
+                pinned++;
+                pinnedByEnch.TryAdd(r.Ench, string.Join(", ", lost.Distinct()));
+                continue;
+            }
+            if (waived) machineryWaived++;
             if (clsByItem[r.Key] is "strip-2fx-uncovered" or "keep-generic-multifx") partial++;
             conversions.Add(new Dictionary<string, object>
             {
@@ -865,8 +913,13 @@ static class Commands
             });
         }
         Console.WriteLine($"conversions: {conversions.Count} enchanted generic(s) -> socketed base " +
-                          $"({partial} partial-recipe, {durDeferred} duration-deferred" +
+                          $"({partial} partial-recipe, {machineryWaived} machinery-waived, " +
+                          $"{pinned} PINNED lossy" +
                           (noFamily > 0 ? $", {noFamily} no-family)" : ")"));
+        foreach (var (ench, lostFx) in pinnedByEnch.OrderBy(kv => kv.Value))
+            Console.WriteLine($"  pinned: ench {ench} would lose [{lostFx}]");
+        foreach (var (fx, n) in waivedFx.OrderByDescending(kv => kv.Value))
+            Console.WriteLine($"  waived machinery x{n}: {fx}");
 
         var doc = new Dictionary<string, object>
         {
@@ -1159,7 +1212,8 @@ static class Commands
                 $"  [{a.Items} item(s), {a.Enchs.Count} ench(s), solo x{a.Solo}] " +
                 $"'{m.Name?.String ?? m.EditorID}' ({m.EditorID} [{m.FormKey.ModKey}]) " +
                 $"arch={m.Archetype.Type} av={m.Archetype.ActorValue} " +
-                $"resist={m.ResistValue} av2={m.SecondActorValue}");
+                $"resist={m.ResistValue} av2={m.SecondActorValue}" +
+                (m.Flags.HasFlag(MagicEffect.Flag.HideInUI) ? "  [HIDDEN machinery]" : ""));
             if (m.Description?.String is { Length: > 0 } d)
                 Console.WriteLine($"      \"{(d.Length > 110 ? d[..110] + "…" : d)}\"");
             if (a.Partners.Count > 0)
