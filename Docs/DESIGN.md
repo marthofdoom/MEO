@@ -276,6 +276,21 @@ Strip classification (Marth 2026-07-09):
   fire — no 50% proc conditions on built instances; flagged for balance
   review). Explicit doubles (deliberate distinct-effect packages like
   robes) remain artifact-class.
+- **CORRECTED to CONVERSION (Marth 2026-07-09, m23 SHIPPED v0.31.0)**: the
+  "strip" never removes loot — a covered enchanted generic **converts, at
+  spawn/acquire, into its unenchanted base with the matching family's gem
+  socketed and ACTIVE** (level I/II rolled with the same fGemLevel2Chance
+  as loose drops). No LVLI patch: the installer emits a `conversions`
+  table in meo_calibration.json (enchanted item → base + family; LoreRim:
+  10,146 rows) and the DLL swaps instances via engine flows (RemoveItem +
+  AddObjectToContainer with a pre-stamped ExtraDataList). Worn NPC
+  conversions re-equip and ApplyWornAbility — an enemy holding a Fire I
+  weapon deals Fire I damage. Hooks: actor spawn sinks (before the m19
+  bless roll), ContainerSink on any arrival (chests, corpse loot,
+  purchases, pickups — covers world refs at pickup), vendor dialogue
+  sweep, player PostLoadGame sweep. Idempotent: converted bases aren't in
+  the table. Duration-anchored recipes (paralysis, soultrap companions —
+  not yet expressible as riders) keep spawning enchanted until they are.
 **Packaging = standalone Mutagen CLI** (self-contained .exe, any mod manager, we
 own the UX; not a Synthesis patcher). `tools/scan_loadorder.py` is the python
 executable spec / recon prototype for this tool (no dotnet on the dev machine —
