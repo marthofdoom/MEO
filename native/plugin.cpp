@@ -90,6 +90,7 @@
 #include <random>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "GemCatalog.h"
@@ -3083,6 +3084,87 @@ void EnsurePlayerSetup() {
 // did by hand. a_rebuild refreshes the created enchant (picks up MCM magnitude);
 // a_reequip does the equip cycle. Targets are collected BEFORE re-equipping so
 // the equip calls can't invalidate the entryList mid-iteration.
+// m24b (Marth's "improperly escalated skills"): before the m23c worn-teardown
+// fix, unsocketing a worn item's LAST gem orphaned its constant ability — the
+// ActiveEffect (with its fortify-skill / resist AV modifier) could ride along
+// in the save with no owning socket. Sweep the player's active effects for
+// OUR signature — engine-created FF enchantment with kCostOverride+cost 0
+// (every MEO instance enchant; player-crafted enchants never set that) whose
+// base effect is in the gem MGEF set — that no currently-worn socketed item
+// vouches for, and dispel. Dispel runs the effect's recover path, so the AV
+// modifier is returned. Runs after each post-load refresh pass; every kill
+// is NAMED in the log ([avfix]) — that log answers "which skills were from
+// bad gem socketing".
+void DispelStaleGemEffects() {
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    auto* mt = player ? player->AsMagicTarget() : nullptr;
+    auto* changes = player ? player->GetInventoryChanges() : nullptr;
+    if (!mt || !changes || !changes->entryList) {
+        return;
+    }
+    std::unordered_set<RE::FormID> valid;  // enchants live on currently-worn gear
+    for (auto* entry : *changes->entryList) {
+        if (!entry || !entry->object || !entry->extraLists) {
+            continue;
+        }
+        for (auto* xl : *entry->extraLists) {
+            if (!xl || !IsWornXList(xl)) {
+                continue;
+            }
+            if (auto* xe = xl->GetByType<RE::ExtraEnchantment>(); xe && xe->enchantment) {
+                valid.insert(xe->enchantment->GetFormID());
+            }
+        }
+    }
+    std::unordered_set<const RE::EffectSetting*> gemFx;
+    for (const auto& rg : g_gems) {
+        if (rg.mgef) {
+            gemFx.insert(rg.mgef);
+        }
+        for (int r = 0; r < rg.nRiders; ++r) {
+            if (rg.riders[r].mgef) {
+                gemFx.insert(rg.riders[r].mgef);
+            }
+        }
+    }
+    auto* list = mt->GetActiveEffectList();
+    if (!list) {
+        return;
+    }
+    std::vector<RE::ActiveEffect*> stale;
+    for (auto* ae : *list) {
+        if (!ae || !ae->spell) {
+            continue;
+        }
+        auto* en = ae->spell->As<RE::EnchantmentItem>();
+        if (!en || en->GetFormID() < 0xFF000000u) {
+            continue;  // not an engine-created enchantment
+        }
+        if (!en->data.flags.any(RE::EnchantmentItem::EnchantmentFlag::kCostOverride) ||
+            en->data.costOverride != 0) {
+            continue;  // not MEO's free-enchant signature
+        }
+        if (valid.contains(en->GetFormID())) {
+            continue;  // a worn socketed item vouches for it
+        }
+        const auto* mgef = ae->GetBaseObject();
+        if (!mgef || !gemFx.contains(mgef)) {
+            continue;
+        }
+        stale.push_back(ae);
+    }
+    for (auto* ae : stale) {
+        const auto* mgef = ae->GetBaseObject();
+        spdlog::info("[avfix] dispelling stale gem effect '{}' ({:08X}) mag={:.1f}",
+                     mgef->GetName(), mgef->GetFormID(), ae->magnitude);
+        ae->Dispel(true);
+    }
+    if (!stale.empty()) {
+        spdlog::info("[avfix] {} stale gem effect(s) dispelled — modifiers recovered", stale.size());
+        Notify(std::format("MEO: cleaned {} stale gem effect(s) from your save.", stale.size()));
+    }
+}
+
 void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag = false) {
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* changes = player ? player->GetInventoryChanges() : nullptr;
@@ -3199,6 +3281,7 @@ void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag = false) {
                 }
                 spdlog::info("[load] refresh pass: {} worn socket(s) re-activated "
                              "(strip/restamp, no re-equip)", restore.size());
+                DispelStaleGemEffects();  // m24b: sweep bug-orphaned abilities
             });
         }
     }
