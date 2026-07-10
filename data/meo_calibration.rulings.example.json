@@ -1,10 +1,11 @@
 {
-  "comment": "Human-curated conversion waivers. An enchant containing a waived effect converts even though the gem cannot carry that effect. Add entries when write-calibration's 'pinned:' lines name something ruled perk-domain or redundant.",
+  "comment": "Human-curated perk-domain rulings. A ruled effect never counts as conversion loss AND never rides on gems. Add entries when 'pinned:' lines or rider recipes name something the list grants through perks.",
   "waivedEffects": [
     {
       "formKey": "ADE45A:Requiem.esp",
       "editorId": "REQ_Ench_FortifyLockpicking",
-      "why": "Lockpick durability is a Lockpicking-perk effect in Requiem; the enchant copy is redundant for any character investing in the tree (Marth, 2026-07-10)."
+      "why": "Lockpick durability is a Lockpicking-perk bonus in Requiem/LoreRim, not native to equipment \u2014 convert without it, never ride it (Marth, 2026-07-10).",
+      "revisit": "Deferred: a full perk-domain-vs-equipment-native classification pass over all rider candidates (token-expensive; M34/M35 window)."
     }
   ]
 }

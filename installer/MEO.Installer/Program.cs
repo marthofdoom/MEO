@@ -732,6 +732,27 @@ static class Commands
             if (clsByItem[r.Key].StartsWith("strip") || clsByItem[r.Key] == "keep-generic-multifx")
                 enchWeight[r.Ench] = enchWeight.GetValueOrDefault(r.Ench) + 1;
 
+        // Human-curated rulings (Marth's tuning loop): effects HE has ruled
+        // perk-domain — Requiem grants them through perks, they are not
+        // native to equipment. They (a) never count as conversion loss and
+        // (b) NEVER ride on gems (2026-07-10: lockpick durability rode @60
+        // the moment absolute riders landed — wrong domain). Marked for a
+        // deeper perk-vs-equipment classification pass later.
+        var ruledWaived = new HashSet<FormKey>();
+        var rulingsPath = outPath.Replace(".json", ".rulings.json");
+        if (File.Exists(rulingsPath))
+        {
+            using var doc2 = System.Text.Json.JsonDocument.Parse(File.ReadAllText(rulingsPath));
+            if (doc2.RootElement.TryGetProperty("waivedEffects", out var arr))
+                foreach (var e in arr.EnumerateArray())
+                {
+                    var fk = e.GetProperty("formKey").GetString()!.Split(':');
+                    ruledWaived.Add(new FormKey(ModKey.FromFileName(fk[1]),
+                                                Convert.ToUInt32(fk[0], 16)));
+                }
+            Console.WriteLine($"rulings: {ruledWaived.Count} waived effect(s) from {rulingsPath}");
+        }
+
         var fams = new Dictionary<string, Dictionary<string, RecipeAgg>>();
         var enchFamily = new Dictionary<FormKey, string>();
         var enchLeftover =
@@ -788,7 +809,10 @@ static class Commands
             // only fires under its conditions; gem riders carry none, so
             // copying it would apply the bonus always. Skip and say so.
             var all = matched.Skip(1).Concat(pool2).ToList();
-            var riders = all.Where(t => t.Conds == 0).ToList();
+            foreach (var d in all.Where(t => t.M is not null && ruledWaived.Contains(t.M.FormKey)))
+                Note($"{best}: ruled perk-domain '{d.M!.Name?.String ?? d.M.EditorID}' never rides", weight);
+            var riders = all.Where(t => t.Conds == 0 &&
+                                        (t.M is null || !ruledWaived.Contains(t.M.FormKey))).ToList();
             foreach (var d in all.Where(t => t.Conds > 0))
                 Note($"{best}: conditional companion '{d.M!.Name?.String ?? d.M.EditorID}' " +
                      $"({d.Conds} cond(s)) not carried", weight);
@@ -863,25 +887,6 @@ static class Commands
             if (alts > 0) line += $" — minority recipes on {alts} item(s)";
             Console.WriteLine("  " + line);
         }
-        // Human-curated waivers (Marth's tuning loop): effects HE has ruled
-        // perk-domain / redundant — any enchant containing one converts even
-        // though the gem won't carry it. Lives next to the calibration so a
-        // list update keeps the ruling; new pins in the log are the queue.
-        var ruledWaived = new HashSet<FormKey>();
-        var rulingsPath = outPath.Replace(".json", ".rulings.json");
-        if (File.Exists(rulingsPath))
-        {
-            using var doc2 = System.Text.Json.JsonDocument.Parse(File.ReadAllText(rulingsPath));
-            if (doc2.RootElement.TryGetProperty("waivedEffects", out var arr))
-                foreach (var e in arr.EnumerateArray())
-                {
-                    var fk = e.GetProperty("formKey").GetString()!.Split(':');
-                    ruledWaived.Add(new FormKey(ModKey.FromFileName(fk[1]),
-                                                Convert.ToUInt32(fk[0], 16)));
-                }
-            Console.WriteLine($"rulings: {ruledWaived.Count} waived effect(s) from {rulingsPath}");
-        }
-
         // Which companion MGEFs each family's gems will actually CARRY —
         // the lossless-conversion test reads from this, not from wishes.
         var adopted = new Dictionary<string, HashSet<FormKey>>();
