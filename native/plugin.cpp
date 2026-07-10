@@ -84,6 +84,7 @@
 #include <cstdint>
 #include <cmath>
 #include <cstring>
+#include <cctype>
 #include <cstdlib>
 #include <format>
 #include <fstream>
@@ -117,7 +118,7 @@ bool          g_starterGranted = false;
 
 constexpr std::uint32_t kSerID = 'MEO1';
 constexpr std::uint32_t kRecGems = 'GEMS';
-constexpr std::uint32_t kSerVersion = 6;  // v6: + armorStarterGranted. v5: per-socket slot. v3/v4 → slot 0
+constexpr std::uint32_t kSerVersion = 7;  // v7: + pouchRefID.  // v6: + armorStarterGranted. v5: per-socket slot. v3/v4 → slot 0
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -135,11 +136,21 @@ struct RtRider {
 struct ResolvedGem {
     const meo::GemDef*                  def = nullptr;
     RE::EffectSetting*                  mgef = nullptr;   // null = disabled (missing master)
+    std::string                         liveName;  // m27: winning MGEF renamed the effect
     std::array<RtRider, 4>              riders{};  // m25: Squire-style recipes carry 3
     int                                 nRiders = 0;
     std::array<RE::TESObjectMISC*, 5>   items{};
 };
 std::vector<ResolvedGem>                          g_gems;
+// m27 (Marth confirmed the 'pen' in game): Requiem-style lists REPURPOSE
+// vanilla MGEFs at their original FormKeys (0x07A0FB 'Fortify Light Armor'
+// is now 'Fortify Armor Penetration'), so catalog labels can lie. The gem's
+// spoken name follows the WINNING record: relabel when neither name
+// contains the other (formatting differences like 'Fire' vs 'Fire Damage'
+// stay; semantic swaps don't).
+const char* GemName(const ResolvedGem& a_rg) {
+    return a_rg.liveName.empty() ? a_rg.def->name : a_rg.liveName.c_str();
+}
 std::unordered_map<RE::FormID, std::pair<int, int>> g_gemByItem;  // item -> {gemIdx, level}
 std::unordered_map<std::string_view, int>         g_gemByGid;
 std::vector<int>                                  g_lootableGems;  // weapon-domain, world-weapon stamps
@@ -172,6 +183,57 @@ constexpr RE::FormID kBossLocRefTypeID = 0x0130F7;// Skyrim.esm LCRT "Boss"
 constexpr RE::FormID kDragonKeywordID = 0x035D59; // Skyrim.esm KYWD ActorTypeDragon
 constexpr RE::FormID kReusableSoulGemKW = 0x0ED2F1;// Skyrim.esm KYWD ReusableSoulGem
 RE::TESObjectCONT*      g_pouchCont = nullptr;
+// m27 (Marth: gems must not clutter the player's inventory): every gem the
+// player owns lives in a hidden persistent container ref — the Gem Pouch
+// made literal. Created once per save (co-save v7 keeps the ref id), gems
+// route here on arrival; the menu reads it; socketing consumes from it.
+RE::FormID g_pouchRefID = 0;
+RE::TESObjectREFR* PouchRef() {
+    if (!g_pouchRefID) {
+        return nullptr;
+    }
+    auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(g_pouchRefID);
+    return (ref && ref->GetBaseObject() == g_pouchCont && !ref->IsDeleted()) ? ref : nullptr;
+}
+void EnsurePouchRef() {
+    if (PouchRef() || !g_pouchCont) {
+        return;
+    }
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    if (!player) {
+        return;
+    }
+    auto ref = player->PlaceObjectAtMe(g_pouchCont, false);
+    if (!ref) {
+        spdlog::error("[pouch] container ref creation failed - gems stay in inventory");
+        return;
+    }
+    ref->formFlags |= RE::TESObjectREFR::RecordFlags::kPersistent;  // survive cell resets
+    ref->Disable();                                                 // never visible
+    g_pouchRefID = ref->GetFormID();
+    spdlog::info("[pouch] hidden gem container created {:08X}", g_pouchRefID);
+}
+void RouteGemsToPouch() {
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    auto* pouch = PouchRef();
+    if (!player || !pouch) {
+        return;
+    }
+    int moved = 0;
+    for (const auto& [obj, data] : player->GetInventory(
+             [](RE::TESBoundObject& o) { return o.Is(RE::FormType::Misc); })) {
+        if (data.first <= 0 || !g_gemByItem.contains(obj->GetFormID())) {
+            continue;
+        }
+        // The container re-key sink follows each instance's record across
+        // the hop (m19 field-proven), so banked XP survives the move.
+        player->RemoveItem(obj, data.first, RE::ITEM_REMOVE_REASON::kRemove, nullptr, pouch);
+        moved += data.first;
+    }
+    if (moved > 0) {
+        spdlog::info("[pouch] {} gem(s) tucked away", moved);
+    }
+}
 RE::TESObjectMISC*      g_mentorGem = nullptr;
 RE::TESWorldSpace*      g_soulCairn = nullptr;    // null = Dawnguard absent
 RE::BGSLocationRefType* g_bossRefType = nullptr;
@@ -316,6 +378,22 @@ void ResolveCatalog() {
         ResolvedGem rg;
         rg.def = &def;
         rg.mgef = dh->LookupForm<RE::EffectSetting>(def.mgefID, def.plugin);
+        if (rg.mgef) {
+            const char* live = rg.mgef->GetName();
+            if (live && *live) {
+                std::string a(live), b(def.name);
+                auto lower = [](std::string s) {
+                    for (auto& c : s) c = static_cast<char>(std::tolower(c));
+                    return s;
+                };
+                a = lower(a); b = lower(b);
+                if (a.find(b) == std::string::npos && b.find(a) == std::string::npos) {
+                    rg.liveName = live;
+                    spdlog::info("[catalog] '{}' relabeled '{}' — the list renamed its effect",
+                                 def.name, live);
+                }
+            }
+        }
         if (!rg.mgef) {
             spdlog::warn("gem '{}' disabled: MGEF {:06X} not found in {}", def.gid, def.mgefID, def.plugin);
         }
@@ -357,6 +435,11 @@ void ResolveCatalog() {
             // form; map each distinct form to its FIRST level only.
             if (rg.items[lv] && rg.mgef && rg.items[lv] != prev) {
                 g_gemByItem[rg.items[lv]->GetFormID()] = { static_cast<int>(g_gems.size()), lv + 1 };
+                if (!rg.liveName.empty()) {  // m27: item names follow the live effect
+                    rg.items[lv]->fullName = RE::BSFixedString(
+                        (levels == 1) ? std::format("{} Gem", rg.liveName)
+                                      : std::format("{} {}", rg.liveName, meo::kRoman[lv]));
+                }
             }
             prev = rg.items[lv];
         }
@@ -548,7 +631,7 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         if (!namePart.empty()) {
             namePart += " + ";
         }
-        namePart += std::format("{} {}", filled[i].rg->def->name, meo::kRoman[filled[i].lvIdx]);
+        namePart += std::format("{} {}", GemName(*filled[i].rg), meo::kRoman[filled[i].lvIdx]);
     }
     auto* com = RE::BGSCreatedObjectManager::GetSingleton();
     auto* ench = isArmor ? com->AddArmorEnchantment(effects) : com->AddWeaponEnchantment(effects);
@@ -1022,14 +1105,14 @@ bool GrantGemXP(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataLis
     const bool isPlayer = a_owner->IsPlayerRef();
     const char* who = a_owner->GetName();
     Notify(isPlayer
-               ? std::format("Your {} gem has grown to {}.", rg.def->name, meo::kRoman[newLevel - 1])
+               ? std::format("Your {} gem has grown to {}.", GemName(rg), meo::kRoman[newLevel - 1])
                : std::format("{}'s {} gem has grown to {}.", who && *who ? who : "Your follower",
-                             rg.def->name, meo::kRoman[newLevel - 1]));
+                             GemName(rg), meo::kRoman[newLevel - 1]));
     if (newLevel == 5 && rg.items[0]) {
         a_owner->AddObjectToContainer(rg.items[0], nullptr, 1, nullptr);
-        Notify(isPlayer ? std::format("Your mastered {} gem births a new gem.", rg.def->name)
+        Notify(isPlayer ? std::format("Your mastered {} gem births a new gem.", GemName(rg))
                         : std::format("{}'s mastered {} gem births a new gem.",
-                                      who && *who ? who : "Your follower", rg.def->name));
+                                      who && *who ? who : "Your follower", GemName(rg)));
         spdlog::info("[birth] mastered '{}' birthed a level-I copy", a_rec.gid);
     }
     return true;
@@ -1152,7 +1235,9 @@ void GiveGemInstance(int a_gemIdx, int a_level, float a_xp) {
         return;
     }
     if (a_xp <= 0.0f || a_level >= 5) {
-        player->AddObjectToContainer(gemForm, nullptr, 1, nullptr);
+        auto* pouch = PouchRef();  // m27: no bag clutter
+        (pouch ? pouch : static_cast<RE::TESObjectREFR*>(player))
+            ->AddObjectToContainer(gemForm, nullptr, 1, nullptr);
         return;
     }
     auto ref = player->PlaceObjectAtMe(gemForm, false);
@@ -1198,6 +1283,54 @@ void BuildMenuSnapshot() {
     std::vector<MenuItemRow> items;
     std::vector<MenuGemRow>  gems;
     std::vector<MenuSoulRow> souls;
+    // m27: one collector, two containers — gems normally live in the
+    // pouch, but anything still in transit through the player's bags
+    // (route task pending) is listed too so nothing ever vanishes.
+    auto collectGemRows = [&](RE::TESBoundObject* obj, std::int32_t a_total,
+                              RE::InventoryEntryData* a_entry) {
+                auto it = g_gemByItem.find(obj->GetFormID());
+                if (it == g_gemByItem.end()) {
+                    return;
+                }
+                std::int32_t plain = a_total;
+                if (a_entry && a_entry->extraLists) {
+                    for (auto* xl : *a_entry->extraLists) {
+                        if (!xl) {
+                            continue;
+                        }
+                        plain -= std::max(xl->GetCount(), 1);
+                        auto* xid = xl->GetByType<RE::ExtraUniqueID>();
+                        auto  recIt = xid ? g_sockets.find(MakeKey(obj->GetFormID(), xid->uniqueID))
+                                          : g_sockets.end();
+                        if (recIt == g_sockets.end()) {
+                            ++plain;  // no banked record: behaves as a plain gem
+                            continue;
+                        }
+                        const auto& rg = g_gems[it->second.first];
+                        MenuGemRow  row;
+                        row.base = obj->GetFormID();
+                        row.isArmor = rg.def->isArmor;
+                        row.uid = xid->uniqueID;
+                        row.label = obj->GetName();
+                        row.theme = static_cast<int>(rg.def->theme);
+                        row.xp = recIt->second.xp;
+                        row.need = NextThreshold(rg.def, recIt->second.level);
+                        gems.push_back(std::move(row));
+                    }
+                }
+                if (plain > 0) {
+                    MenuGemRow row;
+                    row.base = obj->GetFormID();
+                    row.isArmor = g_gems[it->second.first].def->isArmor;
+                    row.label = obj->GetName();
+                    if (plain > 1) {
+                        row.label += std::format("  x{}", plain);
+                    }
+                    row.theme = static_cast<int>(g_gems[it->second.first].def->theme);
+                    gems.push_back(std::move(row));
+                }
+
+    };
     auto inv = player->GetInventory([](RE::TESBoundObject& o) {
         return o.Is(RE::FormType::Weapon) || o.Is(RE::FormType::Armor) ||
                o.Is(RE::FormType::Misc) || o.Is(RE::FormType::SoulGem);  // m25: fuel list
@@ -1275,7 +1408,7 @@ void BuildMenuSnapshot() {
                         }
                         if (auto gemIt = g_gemByGid.find(it->second.gid); gemIt != g_gemByGid.end()) {
                             const auto& rg = g_gems[gemIt->second];
-                            row.slotGem[s] = std::format("{} {}", rg.def->name,
+                            row.slotGem[s] = std::format("{} {}", GemName(rg),
                                                          meo::kRoman[it->second.level - 1]);
                             row.slotTheme[s] = static_cast<int>(rg.def->theme);
                             row.slotXp[s] = it->second.xp;
@@ -1344,46 +1477,14 @@ void BuildMenuSnapshot() {
                 souls.push_back(std::move(row));
             }
         } else {
-            auto it = g_gemByItem.find(obj->GetFormID());
-            if (it == g_gemByItem.end()) {
-                continue;
-            }
-            std::int32_t plain = data.first;
-            if (data.second && data.second->extraLists) {
-                for (auto* xl : *data.second->extraLists) {
-                    if (!xl) {
-                        continue;
-                    }
-                    plain -= std::max(xl->GetCount(), 1);
-                    auto* xid = xl->GetByType<RE::ExtraUniqueID>();
-                    auto  recIt = xid ? g_sockets.find(MakeKey(obj->GetFormID(), xid->uniqueID))
-                                      : g_sockets.end();
-                    if (recIt == g_sockets.end()) {
-                        ++plain;  // no banked record: behaves as a plain gem
-                        continue;
-                    }
-                    const auto& rg = g_gems[it->second.first];
-                    MenuGemRow  row;
-                    row.base = obj->GetFormID();
-                    row.isArmor = rg.def->isArmor;
-                    row.uid = xid->uniqueID;
-                    row.label = obj->GetName();
-                    row.theme = static_cast<int>(rg.def->theme);
-                    row.xp = recIt->second.xp;
-                    row.need = NextThreshold(rg.def, recIt->second.level);
-                    gems.push_back(std::move(row));
-                }
-            }
-            if (plain > 0) {
-                MenuGemRow row;
-                row.base = obj->GetFormID();
-                row.isArmor = g_gems[it->second.first].def->isArmor;
-                row.label = obj->GetName();
-                if (plain > 1) {
-                    row.label += std::format("  x{}", plain);
-                }
-                row.theme = static_cast<int>(g_gems[it->second.first].def->theme);
-                gems.push_back(std::move(row));
+            collectGemRows(obj, data.first, data.second.get());
+        }
+    }
+    if (auto* pouch = PouchRef()) {
+        for (const auto& [obj, data] : pouch->GetInventory(
+                 [](RE::TESBoundObject& o) { return o.Is(RE::FormType::Misc); })) {
+            if (data.first > 0) {
+                collectGemRows(obj, data.first, data.second.get());
             }
         }
     }
@@ -1450,7 +1551,7 @@ void MenuUnsocket(RE::FormID a_base, std::uint16_t a_uid, std::uint8_t a_slot) {
                  rec.gid, rec.level, rec.xp);
     GiveGemInstance(gemIt->second, rec.level, rec.xp);
     const auto& rg = g_gems[gemIt->second];
-    Notify(std::format("{} {} returned to your pouch.", rg.def->name, meo::kRoman[rec.level - 1]));
+    Notify(std::format("{} {} returned to your pouch.", GemName(rg), meo::kRoman[rec.level - 1]));
 }
 
 // M10 (stage 2b): destroy a socketed gem at a station, reclaiming 1/10 of its
@@ -1552,9 +1653,18 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
     float        xp = 0.0f;
     bool         hadRec = false;
     SocketRecord saved{};
+    RE::TESObjectREFR* gemHolder = player;  // m27: gems normally live in the pouch
     RE::ExtraDataList* gemXL = nullptr;
     if (a_gemUid) {
-        gemXL = FindInstanceXList(player, gemForm, a_gemUid);
+        if (auto* pouch = PouchRef()) {
+            gemXL = FindInstanceXList(pouch, gemForm, a_gemUid);
+            if (gemXL) {
+                gemHolder = pouch;
+            }
+        }
+        if (!gemXL) {
+            gemXL = FindInstanceXList(player, gemForm, a_gemUid);
+        }
         if (auto it = g_sockets.find(MakeKey(a_gemBase, a_gemUid)); it != g_sockets.end()) {
             saved = it->second;
             hadRec = true;
@@ -1570,10 +1680,14 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
             return;
         }
     } else {
-        const auto counts = player->GetInventoryCounts(
-            [&](RE::TESBoundObject& o) { return &o == gemForm; });
-        if (counts.empty()) {
-            Notify("That gem is no longer in your inventory.");
+        auto holds = [&](RE::TESObjectREFR* a_h) {
+            return a_h && !a_h->GetInventoryCounts(
+                              [&](RE::TESBoundObject& o) { return &o == gemForm; }).empty();
+        };
+        if (holds(PouchRef())) {
+            gemHolder = PouchRef();
+        } else if (!holds(player)) {
+            Notify("That gem is no longer in your pouch.");
             return;
         }
     }
@@ -1586,9 +1700,9 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
     if (IsWornXList(xl)) {
         ApplyWornAbility(player, itemForm, xl, xl->HasType(RE::ExtraDataType::kWornLeft));
     }
-    player->RemoveItem(gemForm, 1, RE::ITEM_REMOVE_REASON::kRemove, gemXL, nullptr);
+    gemHolder->RemoveItem(gemForm, 1, RE::ITEM_REMOVE_REASON::kRemove, gemXL, nullptr);
     const auto& rg = g_gems[gemIdx];
-    Notify(std::format("{} {} socketed into {}.", rg.def->name, meo::kRoman[level - 1],
+    Notify(std::format("{} {} socketed into {}.", GemName(rg), meo::kRoman[level - 1],
                        itemForm->GetName()));
 }
 
@@ -2464,6 +2578,8 @@ void OpenGemMenu(bool a_station) {
     }
     ReadConfig();  // m24c: MCM Helper flushes iMenuStyle on ITS close — read
                    // fresh at every open so the skin dropdown takes effect now
+    EnsurePouchRef();     // m27: gems present in the pouch before the snapshot
+    RouteGemsToPouch();
     g_menu.selBase = 0;  // fresh open: no remembered selection
     g_menu.selUid = 0;
     g_menu.selItem = 0;
@@ -2545,7 +2661,7 @@ void MaybeStampWorldWeapon(RE::TESObjectREFR* a_ref) {
     const int level = (HashU32(h ^ 0x5A5A5A5Au) % 10000) < l2cut ? 2 : 1;
     if (StampInstance(base, &xList, gemIdx, level)) {
         spdlog::info("[world] ref {:08X} born socketed: {} {} {}", a_ref->GetFormID(),
-                     g_gems[gemIdx].def->name, meo::kRoman[level - 1], base->GetName());
+                     GemName(g_gems[gemIdx]), meo::kRoman[level - 1], base->GetName());
     }
 }
 
@@ -2670,7 +2786,7 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
         if (!what.empty()) {
             what += " + ";
         }
-        what += std::format("{} I", g_gems[picks[s]].def->name);
+        what += std::format("{} I", GemName(g_gems[picks[s]]));
     }
     if (worn && a_owner) {
         EquipCycleWorn(a_owner, a_base, a_xList);  // old ability out, gem live
@@ -2792,7 +2908,7 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
         spdlog::info("[convert] {:08X} '{}': '{}' x{} -> '{}' + {} gem",
                      actor->GetFormID(), actor->GetName(), hit.old->GetName(),
                      hit.count, hit.tgt->base->GetName(),
-                     g_gems[hit.tgt->gemIdx].def->name);
+                     GemName(g_gems[hit.tgt->gemIdx]));
     }
     return converted;
 }
@@ -2834,7 +2950,7 @@ void ConvertWorldRef(RE::TESObjectREFR* a_ref) {
     newRef->data.angle = a_ref->data.angle;  // keep the shelf pose
     spdlog::info("[convert] world ref {:08X} '{}' -> '{}' + {} gem",
                  a_ref->GetFormID(), base->GetName(), it->second.base->GetName(),
-                 g_gems[it->second.gemIdx].def->name);
+                 GemName(g_gems[it->second.gemIdx]));
     a_ref->Disable();
     a_ref->SetDelete(true);
 }
@@ -2914,7 +3030,7 @@ void MaybeStampNPCGear(RE::Actor* a_actor) {
         ApplyWornAbility(a_actor, c.base, c.xl, c.left);  // live on the enemy
         static constexpr const char* kArchNames[] = { "warrior", "mage", "rogue", "undead" };
         spdlog::info("[npc] {:08X} '{}' ({}) spawns with {} {} on {}", a_actor->GetFormID(),
-                     a_actor->GetName(), kArchNames[arch], g_gems[gemIdx].def->name,
+                     a_actor->GetName(), kArchNames[arch], GemName(g_gems[gemIdx]),
                      meo::kRoman[level - 1], c.base->GetName());
     }
 }
@@ -3110,7 +3226,7 @@ void StockVendorGems() {
             target->AddObjectToContainer(gemForm, nullptr, 1, nullptr);
             ++added;
             spdlog::info("[vendor] {:08X} stocks {} {}", target->GetFormID(),
-                         g_gems[gemIdx].def->name, meo::kRoman[level - 1]);
+                         GemName(g_gems[gemIdx]), meo::kRoman[level - 1]);
         }
     }
 }
@@ -3240,6 +3356,14 @@ public:
             return RE::BSEventNotifyControl::kContinue;
         }
         const RE::FormID base = a_event->baseObj;
+        // m27: a gem landed in the player's bags (loot, purchase, unsocket
+        // return) - tuck it into the pouch container.
+        if (a_event->newContainer == 0x14 && g_gemByItem.contains(base)) {
+            SKSE::GetTaskInterface()->AddTask([]() {
+                EnsurePouchRef();
+                RouteGemsToPouch();
+            });
+        }
         // m23: a convertible enchanted generic just landed somewhere (chest
         // generation, corpse loot, purchase, pickup) — convert it in place.
         if (g_convert.contains(base)) {
@@ -3685,6 +3809,7 @@ void SaveCallback(SKSE::SerializationInterface* a_intfc) {
     a_intfc->WriteRecordData(mentor);
     const std::uint8_t armorStarter = g_armorStarterGranted ? 1 : 0;  // v6 field
     a_intfc->WriteRecordData(armorStarter);
+    a_intfc->WriteRecordData(g_pouchRefID);  // v7 field: hidden gem container ref
     const std::uint32_t count = static_cast<std::uint32_t>(g_sockets.size());
     a_intfc->WriteRecordData(count);
     for (const auto& [key, rec] : g_sockets) {
@@ -3706,6 +3831,7 @@ void SaveCallback(SKSE::SerializationInterface* a_intfc) {
 
 void LoadCallback(SKSE::SerializationInterface* a_intfc) {
     g_sockets.clear();
+    g_pouchRefID = 0;
     g_nextUID = 0x9000;
     g_starterGranted = false;
     g_mentorGranted = false;
@@ -3739,6 +3865,9 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
             a_intfc->ReadRecordData(armorStarter);
             g_armorStarterGranted = armorStarter != 0;
         }
+        if (version >= 7) {  // v7: pouch container ref (recreated when absent)
+            a_intfc->ReadRecordData(g_pouchRefID);
+        }
         std::uint32_t count = 0;
         a_intfc->ReadRecordData(count);
         for (std::uint32_t i = 0; i < count; ++i) {
@@ -3771,6 +3900,7 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
 }
 
 void RevertCallback(SKSE::SerializationInterface*) {
+    g_pouchRefID = 0;  // m27: pouch ref is save-scoped
     g_sockets.clear();
     g_nextUID = 0x9000;
     g_starterGranted = false;
@@ -3794,7 +3924,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.35.3 (M26e sweep race fix + drop logging) loaded");
+            console->Print("MEO native v0.36.0 (M27 gem pouch storage + live naming + gem models) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -3809,6 +3939,8 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
             if (auto* player = RE::PlayerCharacter::GetSingleton()) {
                 ConvertInventory(player);
             }
+            EnsurePouchRef();     // m27: gems live in the hidden pouch container
+            RouteGemsToPouch();
         });
         ScheduleReapplyWornSockets();  // re-activate worn gem effects (deferred + retried)
         break;
@@ -3825,7 +3957,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.35.3 (M26e sweep race fix + drop logging) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.36.0 (M27 gem pouch storage + live naming + gem models) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }

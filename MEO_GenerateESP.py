@@ -17,7 +17,8 @@ tunable baseline (data/gem_balance -> gem_catalog), never a hard bake.
 
 Binary helpers verified against vanilla donors in P0. Run: python3 MEO_GenerateESP.py [out]
 """
-import struct, sys, os, json
+import struct
+import re, sys, os, json
 from io import BytesIO
 
 CATALOG = json.load(open(os.path.join(os.path.dirname(__file__), 'data/gem_catalog.json')))
@@ -115,6 +116,17 @@ def make_mgefs():
     return group('MGEF',out.getvalue())
 
 # ── MISC gems from catalog: assign FormIDs, build display names, record the map ──
+# Theme map lives in tools/gen_catalog_header.py (single source of truth) —
+# parsed as a literal, not imported, because that script writes files on import.
+_ghs = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         'tools', 'gen_catalog_header.py')).read()
+GEM_THEME = eval(re.search(r'THEME = ({.*?\n})', _ghs, re.S).group(1))
+THEME_STONE = {  # vanilla gemstone per theme — the gem's accent color family
+    'FIRE': 'Ruby', 'FROST': 'Sapphire', 'SHOCK': 'Amethyst', 'ARCANE': 'Amethyst',
+    'DRAIN': 'Garnet', 'MARTIAL': 'Garnet', 'ROGUISH': 'Emerald', 'HOLY': 'Diamond',
+    'UTILITY': 'Emerald',
+}
+
 def load_frozen_forms():
     """FormID FREEZE: every (gid, level) -> fid pair in the previously
     generated runtime map is immutable (co-saves store gem baseFormIDs).
@@ -145,6 +157,12 @@ def allocate_gems():
             name=g['name'] if levels==1 else f"{g['name']} {ROMAN[lvl]}"
             body =subrec('EDID',zstr(f"MEO_Gem_{gid}_{lvl}"))
             body+=subrec('OBND',b'\x00'*12)+subrec('FULL',zstr(f"{name} Gem" if levels==1 else name))
+            # m27 (Marth): dropped gems look like real gemstones in the gem's
+            # color — vanilla meshes, flawed cut at I-III, flawless at IV-V.
+            stone=THEME_STONE.get(GEM_THEME.get(gid,'ARCANE'),'Amethyst')
+            mesh=f"Clutter\\Gemstones\\{stone}.nif" if lvl>=4 or levels==1 \
+                 else f"Clutter\\Gemstones\\{stone}Flawed.nif"
+            body+=subrec('MODL',zstr(mesh))
             body+=subrec('DATA',struct.pack('<If',50*lvl,0.1))
             out.write(record('MISC',fid,0,body))
             gem_form_map[gid][lvl]=fid
