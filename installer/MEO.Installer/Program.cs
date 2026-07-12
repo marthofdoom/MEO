@@ -175,8 +175,22 @@ if (installMode && rc == 0)
     if (File.Exists(catPath))
     {
         Console.WriteLine();
-        rc = Commands.WriteCalibration(loadOrder, cache, catPath,
-            Path.Combine(meoDir, "meo_calibration.json"));
+        var calOut = Path.Combine(meoDir, "meo_calibration.json");
+        Console.WriteLine($"writing calibration -> {calOut}");
+        try
+        {
+            rc = Commands.WriteCalibration(loadOrder, cache, catPath, calOut);
+        }
+        catch (Exception ex)
+        {
+            // m32e (Steam Deck field loss): this ran OUTSIDE the command
+            // try/catch — an exception under a double-clicked Wine console
+            // vanished with the window, leaving no calibration and NO
+            // conversions in game, silently. Never again.
+            Console.Error.WriteLine("CALIBRATION FAILED — conversions will not work until this is fixed:");
+            Console.Error.WriteLine(ex.ToString());
+            rc = 1;
+        }
     }
     else
         Console.WriteLine($"\nnote: {catPath} missing — rider calibration skipped, " +

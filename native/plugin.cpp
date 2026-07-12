@@ -3822,6 +3822,12 @@ void DispelStaleGemEffects() {
         return;
     }
     std::vector<RE::ActiveEffect*> stale;
+    // m32e (Marth's deck finding): the valid-guard shielded SAME-FORM
+    // duplicates — every extra registration of a still-worn enchant shares
+    // that worn form, so orphan logic never touched them while refresh
+    // passes could stack them. Track (ench form, effect) pairs among OUR
+    // effects and dispel every copy after the first, vouched or not.
+    std::unordered_set<std::uint64_t> seen;
     for (auto* ae : *list) {
         if (!ae || !ae->spell) {
             continue;
@@ -3834,12 +3840,20 @@ void DispelStaleGemEffects() {
             en->data.costOverride != 0) {
             continue;  // not MEO's free-enchant signature
         }
-        if (valid.contains(en->GetFormID())) {
-            continue;  // a worn socketed item vouches for it
-        }
         const auto* mgef = ae->GetBaseObject();
         if (!mgef || !gemFx.contains(mgef)) {
             continue;
+        }
+        const std::uint64_t pair =
+            (static_cast<std::uint64_t>(en->GetFormID()) << 32) | mgef->GetFormID();
+        if (!seen.insert(pair).second) {
+            spdlog::info("[avfix] duplicate '{}' from ench {:08X} — dispelling the extra",
+                         mgef->GetName(), en->GetFormID());
+            stale.push_back(ae);
+            continue;
+        }
+        if (valid.contains(en->GetFormID())) {
+            continue;  // a worn socketed item vouches for (one copy of) it
         }
         stale.push_back(ae);
     }
@@ -4152,7 +4166,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.40.1 (M32d recovery every load + pouch status) loaded");
+            console->Print("MEO native v0.40.2 (M32e same-form dup dispel) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4213,7 +4227,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.40.1 (M32d recovery every load + pouch status) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.40.2 (M32e same-form dup dispel) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
