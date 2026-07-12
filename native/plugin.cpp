@@ -2006,6 +2006,9 @@ namespace menuhook {
     float                      g_cursorX = -1.0f;
     float                      g_cursorY = -1.0f;
     std::atomic<std::uint64_t> g_destroyArm{ 0 };  // armed Destroy row (two-click confirm)
+    // m32f controller: left-stick nav state (edge-triggered -> dpad keys;
+    // ImGui's own nav repeat handles held directions)
+    bool g_stickNav[4] = { false, false, false, false };  // up, down, left, right
 
     // Accent per GemCatalog Theme (order frozen: kFire..kUtility). The one
     // visual anchor every style direction shares — gems read by color.
@@ -2115,6 +2118,7 @@ namespace menuhook {
         c[ImGuiCol_ScrollbarGrab]    = ImVec4(s.dim.x, s.dim.y, s.dim.z, 0.60f);
         c[ImGuiCol_TitleBg]          = s.winBg;
         c[ImGuiCol_TitleBgActive]    = s.winBg;
+        c[ImGuiCol_NavHighlight]     = s.accent;  // m32f: controller focus ring
     }
 
     void DrawGemMenu() {
@@ -2236,7 +2240,8 @@ namespace menuhook {
         // Left pane: NEVER disabled — selection is pure UI state (identity-
         // tracked across rebuilds since m19e), and eating clicks during the
         // brief busy window read as "the menu misses clicks" in the field.
-        ImGui::BeginChild("items", ImVec2(half - 6.0f, -footer), true);
+        ImGui::BeginChild("items", ImVec2(half - 6.0f, -footer), true,
+                          ImGuiWindowFlags_NavFlattened);  // m32f: pad crosses panes
         // m24c (Marth: long lists "leave the pane"): rows were drawn through
         // the OUTER window's draw list, which ignores the child's clip rect.
         // Each pane draws through its own list so scrolled-out rows clip.
@@ -2277,7 +2282,8 @@ namespace menuhook {
         }
         ImGui::EndChild();
         ImGui::SameLine();
-        ImGui::BeginChild("gems", ImVec2(0, -footer), true);
+        ImGui::BeginChild("gems", ImVec2(0, -footer), true,
+                          ImGuiWindowFlags_NavFlattened);
         auto* dlR = ImGui::GetWindowDrawList();  // m24c: pane-clipped drawing
         const float innerW = ImGui::GetContentRegionAvail().x;
         if (busy) {
@@ -2489,7 +2495,8 @@ namespace menuhook {
         } else if (g_menu.station.load()) {
             ImGui::TextDisabled("Click an item, then a gem. Filled sockets: click to remove; feed souls or destroy here.");
         } else {
-            ImGui::TextDisabled("Click an item, then a gem to socket it. Esc or the pouch key closes.");
+            ImGui::TextDisabled("Click an item, then a gem to socket it. Pad: stick/d-pad move, "
+                                "A select, B close. Esc or the pouch key closes.");
         }
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 70.0f);
         if (ImGui::Button("Close") && !busy) {
@@ -2638,6 +2645,8 @@ namespace menuhook {
         case K::kA:     return ImGuiKey_GamepadFaceDown;
         case K::kX:     return ImGuiKey_GamepadFaceLeft;
         case K::kY:     return ImGuiKey_GamepadFaceUp;
+        case K::kLeftShoulder:  return ImGuiKey_GamepadL1;
+        case K::kRightShoulder: return ImGuiKey_GamepadR1;
         default:        return ImGuiKey_None;
         }
     }
@@ -2731,7 +2740,25 @@ namespace menuhook {
                         break;
                     }
                 }
-                // thumbstick / char events: swallowed silently for now
+                else if (e->eventType == RE::INPUT_EVENT_TYPE::kThumbstick) {
+                    // m32f: the left stick navigates like the d-pad. Edge-
+                    // triggered at ±0.5 with release at the same threshold —
+                    // ImGui's nav repeat takes over while a direction is held.
+                    auto* th = static_cast<RE::ThumbstickEvent*>(e);
+                    if (th->IsLeft()) {
+                        auto edge = [&](int a_i, bool a_on, ImGuiKey a_key) {
+                            if (g_stickNav[a_i] != a_on) {
+                                g_stickNav[a_i] = a_on;
+                                io.AddKeyEvent(a_key, a_on);
+                            }
+                        };
+                        edge(0, th->yValue > 0.5f, ImGuiKey_GamepadDpadUp);
+                        edge(1, th->yValue < -0.5f, ImGuiKey_GamepadDpadDown);
+                        edge(2, th->xValue < -0.5f, ImGuiKey_GamepadDpadLeft);
+                        edge(3, th->xValue > 0.5f, ImGuiKey_GamepadDpadRight);
+                    }
+                }
+                // char events: swallowed silently
             }
             *a_events = nullptr;  // the game sees no input while the menu is open
             func(a_source, a_events);
@@ -2779,6 +2806,9 @@ void OpenGemMenu(bool a_station) {
     g_menu.wantClose = false;
     g_menu.station = a_station;
     menuhook::g_shoutDownSeen = false;  // m23c: opening press's release must not close
+    for (bool& s : menuhook::g_stickNav) {
+        s = false;  // m32f: no stuck stick directions from last open
+    }
     menuhook::g_cursorInit = true;      // m23c: seed ImGui's cursor pos this frame
     menuhook::g_destroyArm = 0;
     g_menu.open = true;
@@ -4166,7 +4196,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.40.2 (M32e same-form dup dispel) loaded");
+            console->Print("MEO native v0.41.0 (M32f controller support in the pouch) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4227,7 +4257,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.40.2 (M32e same-form dup dispel) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.41.0 (M32f controller support in the pouch) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
