@@ -2241,7 +2241,7 @@ namespace menuhook {
         // tracked across rebuilds since m19e), and eating clicks during the
         // brief busy window read as "the menu misses clicks" in the field.
         ImGui::BeginChild("items", ImVec2(half - 6.0f, -footer),
-                          ImGuiChildFlags_Border | ImGuiChildFlags_NavFlattened);  // m32f
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);  // m32f
         // m24c (Marth: long lists "leave the pane"): rows were drawn through
         // the OUTER window's draw list, which ignores the child's clip rect.
         // Each pane draws through its own list so scrolled-out rows clip.
@@ -2283,7 +2283,7 @@ namespace menuhook {
         ImGui::EndChild();
         ImGui::SameLine();
         ImGui::BeginChild("gems", ImVec2(0, -footer),
-                          ImGuiChildFlags_Border | ImGuiChildFlags_NavFlattened);
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
         auto* dlR = ImGui::GetWindowDrawList();  // m24c: pane-clipped drawing
         const float innerW = ImGui::GetContentRegionAvail().x;
         if (busy) {
