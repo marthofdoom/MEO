@@ -1,0 +1,2 @@
+Elemental affinity perks + Facet Insight (choice-fan tree), enemy-loot theft fix, pouch uid-drift fix; gems are pouch-only (not sellable)
+built from native run 29220433390, installer run 29220529451
