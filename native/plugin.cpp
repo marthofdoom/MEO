@@ -4322,11 +4322,23 @@ void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag = false) {
                         }
                     }
                 }
-                spdlog::info("[load-diag] worn {:08X} '{}' uid={}{} ench={}",
+                // m35d: the double-source smoking gun. A socketed item's base
+                // form must carry NO formEnchanting (IsSocketable* requires it),
+                // so the ONLY enchant source is the MEO ExtraEnchantment. If a
+                // base enchant is present here, the engine applies it AND the
+                // gem — the effect shows "as base item and renamed item".
+                RE::EnchantmentItem* baseEnch = nullptr;
+                if (auto* w = entry->object->As<RE::TESObjectWEAP>()) {
+                    baseEnch = w->formEnchanting;
+                } else if (auto* ar = entry->object->As<RE::TESObjectARMO>()) {
+                    baseEnch = ar->formEnchanting;
+                }
+                spdlog::info("[load-diag] worn {:08X} '{}' uid={}{} ench={} baseEnch={:08X}",
                              entry->object->GetFormID(), entry->object->GetName(),
                              xid ? std::to_string(xid->uniqueID) : "none",
                              slots.empty() ? " records=NONE" : slots,
-                             xl->HasType(RE::ExtraDataType::kEnchantment));
+                             xl->HasType(RE::ExtraDataType::kEnchantment),
+                             baseEnch ? baseEnch->GetFormID() : 0u);
             }
             if (!xid) {
                 continue;
@@ -4366,47 +4378,27 @@ void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag = false) {
                      RE::UI::GetSingleton() && RE::UI::GetSingleton()->GameIsPaused(),
                      player->Is3DLoaded(),
                      player->AsActorState() && player->AsActorState()->IsWeaponDrawn());
-        // m19f (Marth: "look at how the FX mod reads the weapon — a more
-        // elegant solution"): NO equip cycle, NO gear blink. The proven
-        // in-session reactivation is a socket CHANGE: the engine's ability
-        // refresh only takes when the enchant extra actually differs, and a
-        // plain rebuild dedupes to the SAME FF form, no-oping against the
-        // save's stale ability bookkeeping (why m15's UpdateWeaponAbility
-        // retries failed and only re-equip — a forced teardown — worked).
-        // So do the unsocket/resocket dance programmatically: strip the
-        // enchant + refresh (teardown), then NEXT task rebuild + refresh
-        // (fresh ability). Invisible to the player.
-        struct Re { RE::FormID base; std::uint16_t uid; bool left; };
-        std::vector<Re> restore;
+        // m35d (Marth's "effect stacks as base item + renamed item"): the m19f
+        // blinkless strip/restamp is retired. It relied on Update*Ability to
+        // REPLACE the worn ability, but that call early-outs on teardown (when
+        // the enchant extra is gone it never unregisters — m23c) and the
+        // restamp minted a NEW FF form every pass, so the old ability lingered
+        // beside the new one. avfix could only clean the copies it recognized;
+        // a cross-form pair that both still looked attached survived, and the
+        // player saw the effect twice. The engine's OWN complete teardown is
+        // the equip cycle (m16/m17b/m23c proven, used by every in-session
+        // socket path) and it is IDEMPOTENT — unequip fully drops the old
+        // ability, equip installs exactly ONE from the current ExtraEnchantment,
+        // so running it any number of passes can never accumulate. Its
+        // one-frame gear blink lands behind the post-load fade — a small price
+        // for a reactivation that cannot duplicate. (The m19f "no blink" win
+        // was elegance, not correctness; correctness wins here.)
         for (auto& t : targets) {
-            auto* xid = t.xl->GetByType<RE::ExtraUniqueID>();
-            if (!xid) {
-                continue;
-            }
-            t.xl->RemoveByType(RE::ExtraDataType::kEnchantment);
-            ApplyWornAbility(player, t.base, t.xl, t.left);  // teardown: enchant gone
-            restore.push_back({ t.base->GetFormID(), xid->uniqueID, t.left });
+            EquipCycleWorn(player, t.base, t.xl);  // full teardown → one ability
         }
-        if (!restore.empty()) {
-            SKSE::GetTaskInterface()->AddTask([restore]() {
-                auto* pl = RE::PlayerCharacter::GetSingleton();
-                if (!pl) {
-                    return;
-                }
-                for (const auto& r : restore) {
-                    auto* form = RE::TESForm::LookupByID<RE::TESBoundObject>(r.base);
-                    auto* xl = form ? FindInstanceXList(pl, form, r.uid) : nullptr;
-                    if (!xl) {
-                        continue;
-                    }
-                    RebuildInstanceEnchant(form, xl);       // re-adds the enchant extra
-                    ApplyWornAbility(pl, form, xl, r.left); // fresh ability, now live
-                }
-                spdlog::info("[load] refresh pass: {} worn socket(s) re-activated "
-                             "(strip/restamp, no re-equip)", restore.size());
-                DispelStaleGemEffects();  // m24b: sweep bug-orphaned abilities
-            });
-        }
+        DispelStaleGemEffects();  // m24b backstop: clear any save-carried orphan
+        spdlog::info("[load] refresh pass: {} worn socket(s) re-activated (equip cycle)",
+                     static_cast<int>(targets.size()));
     }
     // Mechanism probe (ENGINE_NOTES §8 epistemic status): the hit path may gate
     // on the actor's item-charge AVs. Log them as-loaded (diag pass) and after
@@ -4594,7 +4586,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.47.0 (M36a support-gem foundation) loaded");
+            console->Print("MEO native v0.47.1 (m35d effect-dup fix) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4655,7 +4647,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.47.0 (M36a support-gem foundation) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.47.1 (m35d effect-dup fix) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
