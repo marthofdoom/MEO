@@ -47,7 +47,30 @@ bytes. The engine rejects records silently; the diff always finds it.
 
 ## Crash analysis
 Crash logs: `.../compatdata/3375297225/pfx/drive_c/users/steamuser/Documents/My Games/Skyrim Special Edition/SKSE/crash-*.log`.
-Check POSSIBLE RELEVANT OBJECTS + CALL STACK for our forms/scripts. MRO is
-pure Papyrus: it cannot cause native access violations — Papyrus bugs make
-log errors, not CTDs. A deterministic same-action crash could implicate a
-malformed record; random ones are other mods or the renderer.
+Check POSSIBLE RELEVANT OBJECTS + CALL STACK for our forms/scripts.
+
+**MEO ships a native DLL (`MEO.dll`) and CAN cause access violations** —
+unlike its Papyrus-only sibling MRO (whose bugs make log errors, not CTDs).
+Triage order for a CTD:
+
+1. **Is MEO.dll in the call stack?** Crash-logger output names the module
+   per frame. A frame inside `MEO.dll` = ours; grab the offset and match it
+   against the shipped build (the version header in `MEO.log` names the
+   exact commit — build the same tag to symbolize).
+2. **Correlate with MEO.log.** The DLL logs every system's actions
+   (`[menu]`, `[convert]`, `[link]`, `[rekey]`, `[load]`, ...); the last
+   lines before the crash usually name the operation in flight.
+3. **Deterministic same-action crash** — reproduce with a minimal action
+   (open menu / socket / load save). Our hot paths are event sinks, the
+   ImGui present hook, and instance stamping; a crash on a specific item
+   implicates its extra-data state — dump it via the menu logs first.
+4. **POSSIBLE RELEVANT OBJECTS naming our forms** (FormIDs `0x800`–`0x8FF`
+   range in MEO.esp, or FF-prefix created enchantments) without MEO.dll in
+   the stack usually means another mod is iterating our instance data —
+   still report it, with the log.
+5. Random, non-reproducible crashes with no MEO frames are other mods or
+   the renderer — same as ever.
+
+A malformed *record* can still crash the loader before any code runs: diff
+against a vanilla twin (the universal method above) when a crash happens at
+data-load with no MEO.dll frames.

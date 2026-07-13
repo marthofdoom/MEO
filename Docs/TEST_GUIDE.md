@@ -1,130 +1,137 @@
-# MEO Test Guide — everything since the last test (m7 → m11)
+# MEO Test Guide — the 1.0 release-candidate matrix (v0.49.x)
 
-Your last in-game test was **v0.13.0-m6a** ("menu works great"). Since then five
-builds shipped. Install **v0.19.0-m11** before testing (MEO.dll + MEO.esp +
-MCM/ + Scripts/MEO_MCM.pex — the full zip). This guide walks each change with
-concrete steps, expected results, and the log line that proves it.
+This is the current in-game test matrix, covering every shipped system.
+Every earlier per-milestone guide is superseded by this one. Install the
+full release zip (DLL + MEO.esp + MCM/ + Scripts/MEO_MCM.pex +
+meo_runtime.json) AND run the installer (`MEO - Patch.esp` +
+`meo_calibration.json`) before testing.
 
 ## Gem roster
-**51 gems total — 15 weapon + 36 armor.** All socketable. 49 level I→V; two
-(Soul Trap, Waterbreathing) are single-level utilities that never level and
-never drop as loot.
+**54 gems total = 51 normal (15 weapon + 36 armor) + 3 support
+(Focus/Conduit/Echo).** Normal gems level I→V; two (Soul Trap,
+Waterbreathing) are single-level utilities, Muffle has two levels. Support
+gems level I–III, only while linked.
 
 ## Before anything: verify the build loaded
-1. Load a save, open the console, or just check the log.
-2. **MEO.log** →
-   `~/.local/share/Steam/steamapps/compatdata/3375297225/pfx/drive_c/users/steamuser/Documents/My Games/Skyrim.INI/SKSE/MEO.log`
-3. First lines MUST show `MEO native v0.19.0 (M11 ...)`. If they show an older
-   version, the DLL didn't update — fix that before believing any test below.
-4. Expect: `catalog resolved: N/51 gems live (weapon+armor)` and a `[perks]` line.
+1. Load a save and check the log: `.../My Games/Skyrim Special
+   Edition/SKSE/MEO.log` (path varies by install; under Proton it's inside
+   the game's `compatdata` prefix).
+2. First lines MUST show `MEO native v0.49.x`. Older version = the DLL
+   didn't update; fix that before believing any test below.
+3. Expect a `catalog resolved` line, a `[perks]` line, and (if the
+   installer ran) calibration/conversion table counts.
 
-**Testing tip — get gems fast:** most of this needs gems in hand. Open the MCM
-(see §1) and set **Gem drop chance** and **World weapon socket chance** to max,
-and **Level II spawn chance** up, so kills/loot hand you gems quickly. Turn them
-back down when done. (Console alternative: `player.additem` needs the load-order
-FormID, which varies — the MCM/drop route is easier.)
-
----
-
-## 1. MCM (v0.16.0-m8)
-The headline: a real Mod Configuration menu, paired with an INI the DLL reads live.
-
-- [ ] Pause → **Mod Configuration** → **Marth's Enchanting Overhaul** appears.
-- [ ] Two pages: **Loot & Spawns**, **XP & Balance**. Sliders + one toggle.
-- [ ] Move **Gem drop chance** to ~0.25. Close the pause menu.
-- [ ] **Live apply:** kills should now very frequently drop gems immediately —
-      no save/reload needed. (Proves the DLL re-reads `MCM/Settings/MEO.ini` on
-      Journal-menu close.) Log: a fresh `config: drop=0.250 ...` line each close.
-- [ ] **Gem power scale** slider: set to 1.5, then re-socket a gem (§3) — its
-      magnitude should be 50% higher. (Applies at stamp, not retroactively.)
-
-Expected: settings persist across save/reload (they live in the INI).
+**Testing tips:**
+- MCM → max out **Gem drop chance** / **World weapon socket chance** /
+  **Level II spawn chance** to get gems fast; turn them back down after.
+- MCM → Debug → **Grant all MEO perks (testing)** (`bDebugAllPerks`) gives
+  Attunement V, both dual-socket perks, all affinities, Facet Insight, Gem
+  Cutter, Soul Feeder without grinding. Toggle off to revert.
 
 ---
 
-## 2. Loot, rarity curve & the stack-dup fix (v0.15.0-m7)
-- [ ] With drop chance up, kill ~20 enemies. Loot the corpses: gems appear.
-- [ ] **Rarity curve:** over many drops, common "control" gems (Banish, Fear,
-      Turn Undead) show up most; elemental gems (Fire/Frost/Shock) middling;
-      **S-tier (Absorb Health, Chaos, Stagger) are rare** (~2% each). Log lines:
-      `[loot] corpse gem '<gid>' I on ...`.
-- [ ] **Level II drops:** with Level-II chance up, some drops log `... II on ...`.
-- [ ] **World weapons born socketed:** explore; some dropped/placed weapons are
-      pre-socketed. Log: `[world] ref ... born socketed: <gem> <lvl> <weapon>`.
-- [ ] **STACK-DUP FIX (important):** get a stack of ≥2 identical plain weapons
-      (e.g. buy 3 Iron Swords). Open the Gem Pouch. The stack shows as one row
-      labelled `Iron Sword x3` (a plain stack), **not** a single instance.
-      Socket a gem into it → exactly **one** sword becomes socketed, the other
-      two stay plain, and **one** gem is consumed. (The old bug enchanted the
-      whole stack for one gem.) Log: `[menu] minted instance ... via drop/pickup`.
+## 1. Sockets & the Gem Pouch
+- [ ] Cast the **Gem Pouch** power → the gem menu opens anywhere.
+- [ ] Socket a weapon gem into a weapon → name updates (no brackets),
+      effect fires on hit. Log: `STAMP`.
+- [ ] Socket an armor gem into worn armor → constant effect in Active
+      Effects. Boots refuse sockets; **circlets accept them** (m36f).
+- [ ] Unsocket → THE same gem returns (level + partial XP intact, visible
+      in its name/description); item reverts to plain.
+- [ ] **One-click swap** (m35e): pick a gem while a socket is filled → the
+      old gem returns and the new one lands, atomically.
+- [ ] Gloves take TWO gems (linked). Chest/main-hand take a second only
+      with Twinned Fitting / Master Jeweler.
+- [ ] **Stacking cap** (m35c): wear 3+ gems of the same effect → only the
+      two highest contribute; the 3rd is inert (and un-caps if one leaves).
+- [ ] Plain-stack discipline: socket into a stack of 3 identical swords →
+      exactly one becomes socketed, one gem consumed.
+- [ ] Loose gems live in the pouch, not inventory; vendors never list
+      gems and gems show 0 value.
+- [ ] **Controller**: full menu navigation on pad — sticks, A/B,
+      d-pad left/right jumps between panes (m36e).
+- [ ] **Skins**: MCM → Gem menu style → all four (Ebony & Brass, Dwemer
+      Parchment, Soul Cairn, Quicksilver) apply on next menu open.
 
----
+## 2. Leveling, XP, birthing
+- [ ] Kills grant Gem XP to every socketed gem in worn gear. Log: `[xp]`.
+- [ ] Boss/dragon kills grant the boss multiplier.
+- [ ] Followers' kills feed THEIR worn gems.
+- [ ] Level-up rebuilds the enchant (higher magnitude, new name).
+- [ ] Past level V: **Mastered** notification + a fresh level-I copy is
+      born (the only replication).
+- [ ] Enchanting skill and Fortify Enchanting potions/gear scale XP gain;
+      Gem Cutter +50%; Mentor Gem (granted on Soul Cairn arrival) doubles.
 
-## 3. Armor gems (v0.17.0-m9)
-- [ ] Obtain an **armor gem** (corpse drops now include them — e.g. Fortify
-      Destruction, Resist Fire, Fortify Carry).
-- [ ] Open the Gem Pouch. Select a piece of **armor** (helmet, cuirass,
-      gauntlets, ring, or amulet). **Boots should NOT be socketable** (no row,
-      or excluded) — that's by design.
-- [ ] The gem pane now shows **only armor gems** for an armor item, and **only
-      weapon gems** for a weapon (domain filter). Trying to cross-socket is
-      blocked ("That gem doesn't fit that kind of gear").
-- [ ] Socket an armor gem → its constant effect applies while worn (check your
-      active effects / the stat: Fortify Destruction lowers spell cost, Resist
-      Fire adds fire resist, etc.). Log: `STAMP ... gem=<gid> ...`.
-- [ ] Unequip/re-equip the armor → effect re-applies cleanly.
-- [ ] **Armor gems earn XP:** with a socketed armor gem worn, get kills → it
-      gains Gem XP and levels like weapon gems. Log: `[xp] ...` for the armor gem.
+## 3. Enchanting stations
+- [ ] Activate an enchanting table → the gem menu opens INSTEAD of the
+      vanilla menu (bStationTakeover default ON; toggle OFF restores
+      vanilla). Exiting frees the player from the bench.
+- [ ] **Feed**: with a filled soul gem, Feed Soul Gem consumes the
+      smallest and adds Gem XP — petty/lesser/common/greater/grand =
+      1 / 2.5 / 5 / 12 / 40 (×2 with Soul Feeder). Log: `[feed]`.
+- [ ] Feeding also grants Enchanting SKILL xp.
+- [ ] **Destroy**: Destroy Gem removes the gem and yields a soul gem sized
+      to 1/10 of its banked XP. Log: `[destroy]`.
 
----
+## 4. Loot conversion (installer required)
+- [ ] Kill enemies that spawn with generic enchanted gear → it arrives as
+      the plain item WITH the family gem socketed and active (worn pieces:
+      the enemy actually deals/has the gem effect). Log: `[convert]`.
+- [ ] Chests/vendors/pickups: enchanted generics convert on arrival; no
+      theft flag on converted enemy loot (m34c).
+- [ ] Uniques/artifacts do NOT convert and their sockets are sealed.
+- [ ] Creation Club enchanted items (if present) convert too (m32g).
+- [ ] A small tail (duration-anchored recipes, no-family effects) stays
+      enchanted — expected, logged as `[convert-miss]`/deferred.
 
-## 4. Enchanting stations — soul feeding + destruction (v0.18.0-m10)
-- [ ] Walk up to an **enchanting table** and activate it. The vanilla enchanting
-      menu opens AND the **MEO station panel opens over it**. Log:
-      `[menu] opened (station): ...`.
-- [ ] Select a **socketed** item in the panel. Two buttons appear:
-      **Feed Soul Gem** and **Destroy Gem** (only in station mode).
-- [ ] **Feed:** have a filled soul gem in your inventory. Click Feed Soul Gem →
-      the **smallest** filled soul gem is consumed and its Gem XP is added
-      ("Fed a <size> soul (+N Gem XP)"). Log: `[feed] <size> soul -> .../... : +N xp`.
-      Feed enough → the gem levels up.
-- [ ] **Destroy:** click Destroy Gem → the gem is removed (not returned) and you
-      get a filled soul gem sized to 1/10 of its banked XP ("its essence yields a
-      <size> soul gem"). Log: `[destroy] ... -> soul tier N`.
-- [ ] Close the enchanting menu → the MEO panel closes with it (no lingering
-      overlay).
+## 5. Perks (after the installer)
+- [ ] The load order's enchanting perk tree shows MEO's perks: Attunement
+      1–5 spine, Gem Cutter, Soul Feeder, the affinity choice-fan
+      (Pyrestone/Froststone/Stormstone), Facet Insight, Twinned Fitting,
+      Master Jeweler. Kept third-party perks (your installer choices)
+      still present.
+- [ ] Attunement raises gem magnitude on re-stamp (+8%/rank).
+- [ ] Affinities: +25% to matching elemental gems (Chaos counts for all
+      three). Facet Insight: +25% to skill/attribute armor gems.
+- [ ] Twinned Fitting/Master Jeweler unlock the 2nd linked sockets.
+- [ ] **Temper toggle**: with bTemperNoPerk ON, socketed gear tempers at
+      grindstone/workbench without Arcane Blacksmith; OFF restores the
+      vanilla requirement.
 
----
+## 6. Support gems (m36)
+- [ ] Acquisition: below player level 15 they never drop; at 15+ they
+      rarely drop from boss/dragon kills. Guaranteed copies: **Focus** in
+      Avanchnzel (Boilery boss chest), **Conduit** in the Midden's Atronach
+      Forge Offering Box, **Echo** in Ustengrav Depths (boss chest).
+- [ ] A support gem alone in an item = item stays plain (inert).
+- [ ] **Focus** + elemental gem (Fire/Frost/Shock damage or resist, or
+      Chaos) in a dual slot → +20/35/50% magnitude by tier. Log: `[link]`.
+- [ ] **Conduit** + an off-domain gem → the item expresses the same-theme
+      sibling of its own domain at ×0.5/0.75/1.0; no sibling = inert;
+      same-domain gem passes through.
+- [ ] **Echo** in a weapon + elemental gem → on-hit effect hits
+      hostile/in-combat actors around the target (area grows with tier).
+- [ ] **Echo** in armor + a gem → current followers share the effect
+      (exactly once each — no stacking; expires/re-applies safely).
+- [ ] Support gems gain XP ONLY while linked; they cap at III and never
+      birth.
 
-## 5. Perk effects (v0.19.0-m11)
-Interim: MEO perks are **auto-granted by your Enchanting skill** until the
-installer wires them into the tree. Ranks: Attunement 1–5 at Enchanting
-0/20/40/60/80; Gem Cutter at 20; Soul Feeder at 40.
+## 7. Persistence & recovery
+- [ ] Save → quit to desktop → relaunch → load: all socketed gear intact,
+      worn gem effects live within ~12 s of the load (no manual re-equip).
+      Log: `[load]` record dump + reapply passes.
+- [ ] Drop / store / sell / buy back a socketed item → gems and levels
+      follow it (`[rekey]` on container hops).
+- [ ] The pouch survives across saves; if it's ever lost, recovery brings
+      the gems back on load (m32c/d). Log: pouch status line.
 
-- [ ] Check the log after load / after opening+closing the pause menu:
-      `[perks] enchanting=NN attuneRank=R gemCutter=B soulFeeder=B`.
-      (Open+close the pause menu to force a refresh after an Enchanting skill-up.)
-- [ ] **Gem Attunement:** note a gem's magnitude at rank R, then raise Enchanting
-      past a threshold (trainer/console `player.setav enchanting 80`), reopen+close
-      the pause menu (refresh), and **re-socket** the gem → magnitude is higher
-      (+8% per rank; +40% at rank 5). Combines with the MCM power slider.
-- [ ] **Gem Cutter (Enchanting ≥ 20):** kills grant noticeably more Gem XP
-      (+50%). Compare the `[xp]` numbers below vs above skill 20.
-- [ ] **Fortify Enchanting → XP:** wear Fortify Enchanting gear or drink a
-      potion; kill XP scales up further (×(1+AV/100)). Higher Enchanting = faster
-      gem leveling.
-- [ ] **Soul Feeder (Enchanting ≥ 40):** feeding a soul at a station grants
-      **double** the XP vs below 40 (e.g. Grand = 400 instead of 200).
-
----
-
-## What is NOT in yet (don't test — coming in later stage-3 builds)
-- Multi-socket (2 linked sockets per item) and the two socket perks
-  (Twinned Fitting, Master Jeweler).
-- Elemental affinity perks + Facet Insight.
-- The C# installer that replaces the load order's enchanting tree with MEO's
-  perks (until then, perks are auto-granted by skill as above).
+## 8. MCM
+- [ ] All settings live-apply on menu close (log: fresh `config:` line).
+- [ ] Settings persist across save/reload (they live in the INI).
 
 ## If something's wrong
-Grab the MEO.log and note the version header + the relevant `[menu]`/`[loot]`/
-`[feed]`/`[destroy]`/`[perks]`/`[xp]` lines around the failure.
+Grab MEO.log and note the version header plus the relevant `[menu]` /
+`[loot]` / `[convert]` / `[link]` / `[feed]` / `[destroy]` / `[perks]` /
+`[xp]` / `[rekey]` / `[load]` lines around the failure. For crashes, see
+DEBUGGING.md "Crash analysis".

@@ -2,9 +2,15 @@
 
 Produced by `tools/build_balance.py` from `data/ench_catalog.json` +
 `data/gear_families.json`. Draft numbers land in `data/gem_balance_draft.json`.
-All values are the DEFAULT data set (the "Requiem/LoreRim" FOMOD baseline of
-DESIGN §3 "Configuration & tunability"); MCM scalars ride on top, so nothing
-here is a hard commitment — it's the shipped starting point.
+All values are the DEFAULT data set (Requiem/LoreRim-anchored compiled
+defaults of DESIGN §3 "Configuration & tunability"); on an installed list
+the installer's calibration pass derives per-list values over these, and
+MCM scalars ride on top — nothing here is a hard commitment, it's the
+shipped fallback.
+
+Current shipped roster: **54 gems = 51 normal (15 weapon + 36 armor) + 3
+support (Focus/Conduit/Echo)**. The "50-gem" counts in the dated decisions
+below are historical (the Sun gem and supports landed after that review).
 
 ## The confirmed model (LINEAR effects)
 

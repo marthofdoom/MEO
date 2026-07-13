@@ -4,11 +4,16 @@ Socketed-gem enchanting for Skyrim SE. Enchantments become **gems**: removable,
 socketable, leveling items. This fully replaces vanilla enchanting for weapons
 and armor. Staves, wands, and scripted artifacts are detected and left alone.
 
-Target: vanilla SE + SKSE core, with a Requiem/LoreRim compatibility plugin as
-a FOMOD option. Built with the toolchain in `MANUAL_MOD_CREATION_GUIDE.md`
-(Python ESP generator, Papyrus via Proton wine, FOMOD packaging).
+Target: vanilla SE + SKSE core. Built with the toolchain in
+`MANUAL_MOD_CREATION_GUIDE.md` (Python ESP generator, Papyrus via Proton wine)
+plus the native layer (`native/plugin.cpp`, CommonLibSSE-NG, CI-built) and the
+C# Mutagen installer (`installer/`).
 
-Some of this document will need rewriting as a DLL implementation will be used.
+**STATUS (v0.49.4, 1.0 candidate): this spec is reconciled to the SHIPPED
+NATIVE build.** The DLL + SKSE co-save are the source of truth for socket
+state; the Papyrus-era marker mechanism (§7) and the P0–P4 phase plan (§10)
+are retired history, kept below only as marked. Per-load-order numbers come
+from the installer's calibration pass, not from baked records.
 
 ### Why native (the two reasons that drive it)
 1. **Conformance.** A CommonLibSSE-NG SKSE plugin is the strictest, most
@@ -21,20 +26,17 @@ Some of this document will need rewriting as a DLL implementation will be used.
    script bookkeeping in Papyrus is exactly what bloats and orphans saves;
    owning the index natively sidesteps that class of problem entirely.
 
-Relationship to the §7 marker mechanism: the marker-in-enchantment trick is
-the **Papyrus-era** way to be stateless (no side table to bloat). The native
-endgame supersedes it — the DLL's co-save index becomes the source of truth
-and reapplies real effects on load, so markers may be dropped once native
-lands. Both designs need the SAME underlying guarantee: that applying a
-runtime enchantment to an item is reliable across save/load, re-equip, and
-rebuild. **P0 validates exactly that guarantee in Papyrus**, which is why P0
-is worth doing before committing to either the marker path or the native
-index.
+Relationship to the §7 marker mechanism (HISTORICAL): the marker-in-enchantment
+trick was the **Papyrus-era** way to be stateless. The native build superseded
+it exactly as planned — the DLL's co-save index is the source of truth and
+reapplies real effects on load; markers were never shipped. P0 (the Papyrus
+prototype that validated runtime-enchant persistence) passed 2026-07-05 and
+its guarantee carried over to the native path.
 
-### Native/DLL plan — reuse MRO's proven toolchain, don't re-derive
+### Native/DLL toolchain notes (reused from MRO — all applied, kept as doctrine)
 The sibling project MRO has a working CommonLibSSE-NG pipeline built entirely
-from Linux; copy it rather than reinventing. Load-bearing facts (full detail
-in MRO's `docs/NATIVE_REWRITE_PLAN.md` and `docs/DEBUGGING.md`):
+from Linux; MEO copied it rather than reinventing. Load-bearing facts (full
+detail in MRO's `docs/NATIVE_REWRITE_PLAN.md` and `docs/DEBUGGING.md`):
 - **No Linux cross-build.** CommonLibSSE-NG needs the MSVC linker → build on a
   GitHub Actions `windows-latest` runner; the artifact is the DLL. vcpkg
   binary cache keeps runs ~2–3 min. Pin the vcpkg registry baseline or a stale
@@ -66,14 +68,16 @@ Core principles:
 
 ## 1. Player loop
 
-1. Loot an enchanted sword — its enchantment **is** a gem, sitting in the
-   item's socket. Pop it out from the Gem Pouch menu, anywhere, any time.
-   Gems removed from found loot are always **level 1** regardless of the
-   item's vanilla tier.
+1. Loot an enchanted sword — it arrives **converted**: the plain base item
+   with the matching gem already socketed and active (see §2 "loot
+   conversion", SHIPPED m23). Pop the gem out from the Gem Pouch menu,
+   anywhere, any time. Converted-loot gems are **level I** (level II at the
+   same low roll as loose drops) regardless of the item's vanilla tier.
 2. **Socket** gems into any eligible gear. Free, lossless, reversible.
 3. Gems socketed in your worn gear earn **XP from your kills** and level
    I → V; magnitude scales with level. Filled soul gems can be fed to a
-   socketed gem for instant XP (with the Soul Feeder perk).
+   socketed gem at any enchanting station for instant XP (the Soul Feeder
+   perk doubles the yield).
 4. A gem that fills its bar past level V is **Mastered** — it keeps working
    at level V and **births** a fresh level-1 copy of itself. Birthing is the
    only way to replicate a gem.
@@ -91,8 +95,9 @@ Collapse rules ("smart dedup"):
   vanilla magnitude tiers (`...01`–`...06`) are NOT the gem's I–V curve — they
   are only used to identify the family. The I–V magnitudes come from the
   scaling model in §3 (I = Requiem base, V = Requiem max), which we anchor per
-  effect. Deriving each effect's base/max programmatically (from the enchant
-  formula or a calibrated table) is a P1 data task — see §3.
+  effect. Per-effect base/max shipped in the catalog data, and on installed
+  lists the installer's calibration derives them from the list's own tier
+  magnitudes — see §3.
 - Multi-effect generic combos (mage robes = Fortify School + Magicka Regen,
   Chillrend = Frost + Paralyze, ...) are NOT separate gems — they decompose
   into their component gems, one per socket. Robes' double effect is
@@ -103,12 +108,15 @@ Collapse rules ("smart dedup"):
   FX, draugr streaks) never reach the catalog because only enchantments found
   on obtainable ARMO/WEAP with a generic `Ench*` family qualify.
 
-### Weapon gems (~15) — fire-and-forget, on-hit
+**Shipped roster: 54 gems total = 51 normal (15 weapon + 36 armor, levels
+I–V) + 3 support (Focus/Conduit/Echo, tiers I–III, §5).**
+
+### Weapon gems (15) — fire-and-forget, on-hit
 Fire, Frost (with slow), Shock, Chaos (DLC2 tri-element), Absorb Health,
 Absorb Magicka, Absorb Stamina, Damage Magicka, Damage Stamina, Fear,
 Banish, Paralyze, Soul Trap, Turn Undead, Sun (Dawnguard, undead-only).
 
-### Armor gems (~30) — constant-effect
+### Armor gems (36) — constant-effect
 - Attributes: Fortify Health / Magicka / Stamina, Regen ×3, Carry Weight.
 - Resists: Fire, Frost, Shock, Magic, Poison, Disease.
 - Skills: the 18 fortify-skill effects (One-Handed, Two-Handed, Archery,
@@ -122,13 +130,17 @@ apparel — EXCEPT via the Conduit support gem (below). Vanilla slot
 restrictions per effect (e.g. Fortify Archery on helmets) are dropped; any
 armor gem fits any apparel slot.
 
-### Converting found loot
-A vanilla-enchanted item's ENCH is matched against the family map; the first
-time the player opens its sockets, the vanilla enchantment is decoded as its
-component gems (1–2 for generic families) at **level 1**. Any socket
-operation replaces the vanilla ENCH with MEO's rebuilt, marker-carrying
-enchantment (§7). Until the player touches it, the item is byte-for-byte
-vanilla — zero compatibility surface for unlooted/NPC gear.
+### Converting found loot (SHIPPED — m23 conversion model)
+The original lazy design ("decode on first socket touch") was superseded by
+Marth's m23 ruling further down this section: a covered enchanted generic
+**converts at spawn/acquire** into its unenchanted base with the matching
+family's gem socketed and ACTIVE. The installer emits the per-list
+`conversions` table; the DLL swaps instances via engine flows on actor
+spawn, container arrival, vendor stock, pickups, and a player sweep.
+Coverage on the dev list is ~87% of generic enchanted gear; uniques,
+artifacts, and named sets are intentionally kept enchanted with sealed
+sockets. Creation Club content is covered (the installer reads
+`Skyrim.ccc`). See "CORRECTED to CONVERSION" below for the mechanism.
 
 ### World-visible socketed gear — self-describing item extra data (native)
 A weapon lying on the ground showing "Fire I Glass Dagger" — and staying that
@@ -164,23 +176,20 @@ stamped with this extra data at loot-generation time — a later milestone
 mechanism itself. Untouched vanilla loot stays byte-for-byte vanilla until first
 socket.
 
-### Compatibility — enchant-visibility mods (loot UX)
+### Compatibility — enchant-visibility mods (loot UX; post-1.0 pass)
 
-Two popular mods depend on how enchanted gear reads before pickup; both must
-keep working:
-- **See Enchantments SE** (weapon glow / visual effects in the world) — works
-  unchanged: found loot retains its real ENCH, so the glow is vanilla. TODO
-  verify the runtime enchantment applied after socketing (§7) still carries a
-  visual shader when the item is equipped; if not, reattach one.
-- **Unknown Enchants**-style "(U) you haven't learned this" indicators — read
-  the vanilla known-enchantment (disenchant) list, which MEO never populates,
-  so they would flag everything forever. Fix (semantic match): when the player
-  first **extracts a gem type**, mark that base enchantment KNOWN, so "(U)" then
-  means "a gem type you don't own yet" — exactly the loot-worth signal,
-  repurposed. Requires an API to add to the known-enchant list (verify SKSE /
-  PO3 in P3); **fallback** if none exists: MEO ships its own lightweight loot
-  tag (display-name suffix or on-loot hint) driven by gem ownership. Either way
-  the UX survives. (P3 compat task.)
+Status update for the conversion era: generic enchanted loot now converts to
+socketed gear on acquire, so "how enchanted gear reads before pickup"
+applies mainly to the uncovered tail and to artifacts (which keep their real
+ENCH — those mods work unchanged on them).
+- **See Enchantments SE** (weapon glow in the world) — artifacts and
+  unconverted loot are vanilla ENCH, glow intact. Socketed gear's combined
+  created-enchantment carries the winning MGEF's own shaders (m12 made it
+  permanently active, so FX apply immediately).
+- **Unknown Enchants**-style "(U)" indicators — read the vanilla
+  known-enchantment list, which MEO never populates; with conversion in
+  place they mostly see artifacts. A semantic-match pass ("(U)" = a gem
+  family you don't own yet) remains a post-1.0 compat candidate.
 
 ### Unique / artifact enchantments (68 families)
 Policy: artifacts with scripted, quest, or one-off enchantments (Ebony Blade,
@@ -232,7 +241,7 @@ frost rider Slow ×2.0/3s reproduces the m21 hand-read exactly.
 list-discovered recipes (Force, Spellbreaking, burst variants,
 armor-penetration packages) enter at the **second-rarest tier (A)**.
 
-### Install-time load-order scanner (design DECIDED 2026-07-08, tool pending)
+### Install-time load-order scanner (SHIPPED as the installer's scan/calibration passes; catalog EXTENSION remains post-1.0)
 The catalog ships vanilla effects; a mod load order carries dozens more
 (Lorerim scan: ~267 single-effect enchant MGEFs not in our catalog). An
 install-time tool remaps and extends against the *actual* load order. Two jobs:
@@ -329,31 +338,34 @@ prototype in python, build the C#/Mutagen tool via CI).
   - **Kills** — every kill by the player (or a follower, for their own gems)
     awards Gem XP to *every* socketed gem in parallel: **1 per standard
     enemy, 10 per boss**. Native `TESDeathEvent` sink (implemented v0.7.1).
-  - **Soul feeding** — at an **enchanting station** (SETTLED, Marth
-    2026-07-07: feeding and destruction are station interactions, NOT pouch
-    ones — the pouch/socket menu never grows a feeding zone), consume a
-    filled soul gem to grant Gem XP
-    to one gem: petty 5, lesser 12, common 25, greater 60, grand/black 200
-    (MCM-tunable). With the **Soul Feeder** perk, soul gems hold **2×** (both
-    when fed and when reclaimed), so a Grand ≈ 400 ≈ one full Level I→II.
-  - **Gem destruction** — at an **enchanting station** (same 2026-07-07
-    decision), destroying a gem reclaims **1/10 of its Gem XP** into a soul
-    gem (the only sink that recovers investment).
-  - **The Mentor gem** — a unique support gem that **doubles the Gem XP of
-    its paired gem**, awarded mid-Dawnguard (around Chasing Echoes / Beyond
-    Death). The calibration below assumes it's active for the back half of a
-    playthrough. (Name "Mentor" provisional; keep all naming original to MEO.)
-    *M3d interim*: doubles ALL Gem XP earned by whoever carries it
-    (whole-inventory aura — becomes true socket pairing once the
-    multi-socket model lands). *Acquisition (PROVISIONAL, placement under
-    discussion)*: granted on first arrival in the Soul Cairn
-    (`DLC01SoulCairn` worldspace) — thematically between Chasing Echoes
-    and Beyond Death, exactly the calibration window. Alternatives: a
-    placed chest ref (cell-edit compat care), a quest-stage check, a
-    Boneyard boss drop. Soul feeding via the Gem Pouch menu (drop filled
-    soul gems in; smallest first; reusables bounce) is INTERIM ONLY — it
-    moves to enchanting stations along with gem destruction (Marth,
-    2026-07-07); Soul Feeder perk and destruction not yet implemented.
+  - **Soul feeding** (SHIPPED m10) — at an **enchanting station** (SETTLED,
+    Marth 2026-07-07: feeding and destruction are station interactions, NOT
+    pouch ones — the pouch/socket menu never grows a feeding zone), consume
+    a filled soul gem to grant Gem XP to one gem:
+    **petty 1, lesser 2.5, common 5, greater 12, grand/black 40**
+    (`kSoulFeedXP` in plugin.cpp). These values are THE balance choice
+    (Marth, m26b v0.35.1): the original 5/12/25/60/200 table power-leveled
+    gems — a grand soul was half a level-I threshold — so the soul→XP rate
+    was cut ~80% while gem POWER stayed untouched. With the **Soul Feeder**
+    perk the yield is **2×** (both when fed and when reclaimed), so a Grand
+    = 80 Gem XP. Feeding also grants Enchanting SKILL xp (MCM-tunable).
+  - **Gem destruction** (SHIPPED m10) — at an **enchanting station** (same
+    2026-07-07 decision), destroying a gem reclaims **1/10 of its Gem XP**
+    into the largest filled soul gem it can afford, using the same
+    `kSoulFeedXP` table so the soul↔XP exchange stays symmetric (the only
+    sink that recovers investment).
+  - **The Mentor gem** (SHIPPED) — a unique gem that **doubles Gem XP**,
+    granted once on first arrival in the Soul Cairn (`DLC01SoulCairn`
+    worldspace) — thematically between Chasing Echoes and Beyond Death,
+    exactly the calibration window. The calibration below assumes it's
+    active for the back half of a playthrough. Shipped behavior: doubles
+    ALL Gem XP earned by whoever carries it (whole-carrier aura; making it
+    a true linked support gem is a possible later refinement). Grant is
+    latched in the co-save.
+  - **Gems are NOT sellable (Marth, RULE):** gold value 0, enforced both in
+    the ESP source and at runtime by the DLL; loose gems live in the hidden
+    pouch so vendors never even list them. Gems are progression items, not
+    currency.
 
 - **Level thresholds (default A-tier, MCM-tunable): cumulative
   400 / 900 / 2,800 / 7,000 Gem XP to reach II / III / IV / V.**
@@ -405,10 +417,12 @@ Worked anchors (two example gems):
   mastery (shared with / modeled on the sibling MRO). Without CSF present, the
   ceiling is the perked Level V (49 / 98). Keep MEO standalone-playable; the
   mastery tier is synergy, not a hard dependency.
-- **Levels II–IV** interpolate between I and V. Default: linear (Fire
-  12/17.75/23.5/29.25/35; Fortify Health 20/32.5/45/57.5/70), a per-gem curve
-  shape is MCM/data-tunable. Each of the ~45 gem families needs its own
-  [base, max] pair; sourcing those is the P1 data task flagged in §2.
+- **Levels II–IV** interpolate between I and V. Default: linear, per-gem
+  curves shipped in `data/gem_catalog.json` (see BALANCE.md for the final
+  per-class decisions, including the global -15% pass). On an installed
+  list, per-gem magnitudes are additionally **derived from the list's own
+  records** by the installer's calibration pass (m35b) — the compiled
+  defaults are only the fallback for installs that never ran the tool.
 
 ### NPC / enemy participation and level caps
 
@@ -422,34 +436,32 @@ capped low so player investment always outscales it:
   enchantments **already** land at or below the Level II–III magnitude band, so
   the cap is largely self-enforcing via existing loot distribution — we do not
   need to touch NPC gear to hit it in the common case.
-- Aspiration ("would be nice"): make enemies literally *beholden to the system*
-  — their enchanted gear IS MEO gems at the capped level, so the whole world
-  runs one ruleset. This is a larger feature (runtime conversion/cap of NPC
-  gear, or record-level edits) deferred to P4+; the light-touch cap above is
-  the v1 behavior. Until then NPC gear keeps its vanilla ENCH (see §2
-  "Converting found loot") and simply reads as a low-level gem's worth of power.
+- The aspiration LANDED via conversion (m23): enemies whose enchanted gear
+  is family-covered spawn holding the *converted* socketed piece (worn
+  conversions re-equip and apply the worn ability — an enemy with a Fire I
+  weapon deals Fire I damage), plus themed worn-socket rolls (m19). The
+  whole world runs one ruleset for covered generics; only the uncovered
+  tail and artifacts keep vanilla ENCH.
 
 ### Configuration & tunability (portability contract)
 
 Every balance number in this section is load-order-dependent (the Requiem
-anchors differ on vanilla / Adamant / Enderal / etc.). Per DYNAMIC_OR_DROP, a
-baked number is mistuned everywhere but this machine, so tuning is exposed, not
-frozen. The architecture already permits it: gem magnitudes are computed at
-socket/rebuild time in script (the same path perk multipliers already use), so
-NOTHING magnitude-related is baked into MGEF/ENCH records.
+anchors differ on vanilla / Adamant / Enderal / etc.). The portability rule
+(archived DYNAMIC_OR_DROP doc): a baked number is mistuned everywhere but
+this machine, so tuning is exposed, not frozen. The architecture enforces
+it: gem magnitudes are computed by the DLL at stamp/rebuild time (the same
+path perk multipliers use), so NOTHING magnitude-related is baked into
+MGEF/ENCH records. How it shipped:
 
-- **MCM (runtime fine tuning)** — global and per-category scalars, not 90
-  per-gem sliders: master magnitude x, weapon-gem x and armor-gem x (and/or
-  per-family-group), the Attunement-perk % (default 40), the mastery % (default
-  50), the I->V curve shape, XP rates/thresholds, soul-feed values, and the
-  enemy cap level. Changing any re-applies worn gems on the next heartbeat (S6).
-- **FOMOD (install-time baseline)** — pick a balance baseline that seeds the
-  per-gem [base, max] data set: e.g. "Requiem/LoreRim", "Vanilla-ish",
-  "Hardcore". FOMOD only chooses which data installs; the MCM scalars ride on
-  top for per-playthrough adjustment.
-- Per-gem [base, max] anchors ship as DATA (the P1 sourcing task, S2), chosen by
-  the FOMOD baseline; the MCM never edits them individually, it scales them.
-  Sane knob count, yet any load order can land an appropriate absolute range.
+- **Installer calibration (install-time baseline)** — replaced the old
+  FOMOD-baseline idea entirely: per-gem magnitudes, riders, and rank
+  ladders are DERIVED from the user's own load order's winning records
+  (`meo_calibration.json`, m22/m35b); the compiled Requiem-anchored
+  defaults are only the never-ran-the-tool fallback.
+- **MCM (runtime fine tuning)** — global scalars on top: gem power scale,
+  XP rates, boss multiplier, drop/spawn/vendor rates, notification and
+  behavior toggles. The MCM scales the calibrated data, never edits it
+  per-gem. Settings apply on menu close (live INI re-read).
 
 ### Gem spawns into the world — rates & rarity curve (v0.15.0)
 
@@ -472,12 +484,11 @@ Chaos, Stagger) at ~2.4% each, A-tier elementals ~7% each, B-tier control
 effects ~12% each. Single-level gems (Soul Trap) never spawn. The weighted pool
 keeps the DLL's pick uniform — only pool construction changes.
 
-### Post-strip gem economy (DECIDED, Marth 2026-07-09 — pending implementation)
+### Post-conversion gem economy (SHIPPED — m19 enemies/vendors, m23 conversion)
 
-Once the install-time tool strips generic enchanted loot (§1/§2 scanner),
-gems are the only enchantment source. The existing rates above stay
-UNCHANGED; two new sources replace the stripped one — roughly **doubling gem
-accrual while keeping it varied**:
+With conversion live, gems are the enchantment source for covered generics.
+The existing rates above stay UNCHANGED; two additional sources round out
+the economy — roughly **doubling gem accrual while keeping it varied**:
 
 1. **Enemies spawn wearing socketed equipment.** Each enemy class has a
    chance of at least one worn socketed piece, with BOTH the rate and the
@@ -501,17 +512,17 @@ accrual while keeping it varied**:
    record-less) and the stranded record (uid in neither container) are
    matched and the record moves to the new uid — looted/bought/stored
    socketed gear keeps living records (ENGINE_NOTES §1 trap neutralized;
-   ambiguous multi-instance transfers log + skip). PENDING in-game
-   validation via the `[rekey]` log line. Once proven, vendor SOCKETED
-   stock unblocks too.
+   ambiguous multi-instance transfers log + skip). VALIDATED in the field
+   2026-07-09 (`[rekey]` log-proven). Vendor shelves get gem-flavored stock
+   via conversion of their enchanted inventory (m23 covers vendor
+   acquisition paths).
 
 Implementation notes: both are DLL-side and runtime-dynamic (per
 DYNAMIC_OR_DROP — no leveled-list edits): enemy worn-socket rolls stamp the
 actor's worn instance on load/attach (same deterministic-per-ref discipline
 as world weapons); vendor rolls stamp/insert at barter-menu open. Rates as
-INI/MCM keys like the rest. Ships as its own DLL stage alongside/after the
-3c installer — additive sources can land BEFORE the strip so the economy
-never dips.
+INI/MCM keys like the rest. (Shipped m19/m19b, before conversion landed, so
+the economy never dipped.)
 
 ## 4. Sockets and the Gem Pouch
 
@@ -520,7 +531,7 @@ default" sketch):
 
 | Gear | Unperked | Perked |
 |---|---|---|
-| Head | 1 | 1 |
+| Head (helmets AND circlets — circlets use their own biped slot, added m36f) | 1 | 1 |
 | **Gloves** | **2 (linked)** | **2 (linked)** |
 | Chest | 1 | **2 (linked)** |
 | Ring | 1 | 1 |
@@ -543,33 +554,36 @@ default" sketch):
   ~level 15, so early game the dual gloves just hold two normal gems. Support
   gems are still an endgame payoff — by scarcity, not by perk lock.
 
-- The **Gem Pouch** — a lesser power granted at startup
-  (plus an MCM-bindable hotkey) — opens the socket menu anywhere: pick a worn
-  item → view sockets → insert / remove. Feeding and extracting are done at En chanting stations
-- Socket operations target *worn* gear (a WornObject API constraint, §7);
-  the menu offers to temp-equip an inventory item being edited.
-- Effects are applied with SKSE `WornObject.CreateEnchantment()` on the worn
-  instance and persist on that instance in the save — gems travel with the
-  item when dropped, sold, or stored, no tracking needed.
-- Item names get a suffix via PO3 `SetDisplayName` ("Iron Sword
-  [Fire II • Soul Trap I]") purely as UI sugar.
-- NPCs never interact with sockets.
+- The **Gem Pouch** — a lesser power granted at startup — opens the socket
+  menu anywhere: a native in-process ImGui menu (ENGINE_NOTES §9), items
+  pane + gems pane, full mouse/keyboard AND controller navigation (m32f,
+  m36e), 4 runtime skins (m24). Any inventory item is socketable (native
+  reach — no worn-only constraint); one-click gem swap replaces a filled
+  socket (m35e). Feeding and destruction happen at enchanting stations,
+  which by default open this same menu (m18 station takeover).
+- Loose gems are STORED in a hidden pouch container, not the player
+  inventory (m27); the co-save tracks the pouch ref and recovers gems if
+  it's ever lost (m32c/m32d).
+- Effects are applied natively: the DLL builds ONE combined
+  created-enchantment from all filled sockets and sets it as instance
+  `ExtraEnchantment` + `ExtraTextDisplayData` + `ExtraUniqueID`
+  (ENGINE_NOTES §1/§3). State persists on the instance and in the co-save —
+  gems travel with the item when dropped, sold, or stored.
+- Item names are rewritten on the instance ("Fire II Iron Sword" style —
+  **NO BRACKETS**: some UI mods strip bracketed tags, the M2i lesson).
+- NPCs never level gems. Enemies can spawn *wearing* socketed gear (m19,
+  themed per enemy archetype) — the socketed piece is itself the loot.
 
-### Onboarding — note + contextual hint (DECIDED)
+### Onboarding — CUT (Marth, 1.0 decision)
 
-Low-intrusion, no forced quest:
-- Startup grants the Gem Pouch power AND adds a readable primer to the player's
-  inventory ("A Jeweler's Primer") covering: the Gem Pouch power, that found
-  enchantments extract as gems, gloves being the dual/link slot, and gems
-  leveling through use.
-- A **one-time contextual hint** fires the first time the player acquires an
-  enchanted item ("Its enchantment can be extracted as a gem — open the Gem
-  Pouch"). Latched via a GLOB so it never repeats. Fail-open if the flag is
-  missing.
-- Nothing is forced: no intro quest, no pre-socketed items. The primer + hint
-  point at the Gem Pouch and the player explores from there.
+**No in-game onboarding ships.** The earlier "Jeweler's Primer" readable +
+one-time contextual hint design was cut for 1.0: no tutorials, no guides, no
+hints — the README's "How to play" section is the onboarding. Nothing is
+forced either way: no intro quest, no pre-socketed starter items beyond the
+starter gem grants; the player gets the Gem Pouch power and explores from
+there.
 
-### Stacking cap — no more than 2 of the same effect (DECIDED)
+### Stacking cap — no more than 2 of the same effect (SHIPPED m35c)
 
 At most **2 gems of the same effect** contribute across all worn gear; the
 3rd+ copy of that effect is **fully inert** (DECIDED — only the two
@@ -579,62 +593,63 @@ the socket layout adds build *breadth*, not single-stat runaway. It also keeps
 resists sane — 2× elemental-resist V (30%) = 60%, under the ~85% cap. Enforced
 at socket/rebuild time.
 
-## 5. Support gems (dual-slot linked only)
+## 5. Support gems (dual-slot linked only) — SHIPPED (m36 series, v0.47–v0.49)
 
-Support gems are inert alone; when sharing a dual-slot item with a normal gem
-they modify it. One support + one normal per item (two supports = both inert).
+**Focus, Conduit, and Echo ship and work in-game.** Support gems are inert
+alone; an item is LINKED when exactly one support gem shares it with exactly
+one normal gem — then the support transforms the normal. Two supports on one
+item = both inert; a lone support = the item reverts to plain.
 
-**Support gems level — 3 tiers, I–III (DECIDED).** The three tiers span the
-same power range as normal gems' I–V (support III ≈ normal V). They earn XP the
-same way — while socketed AND linked to a working normal gem (an inert, unlinked
-support gem earns nothing). They do **not** birth: scarcity is preserved by
-acquisition, not replication.
+**Support gems level in 3 tiers, I–III (SHIPPED).** The three tiers span the
+same power range as normal gems' I–V (support III ≈ normal V). They earn XP
+the same way — but ONLY while socketed AND linked to a working normal gem (an
+inert, unlinked support gem earns nothing). They do **not** birth: scarcity
+is preserved by acquisition, not replication.
 
-- **How a tier expresses depends on the gem's function:**
-  - **Echo** — the top tier fires *every hit*; lower tiers fire only sometimes.
-    Echo I = occasional proc, Echo II = frequent, Echo III = every hit (full
-    AoE / full follower share). This makes Echo meaningfully worse until
-    mastered, which is the point of it being rare and leveled.
-  - **Focus / Reprisal / Siphon / etc.** — the tier scales that gem's own
-    lever: Focus +% (e.g. +20/+35/+50), Reprisal proc chance/magnitude,
-    Siphon heal %, Final Stand threshold/burst. Each gem's I–III curve is
-    tuned per function (P2 detail).
+Shipped behaviors (the source of truth is `RebuildInstanceEnchant` +
+the Echo sinks in `native/plugin.cpp`; per-tier levers are `tierParam` in
+the catalog):
 
-Acquisition (scarcity model — **not found before ~level 15**):
-- **Hand-placed**: each support gem has one fixed, famous
-  location (a Dwemer ruin's master-locked vault, a College questline reward,
-  a dragon-priest hoard, ...) — injected into specific existing containers /
-  quest rewards by the startup quest. Final location list chosen in P2.
-- **Rare boss-chest loot**: very low-weight entries in **level-15+** boss
-  leveled lists as a repeatable RNG backstop, so they cannot show up early.
-
-Roster:
-
-| Gem | In a weapon (linked gem) | In armor (linked gem) |
+| Gem | Shipped behavior | Tier lever (I/II/III) |
 |---|---|---|
-| **Echo** | On-hit effect gains an area — AoE proc around the target | Constant effect is shared with current followers (PO3 `GetPlayerFollowers`, refreshed on heartbeat) |
-| **Conduit** | An ARMOR gem rides the weapon: its stat becomes an on-hit debuff (Fortify Health gem → hits damage max health) | A WEAPON gem rides the armor as protection: **immunity/strong resist to that effect** (Fire gem → fire resist; Stagger gem → stagger/knockdown resist) |
-| **Focus** | Linked Fire/Frost/Shock/Chaos gem +50% magnitude and hits sunder the target's matching resistance | Linked elemental gem grants resistance equal to 2× its damage magnitude |
-| **Reprisal** | Linked gem's proc also fires on targets who hit you in melee while the weapon is drawn | Linked armor gem's magnitude doubles for 10 s whenever you're struck (stacking refresh) |
-| **Siphon** | Linked gem's on-hit proc also heals you (health if the gem damages health/stamina, magicka if it damages/absorbs magicka) for 25% of magnitude | Linked constant gem also grants slow regen of the matching attribute |
-| **Final Stand** | Dropping below 20% health triggers the linked gem's effect as a burst around you (60 s cooldown) | Dropping below 20% health triples the linked gem's magnitude for 15 s (60 s cooldown) |
+| **Focus** | Linked **elemental** gem (Fire/Frost/Shock themes — damage *and* resist gems — plus Chaos) gains bonus magnitude | +20% / +35% / +50% |
+| **Conduit** | **Cross-domain adapter**: an off-domain gem works through its same-theme sibling of the ITEM's domain (e.g. a weapon-domain Fire gem in armor expresses as the armor-domain Fire gem), at the sibling's own calibrated magnitude × the transfer ratio. Same-domain gems pass through unchanged; an off-domain gem with no clean sibling stays inert (units stay honest — no raw damage-vs-resist transfer) | ×0.50 / ×0.75 / ×1.00 |
+| **Echo** (weapon) | Linked elemental on-hit effect gains an **area** — delivered via `TESHitEvent` (the enchantment's area field is inert engine-side), hitting hostile/in-combat actors around the target with a bystander filter | area scales with tier (fraction 0.34/0.67/1.0) |
+| **Echo** (armor) | Linked gem's constant effect is **shared with current followers** — a self-expiring, save-safe spell, dispel-before-recast so it never stacks | share fraction 0.34 / 0.67 / 1.0 |
 
-V1 ships Echo, Conduit, Focus; Reprisal, Siphon, Final Stand follow in P2
-once the linking machinery is proven.
+Acquisition (SHIPPED, scarcity model — **not found before player level 15**):
+- **Rare boss/dragon loot** (m36h): a low `fSupportDropChance` (default 3%,
+  INI-tunable) roll on boss/dragon kills at player level ≥ `iSupportMinLevel`
+  (default 15).
+- **Hand-placed guaranteed copies** (m36i), one each in famous
+  non-respawning containers:
+  - **Focus** — Avanchnzel (Boilery boss chest; the Dwemer/Lexicon ruin).
+  - **Conduit** — The Midden: the Atronach Forge Offering Box
+    (transmutation theme; persistent ref).
+  - **Echo** — Ustengrav Depths boss chest (Jurgen Windcaller; the Voice).
 
-**Pending pass (before catalog population): the support interaction matrix.**
-Each support × weapon/armor × each gem type (all 50) must be specified —
-what the combination does, whether it's excluded, and its balance numbers.
-The table above defines the RULE per support; the matrix enumerates the
-cases where the rule needs a per-gem exception (e.g. Conduit with a
-single-level utility gem, Echo with Banish, Siphon with a non-damaging
-constant). Deliverable: `data/support_matrix.json` + a DESIGN appendix.
+Future roster (designed, NOT shipped — post-1.0 candidates once wanted):
+**Reprisal** (linked proc fires back at melee attackers / magnitude doubles
+when struck), **Siphon** (proc heals a fraction / slow matching regen),
+**Final Stand** (low-health burst / magnitude spike on a cooldown). The
+per-gem support interaction matrix (`data/support_matrix.json`) remains the
+deliverable gating any roster expansion — the shipped three sidestep it by
+construction (Focus/Echo restrict to elemental linkage; Conduit maps only
+clean theme siblings).
 
-## 6. Perk tree rework
+## 6. Perk tree rework — SHIPPED (m20 installer wiring + m34 affinities)
 
-Vanilla node positions and skill requirements are kept (we override PERK
-records in place — no AVIF tree surgery). Enchanting skill still exists and
-now levels from socketing, feeding, and gem level-ups.
+The **installer** rewrites the load order's winning enchanting perk tree
+(whatever won the AVEnchanting override — vanilla, Requiem, Ordinator, ...)
+into MEO's perks, writing `MEO - Patch.esp`; other perks it finds in the
+tree are offered keep/drop interactively. The DLL applies all perk math at
+stamp/re-stamp time via `HasPerk` checks — the PERK records themselves are
+plain flag perks. The affinities + Facet Insight sit as a CHOICE FAN off the
+Attunement spine (m34b); obsolete vanilla enchanting perks are dropped.
+Enchanting skill still exists and levels from socketing, feeding, and gem
+level-ups; an MCM Debug toggle (`bDebugAllPerks`) force-grants every MEO
+perk for testing. The table below maps the vanilla tree (node positions and
+skill requirements are kept when the vanilla tree is the winner):
 
 | Vanilla perk (req) | Becomes | Effect |
 |---|---|---|
@@ -657,7 +672,7 @@ changes, the heartbeat re-applies worn enchantments with new magnitudes.
 (Native era: "script-applied" = DLL-applied at stamp/re-stamp time via
 `HasPerk` checks; the ESP overrides only rename/redescribe the PERK records.)
 
-### Non-perk enchanting boosters (2026-07-07, pending implementation)
+### Non-perk enchanting boosters (2026-07-07, SHIPPED m11)
 Everything in the game that boosts enchanting must boost something relevant
 to MEO. The perk table above covers the tree; the remaining boosters —
 **Fortify Enchanting potions, Seeker of Sorcery (black book), Ahzidal's set
@@ -672,99 +687,106 @@ stacking can't inflate magnitudes mid-combat.
 - ENCH `enchType == 12` (staff/wand) → never convertible, never modified.
 - Soulbound FLST (artifacts, quest items, scripted effects) → sealed.
 - Items with keyword `MagicDisallowEnchanting` or the quest-item flag → sealed.
-- Untouched loot keeps its literal vanilla ENCH record (§2) — conversion only
-  happens on first player socket interaction.
-- The perk overrides only touch the 13 vanilla enchanting PERK records; the
-  Requiem patch plugin overrides the equivalent Requiem perk records instead
-  and drops the vanilla overrides (chosen at install time via FOMOD).
+- Loot the conversion table doesn't cover keeps its literal vanilla ENCH
+  record (§2) — MEO never rewrites base records at runtime, only swaps
+  covered instances via engine flows.
+- Perk-tree changes live in the installer-generated `MEO - Patch.esp`,
+  built against whatever tree actually wins in the user's load order
+  (vanilla, Requiem, Ordinator, ...) — no FOMOD variants, no hand-made
+  compatibility patches.
 
-## 7. Socket state is stateless — the marker mechanism
+## 7. Socket state — the shipped native model (marker mechanism RETIRED)
 
-Papyrus cannot durably identify an item *instance* (an inventory is
-`(base form, count, extra data)`; three Iron Swords are indistinguishable to
-a script). Side-table designs desync on drop/sell/stack. MEO instead derives
-socket contents from the item itself:
+The item is still the database, but natively. Each socketed item instance
+carries a self-describing engine bundle (ENGINE_NOTES §1):
 
-- Every MEO-built enchantment carries, alongside its real effects, one
-  hidden **marker effect** per socketed gem: a zero-cost, no-visual MGEF
-  whose magnitude encodes `gemTypeIndex × 8 + level`.
-- Reading an item = SKSE `WornObject.GetEnchantment()` →
-  `GetNthEffectMagicEffect/Magnitude` → exact integer decode of the markers.
-  Immune to perk multipliers rescaling the real effects, and to any future
-  balance retune.
-- Insert / remove / level-up are all "decode → edit gem list → rebuild
-  enchantment (real effects at perk-adjusted magnitudes + markers)".
-- The ONLY mod state is the XP pool per gem type+level in the tracker quest.
+- **`ExtraUniqueID`** — stable per-instance identity (also prevents
+  stacking with plain copies). The uid is re-keyed when an item hops
+  containers (`TESContainerChangedEvent` re-key, m19).
+- **`ExtraEnchantment`** — ONE combined created-enchantment built from all
+  filled sockets, forced free (cost 0, `kCostOverride`, charge `0xFFFF`) so
+  it never depletes and applies instantly (ENGINE_NOTES §3).
+- **`ExtraTextDisplayData`** — the live display name (no brackets).
 
-## 8. Runtime architecture
+The **SKSE co-save** holds the socket/leveling index: per-instance records
+`{base, uid, slot, gid, level, xp}` plus globals (pouch ref, grant latches),
+versioned and self-migrating (v3 → current). Loose leveled gems carry the
+same record shape so a gem's identity survives socket ↔ loose transitions.
+On level-up/socket/unsocket the DLL rebuilds the combined enchant and name
+in place.
 
-Per the field guide (§7):
-- **MEO_StartupQuest** (SGE + Run Once): grants the Gem Pouch power, injects
-  support gems into their hand-placed containers and boss LVLIs, version init.
-- **MEO_TrackerQuest** (SGE, not Run Once, in SEQ): 30 s heartbeat — kill
-  stat polling → XP awards → level-up/birth processing → perk-multiplier
-  refresh → follower "All" sync.
-- **MEO_MCMQuest** (SGE, not Run Once, in SEQ): SkyUI MCM — XP curve and
-  soul-feed sliders, hotkey binding, notifications toggle, uninstall
-  (unsocket everything) button.
-- ESP contents: MISC gems (~45 types × 5 levels + support gems ≈ 235
-  records), MGEF pool (real effects + marker MGEFs), GLOBs (tuning), FLSTs
-  (gem form ladders, MGEF map, soulbound list), QUSTs, SPEL (Gem Pouch
-  power), PERK overrides, LVLI edits, SEQ file.
+HISTORICAL: the Papyrus-era design encoded socket state as hidden zero-cost
+"marker" effects inside the enchantment so a script could decode state from
+the item alone (Papyrus cannot durably identify instances). P0 validated it;
+the native build made it unnecessary and it never shipped.
 
-Open engineering risks (validate in P0, per guide philosophy):
-1. `WornObject.CreateEnchantment` semantics: persistence across
-   unequip/save/load; whether re-creating replaces cleanly (removal path);
-   behavior on stacked identical base items.
-2. Menu UX without a station: message-box chains scale poorly past ~8
-   options — evaluate UIExtensions/SkyUILib as an optional soft dependency.
-3. On-hit AoE proc for the All gem (may need a dummy explosion SPEL cast at
-   the target).
+## 8. Runtime architecture (shipped)
+
+Everything lives in **`MEO.dll`** (CommonLibSSE-NG; `native/plugin.cpp`):
+
+- **Startup/setup** (`EnsurePlayerSetup` at load): grants the Gem Pouch
+  power, starter gems, hand-placed support gems (direct container placement
+  into non-respawning refs, m36i), creates/recovers the hidden pouch
+  container, applies the temper-perk toggle.
+- **Event sinks** (ENGINE_NOTES §4): `TESDeathEvent` (kill XP, corpse gem
+  drops, support-gem boss rolls), `TESCellAttachDetachEvent` +
+  `TESObjectLoadedEvent` (world-weapon pre-socket rolls, NPC worn-gear
+  stamps, Soul Cairn Mentor grant, conversion), `TESContainerChangedEvent`
+  (uid re-key + conversion on arrival), `MenuOpenCloseEvent` (station
+  takeover, MCM live re-read, load-anchored reapply), `TESHitEvent` (Echo
+  AoE), plus a follower-share heartbeat for Echo armor.
+- **The gem menu**: in-process ImGui drawn inside the game's DX11 present
+  (ENGINE_NOTES §9) — two panes, station mode (feed/destroy), 4 skins,
+  mouse/keyboard + controller.
+- **Co-save serialization** (§7 above; ENGINE_NOTES §6).
+- **Calibration consumption**: at `kDataLoaded` the DLL overlays
+  `meo_calibration.json` (per-list magnitudes, riders, rank ladders, the
+  conversion table) onto the compiled `GemCatalog.h` defaults.
+
+**`MEO.esp`** (generated, FormIDs frozen): gem MISC records (51 normal × 5
+levels + 3 support × 3 tiers + Mentor), marker/pouch MGEFs and the pouch
+SPEL/CONT, MEO PERK records (0x810–0x81C), the MCM quest, SEQ. **`MEO -
+Patch.esp`** (installer-generated per user): the enchanting perk tree
+rewrite. Papyrus surface is ONE compile-time MCM stub; there are no runtime
+Papyrus systems, no tracker quest, no heartbeat script.
 
 ## 9. Save safety
 
-- **Install mid-save: safe.** Only new records + in-place PERK overrides;
-  loot stays literally vanilla until first socket interaction. No new game
-  required.
-- **Uninstall mid-save: mitigated, not magic.** Runtime enchantments and
-  display-name suffixes persist on item instances, and quest script
-  instances persist like any scripted mod. The MCM uninstall button
-  (unsocket everything → strip name suffixes → stop quests → save → remove
-  plugin) reduces residue to the ecosystem-normal minimum; ReSaver for the
-  rest. Verify in P0 that a full uninstall pass leaves items usable.
+- **Install mid-save: safe.** New records + the installer's perk-tree patch;
+  no vanilla record is edited destructively. No new game required.
+- **Update in place: safe by design.** FormIDs are frozen post-release; the
+  co-save migrates itself forward across versions; recovery passes run every
+  load (pouch/gem recovery m32c/m32d, duplicate-effect dispel m32e/m24b).
+- **Uninstall mid-save: mitigated, not magic.** Instance enchantments and
+  display names persist on item instances like any runtime-enchanted gear;
+  without the DLL they simply stop leveling (the combined enchant keeps
+  working as a normal enchantment). Removing the ESPs orphans converted/
+  socketed instances' base forms like any content mod. Ecosystem-normal
+  residue; ReSaver for the rest.
 - **Dev/test workflow:** keep one read-only baseline save that has never
   seen the plugin; reload it for every test of a build whose *records*
-  changed (FormIDs, VMAD properties, quest flags). Script-logic-only
-  changes may be iterated on a dirty save (Papyrus links .pex by name at
-  load), but when in doubt, clean reload — persisted quest state lies.
-- P0 explicitly validates: enchantment persistence across save/load and
-  unequip, clean re-creation on rebuild, and post-uninstall item health.
+  changed. When in doubt, clean reload — persisted state lies.
 
-## 10. Build phases
+## 10. Build history (the P0–P4 phase plan is COMPLETE/superseded)
 
-1. **P0 prototype**: catalog builder + minimal ESP (Fire gem I–V), Gem Pouch
-   menu, socket/unsocket/readback, WornObject validation in-game.
-2. **P1 core**: full generic catalog, loot conversion, XP/leveling/birthing,
-   Soul Feeder, perk overrides, MCM.
-3. **P2 support gems**: Echo / Conduit / Focus + dual-slot linking;
-   hand-placement locations; then Reprisal / Siphon / Final Stand.
-4. **P3 packaging**: FOMOD (core + Requiem patch page), LoreRim patch pass
-   (Requiem perk records, Summermyst coexistence check).
-   **Compatibility baseline (verified 2026-07-07)**: MEO.esp declares a
-   single master (Skyrim.esm) and references NO external records — the DLL
-   resolves effect MGEFs from the live load order at runtime and disables
-   gems whose master is absent. The shipped ESP therefore works in ANY
-   load order out of the box; Requiem shaped only the balance numbers.
-   **Load-order regenerator (Marth, 2026-07-07)**: ship a C# regenerator
-   (Mutagen-based; Synthesis-runnable AND standalone via a batch wrapper)
-   that reads the user's real load order and regenerates/extends MEO.esp —
-   needed once load-order-dependent features land (signature-based
-   mod-enchant scan, support matrix, per-modlist balance baselines).
-   FOMOD runs it at install time when possible; manual run documented.
-5. **P4 uniques**: curated unique gems from artifact families.
-6. **Post-release**: follower/companion gem testing at scale (mechanics
-   shipped in v0.10.0-m3d but deep testing deferred — Marth, 2026-07-07);
-   gamepad support for the gem menu (Marth, 2026-07-07: pinned post-release
-   — basic dpad+A/B nav shipped in v0.12.0-m6, but full stick navigation,
-   button hints, and feel-polish wait; mouse+keyboard is the supported
-   input until then).
+The original phases shipped, in more steps than planned — `CHANGELOG.md`
+(repo root) is the authoritative history. Milestone arc: P0 Papyrus
+validation (v0.0.x) → native pivot (m0–m2, co-save + socket bundle) →
+playable socket core + leveling (m3–m5) → ImGui menu (m6) → loot/spawns,
+MCM, armor gems, stations, perk effects (m7–m11) → multi-socket + on-load
+reactivation (m13–m17) → station takeover + gem economy (m18–m19) →
+installer: perk tree, calibration, riders, conversion (m20–m26) → pouch
+storage, rank ladders, portability, controller (m27–m32) → temper toggle
+(m33) → affinity perks + Facet Insight (m34) → audit fixes, per-list
+magnitudes, stacking cap, gem swap (m35) → support gems + circlets (m36).
+
+Compatibility baseline (verified 2026-07-07, still true): `MEO.esp` declares
+a single master (Skyrim.esm) and references NO external records — the DLL
+resolves effect MGEFs from the live load order at runtime and disables gems
+whose master is absent; the installer, not FOMOD variants, adapts MEO to
+the list.
+
+Post-1.0 candidates: curated unique gems from artifact families (old P4);
+Reprisal/Siphon/Final Stand support gems (§5); follower gem testing at
+scale; the Unknown-Enchants-style compat pass (§2); Summermyst coexistence
+check.

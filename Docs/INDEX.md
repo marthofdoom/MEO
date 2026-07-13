@@ -5,45 +5,54 @@ gems for Skyrim SE. This project is designed so any capable model or person
 can continue it from these docs alone. Load documents on demand, not all at
 once.
 
+CURRENT STATE (v0.49.4, 1.0 release candidate): the native DLL, the ESP
+generator, and the C# (Mutagen) installer are ALL SHIPPED and validated
+in-game. Full feature set: 54 gems (51 normal I–V + 3 support I–III),
+multi-socket with linked pairs, the hidden Gem Pouch + native ImGui menu,
+loot conversion (all paths + Creation Club) with per-load-order installer
+calibration, the MEO perk tree installed into the load order's enchanting
+tree, support gems (Focus/Conduit/Echo) with hand-placed + boss-loot
+acquisition, station takeover/feeding/destruction, 4 menu skins, controller
+support. Remaining for 1.0.0: docs/portability audit + release engineering.
+`CHANGELOG.md` (repo root) has the version history.
+
 ## Read order for a fresh session
 
 1. **DESIGN.md** (always) — what MEO is: the player loop, the data-driven gem
    catalog, levels/XP/birthing, sockets and the Gem Pouch, the "item is the
-   database" model, and the perk layer. This is the spec. **BALANCE.md**
-   holds the tuning math (XP ladder, tier curves, drop rates) behind it.
-   CURRENT STATE: the native DLL is SHIPPED and validated in-game through
-   v0.25.x — 51 gem families (weapon + armor), multi-socket with perk-gated
-   second sockets, station soul-feeding, perk effects, MCM, on-load
-   reactivation. Next milestone: the install-time C# (Mutagen) perk-tree
-   installer.
-2. **MANUAL_MOD_CREATION_GUIDE.md** (when creating/altering RECORDS) — the
+   database" model, support gems, and the perk layer. This is the spec,
+   reconciled to the shipped native build. **BALANCE.md** holds the tuning
+   math (XP ladder, tier curves, drop rates) behind it.
+2. **ENGINE_NOTES.md** (before ANY native instance/extra-data work) — every
+   engine mechanism proven in-game: the self-describing instance bundle,
+   rename traps (force + temper sync + NO BRACKETS + 0x1C indirection), the
+   created-enchantment recipe, validated event sinks, native message boxes,
+   co-save discipline, ops traps, known issues (§8). Synced once to
+   `../Linux-Native-Tools/instance-data-and-events.md` (this repo is
+   canonical). The living truth for behavior is `native/plugin.cpp`.
+3. **MANUAL_MOD_CREATION_GUIDE.md** (when creating/altering RECORDS) — the
    binary format reference: record/group/subrecord encoding, verified recipes
    (GLOB, QUST, VMAD, MGEF, SPEL, PERK, FLST, LVLI, GMST, SEQ), the PO3 event
    rules, Papyrus-on-Linux compilation, FOMOD rules.
-3. **DEBUGGING.md** (when something misbehaves) — symptom → cause → fix for
+4. **DEBUGGING.md** (when something misbehaves) — symptom → cause → fix for
    every failure class hit across both this project and its sibling MRO, plus
-   the universal diff-against-vanilla method.
-4. **TEST_GUIDE.md** (before/after each release) — the current in-game test
-   matrix for the native systems (menu, sockets, XP, stations, perks, MCM).
-   P0_TESTING.md is HISTORICAL (the pre-native prototype gate — passed).
-5. **TESTING.md** (before claiming anything works) — console procedures.
-   (NOTE: still MRO-specific; port to MEO systems as they land.)
-6. **DYNAMIC_OR_DROP.md** (before shipping) — the portability rule: anything
-   whose behavior is baked from THIS machine's load order at generation time
-   must become runtime-dynamic or be dropped before 1.0. MEO generates its gem
-   catalog from the load order's ENCH records, so this rule bites here.
-   (NOTE: this file still carries stale MRO examples — vendor gold — pending a
-   pass to replace them with MEO's own catalog-generation cases.)
-7. **NATIVE_REWRITE_PLAN.md** (HISTORICAL — the DLL is shipped) — the plan the
-   native layer was built from: co-save socket/XP index, per-item-instance
-   identity, kill hooks; toolchain from MRO. Useful for rationale; the living
-   truth is `native/plugin.cpp` + ENGINE_NOTES.md.
-8. **ENGINE_NOTES.md** (before ANY native instance/extra-data work) — every
-   engine mechanism the M2–M4 arc proved in-game: the self-describing instance
-   bundle, rename traps (force + temper sync + NO BRACKETS + 0x1C indirection),
-   the created-enchantment recipe, validated event sinks, native message boxes,
-   co-save discipline, ops traps. Synced once to
-   `../Linux-Native-Tools/instance-data-and-events.md` (this repo is canonical).
+   the universal diff-against-vanilla method and native crash-log guidance.
+5. **TEST_GUIDE.md** (before/after each release) — the 1.0 in-game test
+   matrix: sockets, leveling, conversion, perks, support gems, the pouch,
+   stations, MCM.
+6. **P0_TESTING.md** (HISTORICAL) — the pre-native Papyrus prototype gate.
+   Passed 2026-07-05; kept for the record.
+
+## Archived (Docs/archive/ — superseded, kept for history)
+
+- **NATIVE_REWRITE_PLAN.md** — the plan the native layer was built from
+  (co-save socket/XP index, per-instance identity, kill hooks). The DLL
+  shipped; useful only for rationale.
+- **TESTING.md** — MRO-specific console test procedures; never ported.
+- **DYNAMIC_OR_DROP.md** — the portability rule ("nothing baked from THIS
+  machine's load order ships"), with stale MRO examples. The rule itself
+  WON and is now enforced structurally: the installer derives calibration,
+  riders, and conversions from the user's own load order at install time.
 
 ## Sibling project
 
@@ -56,9 +65,14 @@ for MEO's native layer. Reuse, don't re-derive.
 
 - `tools/parse_ench.py` — ENCH/MGEF/gear catalog parser (produces
   `data/ench_catalog.json`, `data/gear_families.json`).
-- Bring over MRO's `tools/dump_record.py` (inspect any record vs its vanilla
-  twin — THE diagnostic) and `tools/audit_esp.py` (wiring + FormID audit)
-  when record generation starts.
+- `tools/gen_catalog_header.py` — generates `native/GemCatalog.h` from the
+  catalog JSONs.
+- `tools/compile.sh` — Papyrus compilation via Proton wine.
+- `tools/release_native.sh` — the ONLY way a build reaches the game: full
+  standalone zip (DLL + ESP + MCM + scripts + runtime JSON), tag, immutable
+  `releases/vX.Y.Z/`.
+- Installer record-inspector commands (`installer/` README + memory notes)
+  for dumping any record vs its vanilla twin.
 
 ## The one principle
 
