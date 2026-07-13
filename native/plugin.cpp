@@ -4317,21 +4317,32 @@ public:
             int hit = 0;
             for (auto& handle : lists->highActorHandles) {
                 auto a = handle.get();
-                // A burst catches everyone in range except you, your followers,
-                // the primary victim (already struck), and the dead. Neutral
-                // bystanders ARE hit (and turn hostile) — same as a vanilla AoE
-                // spell; the hostility filter was too restrictive (m36, Marth:
-                // "arcadia and whiterun guard were ignored").
-                if (!a || a.get() == pl || (vic && a.get() == vic.get()) || a->IsPlayerTeammate() ||
-                    a->IsDead()) {
+                if (!a || a.get() == pl || (vic && a.get() == vic.get())) {
                     continue;
                 }
-                if (a->GetPosition().GetDistance(vpos) > radius) {
+                const float dist = a->GetPosition().GetDistance(vpos);
+                if (dist > radius) {
+                    continue;  // out of range — not logged (too noisy)
+                }
+                // Non-violent bystanders are spared (Marth): only actors hostile
+                // to you are caught. A hostile guard SHOULD qualify — but one was
+                // skipped, so log every in-range candidate's combat flags to see
+                // which predicate disagrees (IsHostileToActor vs actual combat).
+                const bool teammate = a->IsPlayerTeammate();
+                const bool dead = a->IsDead();
+                const bool hostile = a->IsHostileToActor(pl);
+                const bool inCombat = a->IsInCombat();
+                spdlog::info("[echo] candidate '{}' d={:.0f} hostile={} inCombat={} teammate={} dead={}",
+                             a->GetName(), dist, hostile, inCombat, teammate, dead);
+                // Catch anyone hostile OR in combat — a guard fighting you reads
+                // as in-combat even if the faction hostility check lags. Neutral,
+                // non-fighting bystanders (IsInCombat=false) are still spared.
+                if (teammate || dead || !(hostile || inCombat)) {
                     continue;
                 }
                 caster->CastSpellImmediate(ench, false, a.get(), 1.0f, false, 0.0f, pl);
-                spdlog::info("[echo]   -> '{}' ({:08X}) at {:.0f}u", a->GetName(),
-                             a->GetFormID(), a->GetPosition().GetDistance(vpos));
+                spdlog::info("[echo]   -> HIT '{}' ({:08X}) at {:.0f}u", a->GetName(),
+                             a->GetFormID(), dist);
                 ++hit;
             }
             if (hit > 0) {
