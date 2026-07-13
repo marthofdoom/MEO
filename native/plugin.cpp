@@ -118,7 +118,7 @@ bool          g_starterGranted = false;
 
 constexpr std::uint32_t kSerID = 'MEO1';
 constexpr std::uint32_t kRecGems = 'GEMS';
-constexpr std::uint32_t kSerVersion = 8;  // v8: + meoGrantedArcane. v7: pouchRefID. v6: armorStarter. v5: slot.
+constexpr std::uint32_t kSerVersion = 9;  // v9: + supportScaffoldGranted. v8: meoGrantedArcane. v7: pouchRefID.
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -421,6 +421,7 @@ RE::BGSPerk* g_perkFacet = nullptr;
 // gear (+ artifacts) — Marth's ruling 2026-07-12.
 RE::BGSPerk* g_perkArcaneBlacksmith = nullptr;
 bool         g_meoGrantedArcane = false;  // co-save v8: MEO added the perk (revocable)
+bool         g_supportScaffoldGranted = false;  // co-save v9: test-scaffold support gems handed out
 bool g_treeMode = false;  // MEO - Patch.esp installed: perks come from the tree, not auto-grant
 // Cached from the player's perks (refreshed on load + menu close).
 int  g_attuneRank = 0;      // 0..5 → +8% gem magnitude per rank
@@ -1111,6 +1112,15 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
             return;
         }
     }
+    // m36: Echo on a WEAPON gives the linked on-hit effect an area (AoE) that
+    // grows with tier. Start with the obvious damaging elemental gems (Marth);
+    // more gems opt in as their linkage is added. (Armor Echo = follower-share,
+    // a runtime heartbeat handled separately.)
+    int echoArea = 0;
+    if (support && support->def->supportType == meo::SupportType::kEcho &&
+        !isArmor && IsElementalGem(filled[0].rg)) {
+        echoArea = static_cast<int>(std::lround(support->def->tierParam[supportTier - 1] * 15.0f));
+    }
 
     // One primary effect per filled socket, plus that gem's recipe riders
     // (m21, Marth: gems mirror the load order's elemental recipe — frost
@@ -1142,7 +1152,7 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         const float primaryMag = conduitTarget ? baseMag * conduitRatio : baseMag * supportMag;
         auto& eff = effects[e++];
         eff.effectItem.magnitude = primaryMag;
-        eff.effectItem.area = 0;
+        eff.effectItem.area = echoArea;  // m36: Echo weapon AoE (0 otherwise)
         eff.effectItem.duration = static_cast<std::uint32_t>(eg->def->duration);
         eff.baseEffect = eg->mgefLv[lvIdx];  // m28: rank ladder
         eff.cost = 0.0f;
@@ -1159,7 +1169,7 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
                               GemPerkMult(filled[i].rg->def) * supportMag  // m32/m34; m36 Focus
 
                         : primaryMag * rd.ratio;
-                reff.effectItem.area = 0;
+                reff.effectItem.area = echoArea;  // m36: rider shares the AoE
                 reff.effectItem.duration = static_cast<std::uint32_t>(rd.dur);
                 reff.baseEffect = rd.mgef;
                 reff.cost = 0.0f;
@@ -4349,10 +4359,32 @@ void EnsurePlayerSetup() {
         Notify("You have learned to socket gems (Gem Pouch power).");
     }
     ApplyTemperPerk();  // m33: socketed gear temperable w/o Arcane Blacksmith (MCM)
-    // m36: the starter-gem scaffold (3 weapon + 5 armor loose gems on first
-    // load) is removed — 1.0 is found-loot-driven (DESIGN §4, Marth), no
-    // pre-granted kit. The g_starterGranted / g_armorStarterGranted co-save
-    // flags are still read/written (schema stability) but grant nothing.
+    // m36: the normal-gem starter kit is gone (1.0 is found-loot-driven).
+    // TESTING SCAFFOLD (Marth): until real support-gem acquisition ships
+    // (level-15+ boss loot + hand-placed), hand the player one of each support
+    // gem at every tier so the linking mechanics can be exercised. One-time via
+    // the v9 co-save flag; REMOVE before 1.0 (see [[meo-roadmap-staged]]).
+    if (!g_supportScaffoldGranted) {
+        int given = 0;
+        for (const char* gid : { "focus", "conduit", "echo" }) {
+            auto it = g_gemByGid.find(gid);
+            if (it == g_gemByGid.end()) {
+                continue;
+            }
+            const auto& rg = g_gems[it->second];
+            for (int t = 0; t < 3; ++t) {  // tiers I-III
+                if (rg.items[t]) {
+                    player->AddObjectToContainer(rg.items[t], nullptr, 1, nullptr);
+                    ++given;
+                }
+            }
+        }
+        if (given > 0) {
+            g_supportScaffoldGranted = true;
+            spdlog::info("support scaffold: {} support gem(s) granted for testing", given);
+            Notify("Support gems (Focus/Conduit/Echo) added for testing.");
+        }
+    }
 }
 
 // On load, worn socketed gems' abilities are runtime state that doesn't persist
@@ -4656,6 +4688,8 @@ void SaveCallback(SKSE::SerializationInterface* a_intfc) {
     a_intfc->WriteRecordData(g_pouchRefID);  // v7 field: hidden gem container ref
     const std::uint8_t grantedArcane = g_meoGrantedArcane ? 1 : 0;  // v8 field
     a_intfc->WriteRecordData(grantedArcane);
+    const std::uint8_t supportScaffold = g_supportScaffoldGranted ? 1 : 0;  // v9 field
+    a_intfc->WriteRecordData(supportScaffold);
     const std::uint32_t count = static_cast<std::uint32_t>(g_sockets.size());
     a_intfc->WriteRecordData(count);
     for (const auto& [key, rec] : g_sockets) {
@@ -4683,6 +4717,7 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
     g_starterGranted = false;
     g_mentorGranted = false;
     g_armorStarterGranted = false;
+    g_supportScaffoldGranted = false;
     CloseGemMenu();
     std::uint32_t type = 0, version = 0, length = 0;
     while (a_intfc->GetNextRecordInfo(type, version, length)) {
@@ -4719,6 +4754,11 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
             std::uint8_t grantedArcane = 0;
             a_intfc->ReadRecordData(grantedArcane);
             g_meoGrantedArcane = grantedArcane != 0;
+        }
+        if (version >= 9) {  // v9: support test-scaffold handed out (older saves = false)
+            std::uint8_t supportScaffold = 0;
+            a_intfc->ReadRecordData(supportScaffold);
+            g_supportScaffoldGranted = supportScaffold != 0;
         }
         std::uint32_t count = 0;
         a_intfc->ReadRecordData(count);
@@ -4759,6 +4799,7 @@ void RevertCallback(SKSE::SerializationInterface*) {
     g_starterGranted = false;
     g_mentorGranted = false;
     g_armorStarterGranted = false;
+    g_supportScaffoldGranted = false;
     CloseGemMenu();
     spdlog::info("[revert] socket index cleared");
 }
@@ -4777,7 +4818,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.48.1 (m36 support gems: Focus + Conduit) loaded");
+            console->Print("MEO native v0.48.2 (m36 support gems: +Echo weapon AoE, test scaffold) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4838,7 +4879,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.48.1 (m36 support gems: Focus + Conduit) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.48.2 (m36 support gems: +Echo weapon AoE, test scaffold) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
