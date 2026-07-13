@@ -3023,12 +3023,12 @@ namespace menuhook {
             int shown = 0;
             for (int i = 0; i < static_cast<int>(g_menu.gems.size()); ++i) {
                 const auto gem = g_menu.gems[i];  // copy for the closure
-                if (gem.isSupport) {
-                    if (sel.capacity < 2) {
-                        continue;  // m36: support gems need a dual-socket (linked) item
-                    }
-                } else if (gem.isArmor != sel.isArmor && !sel.hasConduit) {
-                    continue;  // domain-locked unless a Conduit adapts it (m36)
+                // m36: support gems are ALWAYS listed (they're valid for some
+                // item; you should always see them in the pouch) — MenuSocket
+                // enforces dual-only. Normal gems stay domain-locked unless a
+                // Conduit in the item adapts them.
+                if (!gem.isSupport && gem.isArmor != sel.isArmor && !sel.hasConduit) {
+                    continue;
                 }
                 ++shown;
                 const ImVec2 rp = ImGui::GetCursorScreenPos();
@@ -4818,7 +4818,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.48.2 (m36 support gems: +Echo weapon AoE, test scaffold) loaded");
+            console->Print("MEO native v0.48.3 (m36: support gems always visible + ESP forms) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4879,7 +4879,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.48.2 (m36 support gems: +Echo weapon AoE, test scaffold) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.48.3 (m36: support gems always visible + ESP forms) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
