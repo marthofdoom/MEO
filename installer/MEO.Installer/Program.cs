@@ -401,8 +401,17 @@ static class Commands
         // wand/charge perks riding in the tree) is kept and rewired.
         static bool IsCraftEntry(APerkEntryPointEffect.EntryType ep)
         {
+            // Enchanting-mechanic entry points MEO obsoletes -> remove, not keep.
+            // ModEnchantmentPower (potency, now Attunement), *SoulGem* (recharge),
+            // ModNumAppliedEnchantmentsAllowed (Extra Effect / dual-enchant, now
+            // multi-socket), ModSoulPercentCapturedToWeapon (Soul Siphon / weapon
+            // recharge, obsolete — gems proc free). Named by ENTRY POINT, not
+            // perk name; staff/wand perks use different entry points and survive.
             var s = ep.ToString();
-            return s == "ModEnchantmentPower" || s.Contains("SoulGem");
+            return s == "ModEnchantmentPower" ||
+                   s == "ModNumAppliedEnchantmentsAllowed" ||
+                   s == "ModSoulPercentCapturedToWeapon" ||
+                   s.Contains("SoulGem");
         }
         IEnumerable<IPerkGetter> RankChain(IPerkGetter first)
         {
@@ -571,17 +580,22 @@ static class Commands
         uint iAtt = nextIdx, iCut = nextIdx + 1, iFeed = nextIdx + 2,
              iTwin = nextIdx + 3, iJwl = nextIdx + 4,
              iPyr = nextIdx + 5, iFro = nextIdx + 6, iSto = nextIdx + 7, iFac = nextIdx + 8;
-        // Attunement is the hub; affinities + Facet Insight branch off it
-        // alongside cutter/feeder (m34, DESIGN §6 reqs 30-50).
-        over.PerkTree.Add(Node(iAtt, attune1, xBase, 0, iCut, iFeed, iPyr, iFro, iFac));
+        // Layout principle (Marth): CHOICES fan out in parallel from the hub;
+        // flat cumulative power goes SEQUENTIAL. Attunement (5 ranks) is the
+        // sequential spine; the affinities + Facet Insight are a CHOICE fan —
+        // each branches straight off the hub, none chained to another, so the
+        // player picks which elements/type to boost. Twinned->Jeweler stays
+        // sequential (progressive socket unlocks).
+        over.PerkTree.Add(Node(iAtt, attune1, xBase, 0,
+                               iCut, iFeed, iPyr, iFro, iSto, iFac));  // hub fans to all choices
         over.PerkTree.Add(Node(iCut, gemCutter, xBase - 1, 1));
         over.PerkTree.Add(Node(iFeed, soulFeeder, xBase + 1, 1, iTwin));
-        over.PerkTree.Add(Node(iTwin, twinned, xBase, 2, iJwl));
+        over.PerkTree.Add(Node(iTwin, twinned, xBase, 2, iJwl));  // sequential: Twinned -> Jeweler
         over.PerkTree.Add(Node(iJwl, jeweler, xBase, 3));
-        over.PerkTree.Add(Node(iPyr, pyrestone, xBase - 2, 1, iSto));   // pyre -> storm chain
-        over.PerkTree.Add(Node(iFro, froststone, xBase + 2, 1));
-        over.PerkTree.Add(Node(iSto, stormstone, xBase - 2, 2));
-        over.PerkTree.Add(Node(iFac, facet, xBase + 2, 2));
+        over.PerkTree.Add(Node(iPyr, pyrestone, xBase - 2, 1));   // parallel choice
+        over.PerkTree.Add(Node(iSto, stormstone, xBase - 2, 2));  // parallel choice
+        over.PerkTree.Add(Node(iFro, froststone, xBase + 2, 1));  // parallel choice
+        over.PerkTree.Add(Node(iFac, facet, xBase + 2, 2));       // parallel choice
         root.ConnectionLineToIndices.Add(iAtt);
 
         Console.WriteLine($"tree: {removedIdx.Count} craft node(s) replaced, " +
