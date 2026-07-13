@@ -286,6 +286,54 @@ void RecoverStrandedGems() {
 
 RE::ExtraDataList* FindInstanceXList(RE::TESObjectREFR* a_owner, RE::TESBoundObject* a_form,
                                     std::uint16_t a_uid);  // defined below
+
+// m36l (Marth cleanup): one-shot removal of ALL loose support gems from the
+// player + the pouch, for wiping test-scaffold gems off a save. Dev-only,
+// gated on bPurgeSupportGems, run once per load. Erases their loose (slot-0)
+// co-save records first so RecoverStrandedGems can't re-add them. Socketed
+// support gems are left alone (unsocket them first if you want those gone too).
+void PurgeLooseSupportGems() {
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    if (!player) {
+        return;
+    }
+    // Drop loose support-gem records (slot 0) so recovery won't resurrect them.
+    std::erase_if(g_sockets, [](const auto& kv) {
+        if ((kv.first & 0xFF) != 0) {
+            return false;  // socketed slot — keep
+        }
+        auto gi = g_gemByGid.find(kv.second.gid);
+        return gi != g_gemByGid.end() && g_gems[gi->second].def->isSupport;
+    });
+    int removed = 0;
+    auto purge = [&](RE::TESObjectREFR* h) {
+        if (!h) {
+            return;
+        }
+        std::vector<std::pair<RE::TESBoundObject*, std::int32_t>> hits;
+        for (const auto& [obj, data] : h->GetInventory(
+                 [](RE::TESBoundObject& o) { return o.Is(RE::FormType::Misc); })) {
+            auto it = g_gemByItem.find(obj->GetFormID());
+            if (data.first > 0 && it != g_gemByItem.end() &&
+                g_gems[it->second.first].def->isSupport) {
+                hits.emplace_back(obj, data.first);
+            }
+        }
+        for (auto& [obj, n] : hits) {
+            h->RemoveItem(obj, n, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
+            removed += n;
+        }
+    };
+    purge(player);
+    purge(PouchRef());
+    if (removed > 0) {
+        spdlog::info("[purge] removed {} loose support gem(s) from inventory + pouch", removed);
+        Notify(std::format("MEO: removed {} support gem(s).", removed));
+    } else {
+        spdlog::info("[purge] no loose support gems to remove");
+    }
+}
+
 void RouteGemsToPouch() {
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* pouch = PouchRef();
@@ -1447,6 +1495,7 @@ int   g_menuStyle = 0;            // [UI] iMenuStyle — gem menu skin 0..3 (m24
 bool  g_temperNoPerk = true;      // [UI] bTemperNoPerk — socketed gear tempers w/o Arcane Blacksmith (m33)
 float g_enchSkillXPMult = 1.0f;   // [XP] fEnchSkillXP — Enchanting SKILL xp per soul fed (m25)
 bool  g_debugAllPerks = false;    // [Debug] bDebugAllPerks — force every MEO perk ON for testing (m36)
+bool  g_purgeSupportGems = false; // [Debug] bPurgeSupportGems — one-shot: strip all support gems from inv+pouch (m36l cleanup)
 // g_magnitudeMult [XP] fMagnitudeMult is declared up top (StampInstance uses it)
 
 // Apply one INI file's key=value lines onto the config globals. Tolerates the
@@ -1489,6 +1538,7 @@ static void ApplyIniFile(const char* a_path) {
         else if (key == "bTemperNoPerk")      g_temperNoPerk = val != 0.0f;
         else if (key == "fEnchSkillXP")       g_enchSkillXPMult = val;
         else if (key == "bDebugAllPerks")     g_debugAllPerks = val != 0.0f;
+        else if (key == "bPurgeSupportGems")  g_purgeSupportGems = val != 0.0f;
     }
 }
 
@@ -5213,7 +5263,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         StartEchoHeartbeat();  // m36: Echo armor follower-share
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.50.0 (m36j: release cleanup — scaffold + debug logs removed) loaded");
+            console->Print("MEO native v0.50.1 (m36l: support-gem purge cleanup) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -5239,6 +5289,9 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
             // the log would name loudly.
             g_pouchCreatedThisLoad = false;
             RecoverStrandedGems();
+            if (g_purgeSupportGems) {  // m36l: dev cleanup, after recovery so nothing lingers
+                PurgeLooseSupportGems();
+            }
             if (auto* pouch = PouchRef()) {  // status is never ambiguous again
                 int inst = 0, plain = 0;
                 for (const auto& [obj, data] : pouch->GetInventory(
@@ -5276,7 +5329,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.50.0 (m36j: release cleanup — scaffold + debug logs removed) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.50.1 (m36l: support-gem purge cleanup) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
