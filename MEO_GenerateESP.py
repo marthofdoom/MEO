@@ -127,17 +127,38 @@ THEME_STONE = {  # vanilla gemstone per theme — the gem's accent color family
     'UTILITY': 'Emerald',
 }
 
+FREEZE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'gem_forms.frozen.json')
+
 def load_frozen_forms():
-    """FormID FREEZE: every (gid, level) -> fid pair in the previously
-    generated runtime map is immutable (co-saves store gem baseFormIDs).
-    New gems or newly added levels get fresh fids after the frozen max."""
-    path=os.path.join('out','SKSE','Plugins','MEO','meo_runtime.json')
+    """FormID FREEZE: every (gid, level) -> fid pair is immutable (co-saves
+    store gem base FormIDs; drift = save corruption + DLL/ESP disagreement).
+    Anchor is data/gem_forms.frozen.json — a COMMITTED file, so a fresh clone
+    or a wiped out/ can never re-allocate from scratch (m35 audit). Falls back
+    to the legacy out/meo_runtime.json only if the committed anchor is absent."""
     frozen={}
-    if os.path.exists(path):
-        for gid,g in json.load(open(path)).items():
+    if os.path.exists(FREEZE_PATH):
+        for gid,forms in json.load(open(FREEZE_PATH)).items():
+            frozen[gid]={int(l):OWN|int(f,16) for l,f in forms.items()}
+        return frozen
+    legacy=os.path.join('out','SKSE','Plugins','MEO','meo_runtime.json')
+    if os.path.exists(legacy):
+        for gid,g in json.load(open(legacy)).items():
             if isinstance(g,dict) and 'forms' in g:
                 frozen[gid]={int(l):OWN|int(f,16) for l,f in g['forms'].items()}
     return frozen
+
+def write_frozen_forms(gem_form_map):
+    """Persist the current (gid,level)->local-fid map to the committed anchor.
+    Union with existing so a removed gem's ids stay reserved (never recycled)."""
+    existing={}
+    if os.path.exists(FREEZE_PATH):
+        existing=json.load(open(FREEZE_PATH))
+    for gid,levels in gem_form_map.items():
+        existing.setdefault(gid,{})
+        for lvl,fid in levels.items():
+            existing[gid][str(lvl)]=f"0x{fid & 0xFFFFFF:06X}"
+    os.makedirs(os.path.dirname(FREEZE_PATH),exist_ok=True)
+    json.dump(existing,open(FREEZE_PATH,'w'),indent=1,sort_keys=True)
 
 def allocate_gems():
     """Return (misc_records_bytes, gem_form_map, weapon_fids, armor_fids).
@@ -384,6 +405,7 @@ def main():
     data=esp.getvalue()
     with open(os.path.join(out_dir,"MEO.esp"),'wb') as f: f.write(data)
     write_runtime_json(out_dir, gem_form_map)
+    write_frozen_forms(gem_form_map)  # m35: keep the committed FormID anchor current
     write_mcm_files(out_dir)
     ngems=len(CATALOG); nmisc=len(weapon_fids)+len(armor_fids)
     print(f"Written: {out_dir}/MEO.esp ({len(data):,} bytes)")

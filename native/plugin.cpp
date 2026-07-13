@@ -490,9 +490,22 @@ static void LoadCalibration() {
         spdlog::info("no calibration file ({}) — compiled rider defaults in force", kPath);
         return;
     }
+    // m35: reset before load so a re-read never accumulates stale entries.
+    g_calibration.clear();
+    g_calLevels.clear();
+    g_calConversions.clear();
+    nlohmann::json j;
     try {
-        nlohmann::json j;
         f >> j;
+    } catch (const std::exception& ex) {
+        spdlog::error("calibration JSON unreadable ({}): {} — compiled defaults in force",
+                      kPath, ex.what());
+        return;
+    }
+    // m35: families and conversions parse INDEPENDENTLY — a typo in one
+    // family's rider must not take the whole 10k-row conversion table down
+    // with it (that reverts loot conversion to nothing, silently).
+    try {
         for (const auto& [fam, val] : j.at("families").items()) {
             std::vector<CalRider> rs;
             for (const auto& r : val.at("riders")) {
@@ -521,6 +534,13 @@ static void LoadCalibration() {
                 g_calLevels[fam] = lv;
             }
         }
+    } catch (const std::exception& ex) {
+        spdlog::error("calibration families parse failed ({}): {} — riders/ladders default",
+                      kPath, ex.what());
+        g_calibration.clear();
+        g_calLevels.clear();  // m35: keep ladders and riders consistent
+    }
+    try {
         if (j.contains("conversions")) {
             for (const auto& c : j.at("conversions")) {
                 CalConversion cc;
@@ -534,14 +554,13 @@ static void LoadCalibration() {
                 g_calConversions.push_back(std::move(cc));
             }
         }
-        spdlog::info("calibration: {} family recipe(s), {} conversion(s) loaded from {}",
-                     g_calibration.size(), g_calConversions.size(), kPath);
     } catch (const std::exception& ex) {
-        spdlog::error("calibration parse failed ({}): {} — compiled defaults in force",
+        spdlog::error("calibration conversions parse failed ({}): {} — no loot conversion",
                       kPath, ex.what());
-        g_calibration.clear();
         g_calConversions.clear();
     }
+    spdlog::info("calibration: {} family recipe(s), {} conversion(s) loaded from {}",
+                 g_calibration.size(), g_calConversions.size(), kPath);
 }
 
 void ResolveCatalog() {
@@ -749,6 +768,20 @@ void ResolveCatalog() {
         if (gid == g_gemByGid.end() || !g_gems[gid->second].mgef) { ++convGemMiss; continue; }
         g_convert[item->GetFormID()] = { base, gid->second };
         ++convOk;
+    }
+    // m35 (audit): drop any row whose TARGET base is itself a conversion
+    // source — that would re-arm the arrival sink every pass (item dup / hang).
+    int convCyclic = 0;
+    for (auto it = g_convert.begin(); it != g_convert.end();) {
+        if (it->second.base && g_convert.contains(it->second.base->GetFormID())) {
+            it = g_convert.erase(it);
+            ++convCyclic;
+        } else {
+            ++it;
+        }
+    }
+    if (convCyclic > 0) {
+        spdlog::warn("[convert] dropped {} cyclic conversion(s) — target was also a source", convCyclic);
     }
     if (convOk + convItemMiss + convBaseMiss + convGemMiss > 0) {
         spdlog::info("[convert] table resolved: {} live, {} skipped (item {}, base {}, gem {})",
@@ -1934,9 +1967,9 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
     SocketRecord saved{};
     RE::TESObjectREFR* gemHolder = player;  // m27: gems normally live in the pouch
     RE::ExtraDataList* gemXL = nullptr;
+    std::uint16_t      useUid = a_gemUid;  // m35: the record's actual key (may drift)
     if (a_gemUid) {
         auto* pouch = PouchRef();
-        std::uint16_t useUid = a_gemUid;
         if (pouch) {
             gemXL = FindInstanceXList(pouch, gemForm, a_gemUid);
             if (gemXL) {
@@ -2009,7 +2042,7 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
     }
     if (!StampInstance(itemForm, xl, gemIdx, level, static_cast<std::uint8_t>(freeSlot), xp)) {
         if (hadRec) {
-            g_sockets[MakeKey(a_gemBase, a_gemUid)] = saved;
+            g_sockets[MakeKey(a_gemBase, useUid)] = saved;  // m35: restore under the drift-corrected key
         }
         return;
     }
@@ -2173,8 +2206,8 @@ namespace menuhook {
     // open so the first click lands even before the mouse ever moves.
     std::atomic<bool>          g_shoutDownSeen{ false };
     std::atomic<bool>          g_cursorInit{ false };
-    float                      g_cursorX = -1.0f;
-    float                      g_cursorY = -1.0f;
+    std::atomic<float>         g_cursorX{ -1.0f };  // m35: read on render thread, written on input thread
+    std::atomic<float>         g_cursorY{ -1.0f };
     std::atomic<std::uint64_t> g_destroyArm{ 0 };  // armed Destroy row (two-click confirm)
     // m32f controller: left-stick nav state (edge-triggered -> dpad keys;
     // ImGui's own nav repeat handles held directions)
@@ -3367,6 +3400,11 @@ void ConvertWorldRef(RE::TESObjectREFR* a_ref) {
     if ((a_ref->formFlags & RE::TESObjectREFR::RecordFlags::kPersistent) != 0) {
         return;  // scripts/quests may hold this exact ref
     }
+    if (a_ref->extraList.GetCount() > 1) {
+        return;  // m35: a stacked world pile — PlaceObjectAtMe makes only one,
+                 // so converting in place would destroy the rest. Let it convert
+                 // per-unit on pickup via the container sink instead.
+    }
     if (a_ref->extraList.HasType(RE::ExtraDataType::kAliasInstanceArray)) {
         return;  // quest-aliased — same caution
     }
@@ -4418,7 +4456,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.44.2 (M34c enemy-loot ownership fix) loaded");
+            console->Print("MEO native v0.44.3 (M35 audit fixes) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4479,7 +4517,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.44.2 (M34c enemy-loot ownership fix) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.44.3 (M35 audit fixes) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }

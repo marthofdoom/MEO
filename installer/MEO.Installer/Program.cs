@@ -100,7 +100,13 @@ else
     }
 }
 
-var resolved = Mo2LoadOrder.Resolve(mo2Root, profile, out var missing);
+List<(string Name, string Path)> resolved;
+List<string> missing;
+LoadOrder<IModListingGetter<ISkyrimModGetter>> loadOrder;
+ILinkCache cache;
+try
+{
+resolved = Mo2LoadOrder.Resolve(mo2Root, profile, out missing);
 // Self-exclusion: never read our own output — the source tree must be what
 // the load order looks like WITHOUT the patch, or re-runs would compound.
 var dropped = resolved.RemoveAll(r =>
@@ -133,9 +139,21 @@ foreach (var (name, path) in resolved)
         SkyrimRelease.SkyrimSE);
     listings.Add(new ModListing<ISkyrimModGetter>(mod, enabled: true));
 }
-var loadOrder = new LoadOrder<IModListingGetter<ISkyrimModGetter>>(listings);
-var cache = loadOrder.ToImmutableLinkCache();
+loadOrder = new LoadOrder<IModListingGetter<ISkyrimModGetter>>(listings);
+cache = loadOrder.ToImmutableLinkCache();
 Console.WriteLine($"load order read in {sw.Elapsed.TotalSeconds:F1}s");
+}
+catch (Exception ex)
+{
+    // m35 (audit): the load-order build (Resolve, overlay creation, LoadOrder)
+    // reads the filesystem and is the MOST likely thing to throw in the field
+    // (bad plugins.txt, missing modlist.txt, duplicate/corrupt esp). It sat
+    // OUTSIDE the command try/catch, so under a double-clicked Wine console it
+    // died silently — the m32e vanishing-window class. Never again.
+    Console.Error.WriteLine("LOAD ORDER READ FAILED — MEO cannot continue:");
+    Console.Error.WriteLine(ex.ToString());
+    return Pause(1, installMode);
+}
 
 int rc;
 try
@@ -1598,7 +1616,10 @@ static class Mo2LoadOrder
             dirMaps.Add((d, map));
         }
 
-        var order = BaseMasters.Concat(plugins);
+        // m35 (audit): dedup — MO2 profiles routinely list base masters
+        // (*Skyrim.esm) and can double-list a plugin; a duplicate ModKey makes
+        // LoadOrder throw. ResolveGame already does this; parity here.
+        var order = BaseMasters.Concat(plugins).Distinct(StringComparer.OrdinalIgnoreCase);
         var outList = new List<(string, string)>();
         missing = [];
         foreach (var p in order)
