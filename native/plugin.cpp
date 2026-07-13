@@ -686,8 +686,10 @@ void ResolveCatalog() {
         for (int lv = 0; lv < levels; ++lv) {
             rg.items[lv] = dh->LookupForm<RE::TESObjectMISC>(def.gemItem[lv], kPluginName);
             // Short-curve gems (e.g. Muffle) pad higher levels with the top
-            // form; map each distinct form to its FIRST level only.
-            if (rg.items[lv] && rg.mgef && rg.items[lv] != prev) {
+            // form; map each distinct form to its FIRST level only. m36: support
+            // gems have no MGEF (inert alone) but are still real socketable
+            // items, so register them by isSupport too.
+            if (rg.items[lv] && (rg.mgef || rg.def->isSupport) && rg.items[lv] != prev) {
                 g_gemByItem[rg.items[lv]->GetFormID()] = { static_cast<int>(g_gems.size()), lv + 1 };
                 if (!rg.liveName.empty()) {  // m27: item names follow the live effect
                     rg.items[lv]->fullName = RE::BSFixedString(
@@ -949,6 +951,36 @@ int WornGidCount(std::string_view a_gid) {
     return n;
 }
 
+// m36: Focus targets Fire/Frost/Shock/Chaos gems. Theme buckets kFire/kFrost/
+// kShock hold both the damage (weapon) and resist (armor) gems of that element;
+// Chaos lives in kArcane so it's matched by gid.
+bool IsElementalGem(const ResolvedGem* a_rg) {
+    if (!a_rg) {
+        return false;
+    }
+    const auto t = a_rg->def->theme;
+    return t == meo::Theme::kFire || t == meo::Theme::kFrost || t == meo::Theme::kShock ||
+           std::string_view(a_rg->def->gid) == "chaos";
+}
+
+// m36: an item is LINKED when exactly one support gem shares it with exactly one
+// normal gem (the pairing that lets the support transform the normal, DESIGN §5).
+bool ItemIsLinked(RE::FormID a_base, std::uint16_t a_uid) {
+    int support = 0, normal = 0;
+    for (int s = 0; s < kMaxSockets; ++s) {
+        auto it = g_sockets.find(MakeKey(a_base, a_uid, static_cast<std::uint8_t>(s)));
+        if (it == g_sockets.end()) {
+            continue;
+        }
+        auto gi = g_gemByGid.find(it->second.gid);
+        if (gi == g_gemByGid.end()) {
+            continue;
+        }
+        (g_gems[gi->second].def->isSupport ? support : normal)++;
+    }
+    return support == 1 && normal == 1;
+}
+
 void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList) {
     auto* xid = a_xList ? a_xList->GetByType<RE::ExtraUniqueID>() : nullptr;
     if (!a_base || !xid) {
@@ -964,6 +996,13 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     const std::unordered_set<InstKey> active = worn ? WornActiveEffectKeys()
                                                     : std::unordered_set<InstKey>{};
     std::vector<Filled> filled;
+    // m36: a support gem (Echo/Conduit/Focus) has no effect of its own. When
+    // exactly ONE support shares the item with exactly ONE normal gem it is
+    // LINKED and transforms that normal gem; a lone support, or two supports,
+    // is inert. Supports are collected apart from the effect-producing normals.
+    const ResolvedGem* support = nullptr;
+    int supportCount = 0;
+    int supportTier = 1;
     for (int slot = 0; slot < kMaxSockets; ++slot) {
         const InstKey key = MakeKey(a_base->GetFormID(), uid, static_cast<std::uint8_t>(slot));
         auto it = g_sockets.find(key);
@@ -971,18 +1010,39 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
             continue;
         }
         auto gemIt = g_gemByGid.find(it->second.gid);
-        if (gemIt == g_gemByGid.end() || !g_gems[gemIt->second].mgef) {
+        if (gemIt == g_gemByGid.end()) {
             continue;
+        }
+        const ResolvedGem* rg = &g_gems[gemIt->second];
+        if (rg->def->isSupport) {
+            ++supportCount;
+            support = rg;
+            supportTier = std::clamp<int>(it->second.level, 1, 3);
+            continue;  // no direct effect
+        }
+        if (!rg->mgef) {
+            continue;  // disabled normal gem (missing master)
         }
         if (worn && !active.contains(key)) {
             continue;  // m35c: capped 3rd+ same-effect copy — inert
         }
-        filled.push_back({ &g_gems[gemIt->second], std::clamp<int>(it->second.level, 1, 5) - 1 });
+        filled.push_back({ rg, std::clamp<int>(it->second.level, 1, 5) - 1 });
     }
-    if (filled.empty()) {  // last gem removed — return the item to plain
-        a_xList->RemoveByType(RE::ExtraDataType::kEnchantment);
-        a_xList->RemoveByType(RE::ExtraDataType::kTextDisplayData);
-        return;
+    const bool linked = (supportCount == 1 && filled.size() == 1);
+    if (!linked) {
+        support = nullptr;  // inert unless it's a clean 1-support + 1-normal pair
+    }
+    if (filled.empty()) {  // no normal gem left — return the item to plain (a
+        a_xList->RemoveByType(RE::ExtraDataType::kEnchantment);      // lone or
+        a_xList->RemoveByType(RE::ExtraDataType::kTextDisplayData);  // double
+        return;                                                     // support is inert
+    }
+    // m36: Focus lifts a linked elemental gem's magnitude (+20/35/50% by tier).
+    // Other support types (Conduit/Echo) attach their own machinery elsewhere.
+    float supportMag = 1.0f;
+    if (support && support->def->supportType == meo::SupportType::kFocus &&
+        IsElementalGem(filled[0].rg)) {
+        supportMag = 1.0f + support->def->tierParam[supportTier - 1];
     }
 
     // One primary effect per filled socket, plus that gem's recipe riders
@@ -1004,7 +1064,8 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         // Facet Insight (+25% each, DESIGN §6).
         const float primaryMag =
             GemBaseMag(filled[i].rg->def, filled[i].lvIdx) * g_magnitudeMult *
-            (1.0f + 0.08f * g_attuneRank) * GemPerkMult(filled[i].rg->def);
+            (1.0f + 0.08f * g_attuneRank) * GemPerkMult(filled[i].rg->def) *
+            supportMag;  // m36: Focus link boost (1.0 when unlinked)
         auto& eff = effects[e++];
         eff.effectItem.magnitude = primaryMag;
         eff.effectItem.area = 0;
@@ -1020,7 +1081,7 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
             reff.effectItem.magnitude =
                 rd.absMag > 0.0f
                     ? rd.absMag * g_magnitudeMult * (1.0f + 0.08f * g_attuneRank) *
-                          GemPerkMult(filled[i].rg->def)  // m32/m34
+                          GemPerkMult(filled[i].rg->def) * supportMag  // m32/m34; m36 Focus
 
                     : primaryMag * rd.ratio;
             reff.effectItem.area = 0;
@@ -1048,6 +1109,12 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         xEnch->removeOnUnequip = false;
     } else {
         a_xList->Add(new RE::ExtraEnchantment(ench, 0xFFFF, false));
+    }
+    // m36: a linked support prefixes the name so the pairing is legible on the
+    // item itself, e.g. "Focus III · Fire II Sword".
+    if (support) {
+        namePart = std::format("{} {} \xC2\xB7 {}", GemName(*support),
+                               meo::kRoman[supportTier - 1], namePart);
     }
     // Forced name + engine reconcile (M2d/M2h; no brackets M2i).
     const char*       baseName = a_base->GetName();
@@ -1080,7 +1147,8 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
 // ability + gem consumption. a_xp carries banked XP through a level-up re-stamp.
 std::uint16_t StampInstance(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList,
                             int a_gemIdx, int a_level, std::uint8_t a_slot = 0, float a_xp = 0.0f) {
-    if (a_gemIdx < 0 || !a_base || !a_xList || !g_gems[a_gemIdx].mgef) {
+    if (a_gemIdx < 0 || !a_base || !a_xList ||
+        (!g_gems[a_gemIdx].mgef && !g_gems[a_gemIdx].def->isSupport)) {  // m36: supports have no mgef
         return 0;
     }
     std::uint16_t uid = 0;
@@ -1228,8 +1296,9 @@ void EquipCycleWorn(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDat
 
 // Cumulative Gem XP needed for this gem's NEXT level (0 = none: level V).
 float NextThreshold(const meo::GemDef* a_def, int a_level) {
-    return (a_level >= 1 && a_level <= 4) ? meo::kXPThresholds[a_level - 1] * a_def->xpMult
-                                          : 0.0f;
+    const int topLevel = a_def->isSupport ? 3 : 5;  // m36: supports master at III
+    return (a_level >= 1 && a_level < topLevel) ? meo::kXPThresholds[a_level - 1] * a_def->xpMult
+                                                : 0.0f;
 }
 
 // ── M3b: kill Gem XP -> level-ups -> re-stamp; mastered gems birth ────
@@ -1388,6 +1457,7 @@ struct MenuGemRow {
     RE::FormID    base = 0;
     std::uint16_t uid = 0;       // instance with banked XP, else 0
     bool          isArmor = false;
+    bool          isSupport = false;  // m36: support gem — fits any dual-socket item
     int           gemIdx = -1;   // m29: rung notes in tooltips
     int           level = 1;
     int           theme = -1;    // Theme index for the accent swatch
@@ -1502,8 +1572,15 @@ bool GrantGemXP(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataLis
                 bool a_left, SocketRecord& a_rec, int a_gemIdx, float a_xp,
                 std::uint16_t a_uid) {
     const auto& rg = g_gems[a_gemIdx];
-    if (!rg.mgef || rg.def->xpMult <= 0.0f || a_rec.level >= 5) {
+    const bool  isSupport = rg.def->isSupport;
+    const int   maxLevel = isSupport ? 3 : 5;  // m36: supports cap at tier III
+    if ((!rg.mgef && !isSupport) || rg.def->xpMult <= 0.0f || a_rec.level >= maxLevel) {
         return false;  // single-level / disabled / mastered gems never level
+    }
+    // m36: a support gem earns XP only while LINKED to a working normal gem; an
+    // inert, unlinked support gains nothing (DESIGN §5).
+    if (isSupport && !ItemIsLinked(a_base->GetFormID(), a_uid)) {
+        return false;
     }
     a_rec.xp += a_xp;
     const float need = meo::kXPThresholds[a_rec.level - 1] * rg.def->xpMult;
@@ -1744,6 +1821,7 @@ void BuildMenuSnapshot() {
                         MenuGemRow  row;
                         row.base = obj->GetFormID();
                         row.isArmor = rg.def->isArmor;
+                        row.isSupport = rg.def->isSupport;
                         row.uid = xid->uniqueID;
                         row.label = obj->GetName();
                         row.gemIdx = it->second.first;
@@ -1758,6 +1836,7 @@ void BuildMenuSnapshot() {
                     MenuGemRow row;
                     row.base = obj->GetFormID();
                     row.isArmor = g_gems[it->second.first].def->isArmor;
+                    row.isSupport = g_gems[it->second.first].def->isSupport;
                     row.label = obj->GetName();
                     if (plain > 1) {
                         row.label += std::format("  x{}", plain);
@@ -2044,9 +2123,16 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
     if (!player || !itemForm || !gemForm || gemMapIt == g_gemByItem.end()) {
         return;
     }
-    // Weapon gems only fit weapons; armor gems only fit armor.
-    if (g_gems[gemMapIt->second.first].def->isArmor != itemForm->Is(RE::FormType::Armor)) {
+    const bool gemIsSupport = g_gems[gemMapIt->second.first].def->isSupport;
+    // Weapon gems only fit weapons; armor gems only fit armor. Support gems
+    // (m36) are domain-agnostic but only work in a dual-socket (linked) item.
+    if (!gemIsSupport &&
+        g_gems[gemMapIt->second.first].def->isArmor != itemForm->Is(RE::FormType::Armor)) {
         Notify("That gem doesn't fit that kind of gear.");
+        return;
+    }
+    if (gemIsSupport && SocketCapacity(itemForm) < 2) {
+        Notify("Support gems only work in a linked (dual-socket) item.");
         return;
     }
     RE::ExtraDataList* xl = nullptr;
@@ -2098,6 +2184,25 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
     if (freeSlot < 0) {
         Notify(cap > 1 ? "Every socket is already filled." : "That item's socket is filled.");
         return;
+    }
+    // m36: one support per item — reject a second support in any OTHER slot (the
+    // placement slot itself may hold a support we're swapping out). Two supports
+    // would both be inert (DESIGN §5).
+    if (gemIsSupport) {
+        for (int s = 0; s < cap; ++s) {
+            if (s == freeSlot) {
+                continue;
+            }
+            auto sit = g_sockets.find(MakeKey(a_itemBase, uid, static_cast<std::uint8_t>(s)));
+            if (sit == g_sockets.end()) {
+                continue;
+            }
+            auto sgi = g_gemByGid.find(sit->second.gid);
+            if (sgi != g_gemByGid.end() && g_gems[sgi->second].def->isSupport) {
+                Notify("An item can hold only one support gem.");
+                return;
+            }
+        }
     }
     const auto [gemIdx, itemLevel] = gemMapIt->second;
     int          level = itemLevel;
@@ -2822,7 +2927,11 @@ namespace menuhook {
             int shown = 0;
             for (int i = 0; i < static_cast<int>(g_menu.gems.size()); ++i) {
                 const auto gem = g_menu.gems[i];  // copy for the closure
-                if (gem.isArmor != sel.isArmor) {
+                if (gem.isSupport) {
+                    if (sel.capacity < 2) {
+                        continue;  // m36: support gems need a dual-socket (linked) item
+                    }
+                } else if (gem.isArmor != sel.isArmor) {
                     continue;  // weapon gems only fit weapons; armor only armor
                 }
                 ++shown;
@@ -4154,50 +4263,10 @@ void EnsurePlayerSetup() {
         Notify("You have learned to socket gems (Gem Pouch power).");
     }
     ApplyTemperPerk();  // m33: socketed gear temperable w/o Arcane Blacksmith (MCM)
-    if (!g_starterGranted) {
-        int given = 0;
-        for (const char* gid : { "firedamage", "frost", "shockdamage" }) {
-            auto it = g_gemByGid.find(gid);
-            if (it == g_gemByGid.end()) {
-                continue;
-            }
-            const auto& rg = g_gems[it->second];
-            if (rg.mgef && rg.items[0]) {
-                player->AddObjectToContainer(rg.items[0], nullptr, 1, nullptr);
-                ++given;
-            }
-        }
-        // Only consume the one-time flag if something was actually granted —
-        // with the ESP missing/disabled the grant must retry next load, not
-        // burn itself (v0.7.0 did, poisoning that session's saves).
-        if (given > 0) {
-            g_starterGranted = true;  // persisted in the co-save on next save
-            spdlog::info("starter kit: {} level-I gems granted", given);
-            Notify("Starter gems added to your inventory.");
-        }
-    }
-    // Armor starter set (v6 flag — grants once, even on saves that already
-    // burned the weapon-starter flag). Enough for dual-glove testing + variety.
-    if (!g_armorStarterGranted) {
-        int given = 0;
-        for (const char* gid : { "fortifyhealth", "fortifymagicka", "fortifystamina",
-                                 "resistfire", "fortifydestruction" }) {
-            auto it = g_gemByGid.find(gid);
-            if (it == g_gemByGid.end()) {
-                continue;
-            }
-            const auto& rg = g_gems[it->second];
-            if (rg.mgef && rg.items[0]) {
-                player->AddObjectToContainer(rg.items[0], nullptr, 1, nullptr);
-                ++given;
-            }
-        }
-        if (given > 0) {
-            g_armorStarterGranted = true;
-            spdlog::info("armor starter kit: {} level-I gems granted", given);
-            Notify("Armor gems added to your inventory.");
-        }
-    }
+    // m36: the starter-gem scaffold (3 weapon + 5 armor loose gems on first
+    // load) is removed — 1.0 is found-loot-driven (DESIGN §4, Marth), no
+    // pre-granted kit. The g_starterGranted / g_armorStarterGranted co-save
+    // flags are still read/written (schema stability) but grant nothing.
 }
 
 // On load, worn socketed gems' abilities are runtime state that doesn't persist
@@ -4622,7 +4691,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.47.2 (m35e one-click gem swap) loaded");
+            console->Print("MEO native v0.48.0 (m36b support gems: linking + Focus) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4683,7 +4752,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.47.2 (m35e one-click gem swap) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.48.0 (m36b support gems: linking + Focus) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
