@@ -1888,7 +1888,9 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
     RE::TESObjectREFR* gemHolder = player;  // m27: gems normally live in the pouch
     RE::ExtraDataList* gemXL = nullptr;
     if (a_gemUid) {
-        if (auto* pouch = PouchRef()) {
+        auto* pouch = PouchRef();
+        std::uint16_t useUid = a_gemUid;
+        if (pouch) {
             gemXL = FindInstanceXList(pouch, gemForm, a_gemUid);
             if (gemXL) {
                 gemHolder = pouch;
@@ -1897,7 +1899,40 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
         if (!gemXL) {
             gemXL = FindInstanceXList(player, gemForm, a_gemUid);
         }
-        if (auto it = g_sockets.find(MakeKey(a_gemBase, a_gemUid)); it != g_sockets.end()) {
+        // m32h: the menu's uid can drift a frame behind an in-flight pouch
+        // route. If the exact uid is gone, re-locate the SAME leveled gem —
+        // any recorded instance of this base — and use its current uid.
+        if (!gemXL) {
+            auto relocate = [&](RE::TESObjectREFR* a_h) -> RE::ExtraDataList* {
+                auto* ch = a_h ? a_h->GetInventoryChanges() : nullptr;
+                if (!ch || !ch->entryList) {
+                    return nullptr;
+                }
+                for (auto* e : *ch->entryList) {
+                    if (!e || e->object != gemForm || !e->extraLists) {
+                        continue;
+                    }
+                    for (auto* xl2 : *e->extraLists) {
+                        auto* xid = xl2 ? xl2->GetByType<RE::ExtraUniqueID>() : nullptr;
+                        if (xid && g_sockets.contains(MakeKey(a_gemBase, xid->uniqueID))) {
+                            useUid = xid->uniqueID;
+                            return xl2;
+                        }
+                    }
+                }
+                return nullptr;
+            };
+            gemXL = relocate(pouch);
+            if (gemXL) {
+                gemHolder = pouch;
+            } else {
+                gemXL = relocate(player);
+            }
+            if (gemXL && useUid != a_gemUid) {
+                spdlog::info("[menu] gem uid drifted {} -> {} (pouch/inv sync)", a_gemUid, useUid);
+            }
+        }
+        if (auto it = g_sockets.find(MakeKey(a_gemBase, useUid)); it != g_sockets.end()) {
             saved = it->second;
             hadRec = true;
             level = saved.level;
@@ -1905,9 +1940,11 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
             g_sockets.erase(it);
         }
         if (!gemXL) {
-            Notify("That gem is no longer in your inventory.");
+            spdlog::warn("[menu] socket gem {:08X}/{} not found in pouch or inventory",
+                         a_gemBase, a_gemUid);
+            Notify("That gem is no longer in your pouch.");
             if (hadRec) {
-                g_sockets[MakeKey(a_gemBase, a_gemUid)] = saved;
+                g_sockets[MakeKey(a_gemBase, useUid)] = saved;
             }
             return;
         }
@@ -3701,6 +3738,13 @@ public:
             SKSE::GetTaskInterface()->AddTask([]() {
                 EnsurePouchRef();
                 RouteGemsToPouch();
+                // m32h (Marth: 'delayed sync between pouch and inv'): a gem
+                // that just routed to the pouch got a new uid — an open menu's
+                // snapshot now holds the stale one. Rebuild it so socketing
+                // always sees the gem's current uid.
+                if (g_menu.open.load()) {
+                    BuildMenuSnapshot();
+                }
             });
         }
         // m23: a convertible enchanted generic just landed somewhere (chest
@@ -4316,7 +4360,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.43.1 (M33b temper-perk MCM toggle) loaded");
+            console->Print("MEO native v0.43.2 (M32h pouch-sync uid drift fix) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4377,7 +4421,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.43.1 (M33b temper-perk MCM toggle) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.43.2 (M32h pouch-sync uid drift fix) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
