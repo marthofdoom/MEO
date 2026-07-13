@@ -2832,6 +2832,20 @@ namespace menuhook {
         const float footer = ImGui::GetFrameHeightWithSpacing() + 6.0f;
         const float half = ImGui::GetContentRegionAvail().x * 0.5f;
         const float rowH = lineH + 10.0f;
+        // m36e (Marth: d-pad left/right only crossed panes when aligned with a
+        // slotted gem — too geometry-dependent). Make left/right DETERMINISTICALLY
+        // jump between the two panes: track which pane held nav focus last frame,
+        // and on the opposite d-pad press request focus into the other pane.
+        static int s_navPane = 0;  // 0 = items, 1 = gems
+        int        wantPane = -1;
+        if (!busy) {
+            if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, false) && s_navPane == 0) {
+                wantPane = 1;
+            } else if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft, false) && s_navPane == 1) {
+                wantPane = 0;
+            }
+        }
+        bool itemsFocused = false;
         // Left pane: NEVER disabled — selection is pure UI state (identity-
         // tracked across rebuilds since m19e), and eating clicks during the
         // brief busy window read as "the menu misses clicks" in the field.
@@ -2850,8 +2864,14 @@ namespace menuhook {
             // raw-delta cursor motion between press and release could leave
             // the row and cancel a release-click — the missed-click report.
             // The Selectable return still serves keyboard/gamepad activation.
+            if (wantPane == 0 && i == g_menu.selItem) {
+                ImGui::SetKeyboardFocusHere();  // m36e: land on the selected item
+            }
             const bool nav = ImGui::Selectable(std::format("##item{}", i).c_str(),
                                                g_menu.selItem == i, 0, ImVec2(0.0f, rowH));
+            if (ImGui::IsItemFocused()) {
+                itemsFocused = true;  // m36e: this pane holds the nav cursor
+            }
             if (nav || ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
                 g_menu.selItem = i;
                 g_menu.selBase = row.base;
@@ -2881,6 +2901,9 @@ namespace menuhook {
                           ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
         auto* dlR = ImGui::GetWindowDrawList();  // m24c: pane-clipped drawing
         const float innerW = ImGui::GetContentRegionAvail().x;
+        if (wantPane == 1) {
+            ImGui::SetKeyboardFocusHere();  // m36e: jump to the first row of this pane
+        }
         if (busy) {
             ImGui::BeginDisabled();
         }
@@ -3102,6 +3125,9 @@ namespace menuhook {
             ImGui::EndDisabled();
         }
         ImGui::EndChild();
+        // m36e: remember which pane holds the nav cursor for next frame's jump.
+        // A jump this frame settles next frame, so honour the request immediately.
+        s_navPane = (wantPane >= 0) ? wantPane : (itemsFocused ? 0 : 1);
         if (busy) {
             ImGui::TextDisabled("Working...");
         } else if (g_menu.station.load()) {
