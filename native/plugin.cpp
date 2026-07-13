@@ -866,6 +866,89 @@ float GemPerkMult(const meo::GemDef* a_def) {
     return m;
 }
 
+bool IsWornXList(const RE::ExtraDataList* a_xl);  // defined below
+
+// m35c (DESIGN §"Stacking cap"): across ALL worn gear, only the two
+// highest-level instances of a given effect (gid) contribute; the 3rd+ copy
+// is fully inert. Returns the worn instance-keys that ARE active (top 2 per
+// gid). Rebuilds consult this so a single stat caps at 2 x V regardless of
+// how many pieces carry it — socket layout adds breadth, not runaway.
+std::unordered_set<InstKey> WornActiveEffectKeys() {
+    std::unordered_set<InstKey> active;
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    auto* changes = player ? player->GetInventoryChanges() : nullptr;
+    if (!changes || !changes->entryList) {
+        return active;
+    }
+    struct Inst { InstKey key; std::string gid; int level; };
+    std::unordered_map<std::string, std::vector<Inst>> byGid;
+    for (auto* entry : *changes->entryList) {
+        if (!entry || !entry->object || !entry->extraLists) {
+            continue;
+        }
+        for (auto* xl : *entry->extraLists) {
+            if (!xl || !IsWornXList(xl)) {
+                continue;
+            }
+            auto* xid = xl->GetByType<RE::ExtraUniqueID>();
+            if (!xid) {
+                continue;
+            }
+            for (int s = 0; s < kMaxSockets; ++s) {
+                const InstKey k = MakeKey(entry->object->GetFormID(), xid->uniqueID,
+                                          static_cast<std::uint8_t>(s));
+                auto it = g_sockets.find(k);
+                if (it != g_sockets.end()) {
+                    byGid[it->second.gid].push_back({ k, it->second.gid, it->second.level });
+                }
+            }
+        }
+    }
+    for (auto& [gid, v] : byGid) {
+        std::sort(v.begin(), v.end(), [](const Inst& a, const Inst& b) {
+            return a.level != b.level ? a.level > b.level : a.key > b.key;  // stable, level desc
+        });
+        for (std::size_t i = 0; i < v.size() && i < 2; ++i) {
+            active.insert(v[i].key);
+        }
+    }
+    return active;
+}
+
+// m35c: how many worn socketed instances share this effect. The cap only
+// redistributes (needs a full worn rebuild) when this exceeds 2; otherwise
+// the cheap single-item path is correct.
+int WornGidCount(std::string_view a_gid) {
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    auto* changes = player ? player->GetInventoryChanges() : nullptr;
+    if (!changes || !changes->entryList) {
+        return 0;
+    }
+    int n = 0;
+    for (auto* entry : *changes->entryList) {
+        if (!entry || !entry->object || !entry->extraLists) {
+            continue;
+        }
+        for (auto* xl : *entry->extraLists) {
+            if (!xl || !IsWornXList(xl)) {
+                continue;
+            }
+            auto* xid = xl->GetByType<RE::ExtraUniqueID>();
+            if (!xid) {
+                continue;
+            }
+            for (int s = 0; s < kMaxSockets; ++s) {
+                auto it = g_sockets.find(MakeKey(entry->object->GetFormID(), xid->uniqueID,
+                                                 static_cast<std::uint8_t>(s)));
+                if (it != g_sockets.end() && it->second.gid == a_gid) {
+                    ++n;
+                }
+            }
+        }
+    }
+    return n;
+}
+
 void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList) {
     auto* xid = a_xList ? a_xList->GetByType<RE::ExtraUniqueID>() : nullptr;
     if (!a_base || !xid) {
@@ -875,15 +958,24 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     const bool          isArmor = a_base->Is(RE::FormType::Armor);
 
     struct Filled { const ResolvedGem* rg; int lvIdx; };
+    // m35c: worn items enforce the 2-of-a-kind stacking cap; a 3rd+ copy of
+    // an effect across worn gear contributes nothing.
+    const bool worn = IsWornXList(a_xList);
+    const std::unordered_set<InstKey> active = worn ? WornActiveEffectKeys()
+                                                    : std::unordered_set<InstKey>{};
     std::vector<Filled> filled;
     for (int slot = 0; slot < kMaxSockets; ++slot) {
-        auto it = g_sockets.find(MakeKey(a_base->GetFormID(), uid, static_cast<std::uint8_t>(slot)));
+        const InstKey key = MakeKey(a_base->GetFormID(), uid, static_cast<std::uint8_t>(slot));
+        auto it = g_sockets.find(key);
         if (it == g_sockets.end()) {
             continue;
         }
         auto gemIt = g_gemByGid.find(it->second.gid);
         if (gemIt == g_gemByGid.end() || !g_gems[gemIt->second].mgef) {
             continue;
+        }
+        if (worn && !active.contains(key)) {
+            continue;  // m35c: capped 3rd+ same-effect copy — inert
         }
         filled.push_back({ &g_gems[gemIt->second], std::clamp<int>(it->second.level, 1, 5) - 1 });
     }
@@ -1329,6 +1421,7 @@ void StockVendorGems();                    // m19b — defined with the loot rol
 void CloseGemMenu();
 extern std::atomic<bool> g_pendingReapply;  // m19e — defined with the load reapply below
 void RunDeferredReapply(int a_delayMs);
+void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag);  // m35c cap redistribution
 
 // Live MCM apply: SkyUI's Mod Configuration menu is hosted in the Journal
 // (pause) menu, and MCM Helper persists ModSettings to MEO.ini when it closes.
@@ -1425,7 +1518,13 @@ bool GrantGemXP(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataLis
     a_rec.level = static_cast<std::uint8_t>(newLevel);
     RebuildInstanceEnchant(a_base, a_xList);
     if (IsWornXList(a_xList)) {  // non-worn (fed at a station) re-applies on equip
-        ApplyWornAbility(a_owner, a_base, a_xList, a_left);
+        // m35c: a level-up shifts cap ranking; redistribute across worn gear
+        // only when the effect actually has >2 worn copies (player only).
+        if (a_owner->IsPlayerRef() && WornGidCount(a_rec.gid) > 2) {
+            ReapplyWornSockets(true, true, false);
+        } else {
+            ApplyWornAbility(a_owner, a_base, a_xList, a_left);
+        }
         if (a_owner->IsPlayerRef()) {
             DispelStaleGemEffects();  // m24c: replace can leave the old-level ability stacking
         }
@@ -1887,6 +1986,9 @@ void MenuUnsocket(RE::FormID a_base, std::uint16_t a_uid, std::uint8_t a_slot) {
     if (IsWornXList(xl)) {
         EquipCycleWorn(player, form, xl);  // m23c: real teardown — Update alone
                                            // leaves the removed gem's ability live
+        if (WornGidCount(rec.gid) >= 2) {  // m35c: removal may un-cap a 3rd copy elsewhere
+            ReapplyWornSockets(true, true, false);
+        }
     }
     spdlog::info("[menu] unsocketed {:08X}/{}[{}]: '{}' L{} xp={:.0f}", a_base, a_uid, a_slot,
                  rec.gid, rec.level, rec.xp);
@@ -1919,6 +2021,9 @@ void DestroyGem(RE::FormID a_base, std::uint16_t a_uid, std::uint8_t a_slot) {
     RebuildInstanceEnchant(form, xl);  // rebuild from remaining slots (or strip)
     if (IsWornXList(xl)) {
         EquipCycleWorn(player, form, xl);  // m23c: same stale-ability teardown as unsocket
+        if (WornGidCount(rec.gid) >= 2) {  // m35c: destroying may un-cap a 3rd copy elsewhere
+            ReapplyWornSockets(true, true, false);
+        }
     }
     if (tier >= 0 && g_filledSoulGems[tier]) {
         player->AddObjectToContainer(g_filledSoulGems[tier], nullptr, 1, nullptr);
@@ -2076,7 +2181,11 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
         return;
     }
     if (IsWornXList(xl)) {
-        ApplyWornAbility(player, itemForm, xl, xl->HasType(RE::ExtraDataType::kWornLeft));
+        if (WornGidCount(g_gems[gemIdx].def->gid) > 2) {
+            ReapplyWornSockets(true, true, false);  // m35c: a 3rd copy — redistribute the cap
+        } else {
+            ApplyWornAbility(player, itemForm, xl, xl->HasType(RE::ExtraDataType::kWornLeft));
+        }
     }
     gemHolder->RemoveItem(gemForm, 1, RE::ITEM_REMOVE_REASON::kRemove, gemXL, nullptr);
     const auto& rg = g_gems[gemIdx];
@@ -4485,7 +4594,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.45.0 (M35b per-list magnitudes) loaded");
+            console->Print("MEO native v0.46.0 (M35c stacking cap) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4546,7 +4655,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.45.0 (M35b per-list magnitudes) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.46.0 (M35c stacking cap) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
