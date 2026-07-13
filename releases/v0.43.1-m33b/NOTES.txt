@@ -1,0 +1,2 @@
+Stable baseline before perk additions: full loot conversion, pouch, rank ladders, controller, CC + vanilla support, temper toggle
+built from native run 29216189875, installer run 29216313595
