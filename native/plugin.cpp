@@ -2192,7 +2192,7 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
             GiveGemInstance(oldIt->second, oldRec.level, oldRec.xp);
             const auto& oldRg = g_gems[oldIt->second];
             Notify(std::format("{} {} returned to your pouch.", GemName(oldRg),
-                               meo::kRoman[std::clamp(oldRec.level, 1, 5) - 1]));
+                               meo::kRoman[std::clamp<int>(oldRec.level, 1, 5) - 1]));
         }
         spdlog::info("[menu] swap: evicted '{}' L{} from {:08X}/{}[{}]", oldRec.gid,
                      oldRec.level, a_itemBase, uid, freeSlot);
