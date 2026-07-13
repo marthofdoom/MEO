@@ -4330,8 +4330,19 @@ void EchoFollowerShareTick() {
             }
         }
     }
+    // m36g: quiet logging — remember the last shared state and only log when it
+    // changes, so combat/idle isn't a wall of identical 8s lines.
+    static std::string s_lastGid;
+    static int         s_lastN = -1;
+    static int         s_lastMag = -1;
     if (!shareGem) {
-        return;  // no linked Echo-armor — prior casts expire on their own
+        if (s_lastN > 0) {  // transition: was sharing, now not
+            spdlog::info("[echo-share] ended — no linked Echo-armor");
+        }
+        s_lastGid.clear();
+        s_lastN = -1;
+        s_lastMag = -1;
+        return;  // prior casts expire on their own (self-expiring)
     }
     // Rewrite the share spell's single effect to this gem's, scaled by tier.
     const float mag = GemBaseMag(shareGem->def, shareLvIdx) * g_magnitudeMult *
@@ -4355,12 +4366,29 @@ void EchoFollowerShareTick() {
         if (!a || a.get() == player || !a->IsPlayerTeammate() || a->IsDead()) {
             continue;
         }
+        // m36g: dispel any PRIOR share-cast on this follower before re-casting, so
+        // the shared buff is always exactly 1× — never stacks, regardless of
+        // whether the engine refreshes or duplicates same-spell effects. Cheap:
+        // a follower has only a handful of active effects.
+        if (auto* mt = a->AsMagicTarget()) {
+            if (auto* elist = mt->GetActiveEffectList()) {
+                for (auto* ae : *elist) {
+                    if (ae && ae->spell == g_echoShareSpell) {
+                        ae->Dispel(true);
+                    }
+                }
+            }
+        }
         caster->CastSpellImmediate(g_echoShareSpell, false, a.get(), 1.0f, false, 0.0f, player);
         ++shared;
     }
-    if (shared > 0) {
-        spdlog::info("[echo-share] '{}' mag={:.1f} dur=12 → {} follower(s)", shareGem->def->gid,
-                     mag, shared);
+    const int magR = static_cast<int>(std::lround(mag));
+    if (shareGem->def->gid != s_lastGid || shared != s_lastN || magR != s_lastMag) {
+        spdlog::info("[echo-share] '{}' mag={:.1f} dur=12 → {} follower(s) (re-cast/8s, 1×-dispel)",
+                     shareGem->def->gid, mag, shared);
+        s_lastGid = shareGem->def->gid;
+        s_lastN = shared;
+        s_lastMag = magR;
     }
 }
 
@@ -5147,7 +5175,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         StartEchoHeartbeat();  // m36: Echo armor follower-share
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.49.1 (m36f: circlet slot + convert-defer log) loaded");
+            console->Print("MEO native v0.49.2 (m36g: echo-share 1x-dispel + quiet log) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -5208,7 +5236,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.49.1 (m36f: circlet slot + convert-defer log) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.49.2 (m36g: echo-share 1x-dispel + quiet log) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
