@@ -4557,14 +4557,8 @@ public:
                 }
             }
         }
-        // m36 diag (Marth: "no messages, no activations"): trace every player
-        // weapon hit so we can see the sink fire, whether an Echo weapon matched,
-        // and (below) how many targets were in range. Temporary — remove once
-        // Echo AoE is confirmed.
-        spdlog::info("[echo-hit] player hit src={:08X} target='{}' echoWeapon={} r={:.0f}",
-                     a_event->source, victim->GetName(), ench != nullptr, radius);
         if (!ench || radius <= 0.0f) {
-            return RE::BSEventNotifyControl::kContinue;
+            return RE::BSEventNotifyControl::kContinue;  // not an Echo-linked weapon hit
         }
         const RE::NiPoint3     vpos = victim->GetPosition();
         const RE::ObjectRefHandle vh = victim->GetHandle();
@@ -4587,38 +4581,19 @@ public:
                 if (dist > radius) {
                     continue;  // out of range — not logged (too noisy)
                 }
-                // Non-violent bystanders are spared (Marth): only actors hostile
-                // to you are caught. A hostile guard SHOULD qualify — but one was
-                // skipped, so log every in-range candidate's combat flags to see
-                // which predicate disagrees (IsHostileToActor vs actual combat).
-                const bool teammate = a->IsPlayerTeammate();
-                const bool dead = a->IsDead();
-                const bool hostile = a->IsHostileToActor(pl);
-                const bool inCombat = a->IsInCombat();
-                spdlog::info("[echo] candidate '{}' d={:.0f} hostile={} inCombat={} teammate={} dead={}",
-                             a->GetName(), dist, hostile, inCombat, teammate, dead);
                 // Catch anyone hostile OR in combat — a guard fighting you reads
                 // as in-combat even if the faction hostility check lags. Neutral,
-                // non-fighting bystanders (IsInCombat=false) are still spared.
-                if (teammate || dead || !(hostile || inCombat)) {
+                // non-fighting bystanders (IsInCombat=false) and your followers
+                // are spared.
+                if (a->IsPlayerTeammate() || a->IsDead() ||
+                    !(a->IsHostileToActor(pl) || a->IsInCombat())) {
                     continue;
                 }
                 caster->CastSpellImmediate(ench, false, a.get(), 1.0f, false, 0.0f, pl);
-                spdlog::info("[echo]   -> HIT '{}' ({:08X}) at {:.0f}u", a->GetName(),
-                             a->GetFormID(), dist);
                 ++hit;
             }
             if (hit > 0) {
-                spdlog::info("[echo] weapon AoE r={:.0f} → {} nearby hostile(s)", radius, hit);
-                // Until a burst art is added, an on-screen count is the "did it
-                // fire?" confirmation (crowds are rare, and the effect is silent).
-                Notify(std::format("Echo burst — {} nearby enemy{} caught.", hit,
-                                   hit == 1 ? "" : "ies"));
-            } else {
-                // Confirms the sink + Echo detection worked and it was simply a
-                // lone target (no secondary hostiles in range) — not a failure.
-                spdlog::info("[echo] Echo weapon hit but 0 nearby hostiles in r={:.0f} "
-                             "(scanned {} high actors)", radius, lists->highActorHandles.size());
+                spdlog::info("[echo] weapon AoE r={:.0f} → {} nearby enemy(ies)", radius, hit);
             }
         });
         return RE::BSEventNotifyControl::kContinue;
@@ -4792,32 +4767,11 @@ void EnsurePlayerSetup() {
         Notify("You have learned to socket gems (Gem Pouch power).");
     }
     ApplyTemperPerk();  // m33: socketed gear temperable w/o Arcane Blacksmith (MCM)
-    // m36: the normal-gem starter kit is gone (1.0 is found-loot-driven).
-    // TESTING SCAFFOLD (Marth): until real support-gem acquisition ships
-    // (level-15+ boss loot + hand-placed), hand the player one of each support
-    // gem at every tier so the linking mechanics can be exercised. One-time via
-    // the v9 co-save flag; REMOVE before 1.0 (see [[meo-roadmap-staged]]).
-    if (!g_supportScaffoldGranted) {
-        int given = 0;
-        for (const char* gid : { "focus", "conduit", "echo" }) {
-            auto it = g_gemByGid.find(gid);
-            if (it == g_gemByGid.end()) {
-                continue;
-            }
-            const auto& rg = g_gems[it->second];
-            for (int t = 0; t < 3; ++t) {  // tiers I-III
-                if (rg.items[t]) {
-                    player->AddObjectToContainer(rg.items[t], nullptr, 1, nullptr);
-                    ++given;
-                }
-            }
-        }
-        if (given > 0) {
-            g_supportScaffoldGranted = true;
-            spdlog::info("support scaffold: {} support gem(s) granted for testing", given);
-            Notify("Support gems (Focus/Conduit/Echo) added for testing.");
-        }
-    }
+    // m36j: the normal-gem starter kit AND the support-gem test scaffold are both
+    // gone for 1.0 — acquisition is found-loot-driven (level-15+ boss loot +
+    // hand-placed, plus normal-gem drops/conversion). The g_starterGranted /
+    // g_armorStarterGranted / g_supportScaffoldGranted co-save flags are still
+    // read/written (schema stability) but grant nothing.
 }
 
 // On load, worn socketed gems' abilities are runtime state that doesn't persist
@@ -5259,7 +5213,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         StartEchoHeartbeat();  // m36: Echo armor follower-share
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.49.4 (m36i: hand-placed support gems) loaded");
+            console->Print("MEO native v0.50.0 (m36j: release cleanup — scaffold + debug logs removed) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -5322,7 +5276,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.49.4 (m36i: hand-placed support gems) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.50.0 (m36j: release cleanup — scaffold + debug logs removed) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
