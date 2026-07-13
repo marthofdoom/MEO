@@ -4319,10 +4319,16 @@ public:
                     continue;
                 }
                 caster->CastSpellImmediate(ench, false, a.get(), 1.0f, false, 0.0f, pl);
+                spdlog::info("[echo]   -> '{}' ({:08X}) at {:.0f}u", a->GetName(),
+                             a->GetFormID(), a->GetPosition().GetDistance(vpos));
                 ++hit;
             }
             if (hit > 0) {
                 spdlog::info("[echo] weapon AoE r={:.0f} → {} nearby hostile(s)", radius, hit);
+                // Until a burst art is added, an on-screen count is the "did it
+                // fire?" confirmation (crowds are rare, and the effect is silent).
+                Notify(std::format("Echo burst — {} nearby enemy{} caught.", hit,
+                                   hit == 1 ? "" : "ies"));
             }
         });
         return RE::BSEventNotifyControl::kContinue;
@@ -4956,7 +4962,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.48.5 (m36: Echo weapon AoE via hit event) loaded");
+            console->Print("MEO native v0.48.6 (m36: Echo AoE on-screen confirm + per-target log) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -5017,7 +5023,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.48.5 (m36: Echo weapon AoE via hit event) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.48.6 (m36: Echo AoE on-screen confirm + per-target log) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
