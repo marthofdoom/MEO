@@ -1214,6 +1214,7 @@ struct MenuState {
 MenuState g_menu;
 
 void OpenGemMenu(bool a_station = false);  // defined with the render hooks below
+void ApplyTemperPerk();                    // m33b — defined before EnsurePlayerSetup
 void DispelStaleGemEffects();              // m24b/c — defined with the load-refresh code
 void StockVendorGems();                    // m19b — defined with the loot rolls below
 void CloseGemMenu();
