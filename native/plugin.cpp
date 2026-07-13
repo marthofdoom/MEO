@@ -4317,8 +4317,13 @@ public:
             int hit = 0;
             for (auto& handle : lists->highActorHandles) {
                 auto a = handle.get();
+                // A burst catches everyone in range except you, your followers,
+                // the primary victim (already struck), and the dead. Neutral
+                // bystanders ARE hit (and turn hostile) — same as a vanilla AoE
+                // spell; the hostility filter was too restrictive (m36, Marth:
+                // "arcadia and whiterun guard were ignored").
                 if (!a || a.get() == pl || (vic && a.get() == vic.get()) || a->IsPlayerTeammate() ||
-                    a->IsDead() || !a->IsHostileToActor(pl)) {
+                    a->IsDead()) {
                     continue;
                 }
                 if (a->GetPosition().GetDistance(vpos) > radius) {
@@ -4973,7 +4978,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.48.7 (m36: Echo hit diagnostics) loaded");
+            console->Print("MEO native v0.48.8 (m36: Echo AoE catches bystanders) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -5034,7 +5039,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.48.7 (m36: Echo hit diagnostics) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.48.8 (m36: Echo AoE catches bystanders) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
