@@ -987,6 +987,43 @@ bool ItemIsLinked(RE::FormID a_base, std::uint16_t a_uid) {
     return support == 1 && normal == 1;
 }
 
+// m36: does this item instance already hold a Conduit? A Conduit is the adapter
+// that lets its item accept an OFF-domain normal gem (DESIGN §5).
+bool ItemHasConduit(RE::FormID a_base, std::uint16_t a_uid) {
+    for (int s = 0; s < kMaxSockets; ++s) {
+        auto it = g_sockets.find(MakeKey(a_base, a_uid, static_cast<std::uint8_t>(s)));
+        if (it == g_sockets.end()) {
+            continue;
+        }
+        auto gi = g_gemByGid.find(it->second.gid);
+        if (gi != g_gemByGid.end() && g_gems[gi->second].def->isSupport &&
+            g_gems[gi->second].def->supportType == meo::SupportType::kConduit) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// m36: Conduit maps a linked OFF-domain gem onto the catalog's same-theme
+// sibling of the ITEM's domain, and applies that sibling's own per-list
+// calibrated effect (a Fire Damage weapon gem in armor -> the Resist Fire armor
+// gem). Reusing the sibling's curve keeps units honest (no damage-vs-resist
+// transfer). nullptr = no clean mapping for this theme -> the gem stays inert.
+const ResolvedGem* ConduitSibling(const ResolvedGem* a_normal, bool a_itemIsArmor) {
+    if (!a_normal) {
+        return nullptr;
+    }
+    for (const auto& g : g_gems) {
+        if (g.def->isSupport || !g.mgef) {
+            continue;
+        }
+        if (g.def->isArmor == a_itemIsArmor && g.def->theme == a_normal->def->theme) {
+            return &g;
+        }
+    }
+    return nullptr;
+}
+
 void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList) {
     auto* xid = a_xList ? a_xList->GetByType<RE::ExtraUniqueID>() : nullptr;
     if (!a_base || !xid) {
@@ -1038,27 +1075,54 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     if (!linked) {
         support = nullptr;  // inert unless it's a clean 1-support + 1-normal pair
     }
+    // m36: an OFF-domain normal gem only has an effect through a linked Conduit
+    // adapting it. Without that (Conduit removed, or not linked) it must stay
+    // inert — never apply its native cross-domain effect (a weapon damage MGEF
+    // riding armor could damage the wearer).
+    const bool conduitLinked =
+        support && support->def->supportType == meo::SupportType::kConduit;
+    if (!conduitLinked) {
+        std::erase_if(filled, [&](const Filled& f) { return f.rg->def->isArmor != isArmor; });
+    }
     if (filled.empty()) {  // no normal gem left — return the item to plain (a
         a_xList->RemoveByType(RE::ExtraDataType::kEnchantment);      // lone or
         a_xList->RemoveByType(RE::ExtraDataType::kTextDisplayData);  // double
         return;                                                     // support is inert
     }
     // m36: Focus lifts a linked elemental gem's magnitude (+20/35/50% by tier).
-    // Other support types (Conduit/Echo) attach their own machinery elsewhere.
     float supportMag = 1.0f;
     if (support && support->def->supportType == meo::SupportType::kFocus &&
         IsElementalGem(filled[0].rg)) {
         supportMag = 1.0f + support->def->tierParam[supportTier - 1];
     }
+    // m36: Conduit adapts a linked OFF-domain gem — its effect is replaced by the
+    // same-theme sibling of the ITEM's domain, at that sibling's own calibrated
+    // magnitude × Conduit's transfer ratio (tierParam). A same-domain gem passes
+    // through unchanged; an off-domain gem with no clean sibling is inert.
+    const ResolvedGem* conduitTarget = nullptr;
+    float              conduitRatio = 1.0f;
+    if (support && support->def->supportType == meo::SupportType::kConduit &&
+        filled[0].rg->def->isArmor != isArmor) {
+        conduitTarget = ConduitSibling(filled[0].rg, isArmor);
+        conduitRatio = support->def->tierParam[supportTier - 1];
+        if (!conduitTarget) {  // off-domain gem, no mapping for this theme — inert
+            a_xList->RemoveByType(RE::ExtraDataType::kEnchantment);
+            a_xList->RemoveByType(RE::ExtraDataType::kTextDisplayData);
+            return;
+        }
+    }
 
     // One primary effect per filled socket, plus that gem's recipe riders
     // (m21, Marth: gems mirror the load order's elemental recipe — frost
     // carries slow, shock carries magicka bite — at ratio × primary).
+    // m36: when Conduit remaps, the single effect is the sibling's (no riders).
     std::size_t nEff = 0;
     for (const auto& f : filled) {
         nEff += 1;
-        for (int r = 0; r < f.rg->nRiders; ++r) {
-            nEff += f.rg->riders[r].mgef != nullptr;
+        if (!conduitTarget) {
+            for (int r = 0; r < f.rg->nRiders; ++r) {
+                nEff += f.rg->riders[r].mgef != nullptr;
+            }
         }
     }
     RE::BSTArray<RE::Effect> effects;
@@ -1066,39 +1130,45 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     std::string namePart;
     std::size_t e = 0;
     for (std::size_t i = 0; i < filled.size(); ++i) {
+        // m36: Conduit substitutes the item-domain sibling gem for effect
+        // purposes; the normal gem's LEVEL still drives the tier.
+        const ResolvedGem* eg = conduitTarget ? conduitTarget : filled[i].rg;
+        const int          lvIdx = filled[i].lvIdx;
         // Master power scale (MCM) × Gem Attunement (+8%/rank) × affinity/
-        // Facet Insight (+25% each, DESIGN §6).
-        const float primaryMag =
-            GemBaseMag(filled[i].rg->def, filled[i].lvIdx) * g_magnitudeMult *
-            (1.0f + 0.08f * g_attuneRank) * GemPerkMult(filled[i].rg->def) *
-            supportMag;  // m36: Focus link boost (1.0 when unlinked)
+        // Facet Insight (+25% each, DESIGN §6); × Focus boost or Conduit ratio.
+        const float baseMag =
+            GemBaseMag(eg->def, lvIdx) * g_magnitudeMult *
+            (1.0f + 0.08f * g_attuneRank) * GemPerkMult(eg->def);
+        const float primaryMag = conduitTarget ? baseMag * conduitRatio : baseMag * supportMag;
         auto& eff = effects[e++];
         eff.effectItem.magnitude = primaryMag;
         eff.effectItem.area = 0;
-        eff.effectItem.duration = static_cast<std::uint32_t>(filled[i].rg->def->duration);
-        eff.baseEffect = filled[i].rg->mgefLv[filled[i].lvIdx];  // m28: rank ladder
+        eff.effectItem.duration = static_cast<std::uint32_t>(eg->def->duration);
+        eff.baseEffect = eg->mgefLv[lvIdx];  // m28: rank ladder
         eff.cost = 0.0f;
-        for (int r = 0; r < filled[i].rg->nRiders; ++r) {
-            const auto& rd = filled[i].rg->riders[r];
-            if (!rd.mgef) {
-                continue;
-            }
-            auto& reff = effects[e++];
-            reff.effectItem.magnitude =
-                rd.absMag > 0.0f
-                    ? rd.absMag * g_magnitudeMult * (1.0f + 0.08f * g_attuneRank) *
-                          GemPerkMult(filled[i].rg->def) * supportMag  // m32/m34; m36 Focus
+        if (!conduitTarget) {
+            for (int r = 0; r < filled[i].rg->nRiders; ++r) {
+                const auto& rd = filled[i].rg->riders[r];
+                if (!rd.mgef) {
+                    continue;
+                }
+                auto& reff = effects[e++];
+                reff.effectItem.magnitude =
+                    rd.absMag > 0.0f
+                        ? rd.absMag * g_magnitudeMult * (1.0f + 0.08f * g_attuneRank) *
+                              GemPerkMult(filled[i].rg->def) * supportMag  // m32/m34; m36 Focus
 
-                    : primaryMag * rd.ratio;
-            reff.effectItem.area = 0;
-            reff.effectItem.duration = static_cast<std::uint32_t>(rd.dur);
-            reff.baseEffect = rd.mgef;
-            reff.cost = 0.0f;
+                        : primaryMag * rd.ratio;
+                reff.effectItem.area = 0;
+                reff.effectItem.duration = static_cast<std::uint32_t>(rd.dur);
+                reff.baseEffect = rd.mgef;
+                reff.cost = 0.0f;
+            }
         }
         if (!namePart.empty()) {
             namePart += " + ";
         }
-        namePart += std::format("{} {}", GemName(*filled[i].rg), meo::kRoman[filled[i].lvIdx]);
+        namePart += std::format("{} {}", GemName(*eg), meo::kRoman[lvIdx]);
     }
     auto* com = RE::BGSCreatedObjectManager::GetSingleton();
     auto* ench = isArmor ? com->AddArmorEnchantment(effects) : com->AddWeaponEnchantment(effects);
@@ -1445,6 +1515,7 @@ struct MenuItemRow {
     std::uint16_t uid = 0;       // 0 = plain stack (xList materialized on socket)
     bool          worn = false;
     bool          isArmor = false;    // gates which gems can socket into it
+    bool          hasConduit = false; // m36: a Conduit here adapts off-domain gems
     int           capacity = 1;       // socket slots this item has (1 or 2)
     std::string   slotGem[2];         // per-slot gem label; empty = empty slot
     int           slotGemIdx[2] = { -1, -1 };  // m29: rung notes in tooltips
@@ -1931,6 +2002,10 @@ void BuildMenuSnapshot() {
                         }
                         if (auto gemIt = g_gemByGid.find(it->second.gid); gemIt != g_gemByGid.end()) {
                             const auto& rg = g_gems[gemIt->second];
+                            if (rg.def->isSupport &&
+                                rg.def->supportType == meo::SupportType::kConduit) {
+                                row.hasConduit = true;  // m36: adapts off-domain gems
+                            }
                             row.slotGem[s] = std::format("{} {}", GemName(rg),
                                                          meo::kRoman[it->second.level - 1]);
                             row.slotGemIdx[s] = gemIt->second;
@@ -2130,13 +2205,10 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
         return;
     }
     const bool gemIsSupport = g_gems[gemMapIt->second.first].def->isSupport;
-    // Weapon gems only fit weapons; armor gems only fit armor. Support gems
-    // (m36) are domain-agnostic but only work in a dual-socket (linked) item.
-    if (!gemIsSupport &&
-        g_gems[gemMapIt->second.first].def->isArmor != itemForm->Is(RE::FormType::Armor)) {
-        Notify("That gem doesn't fit that kind of gear.");
-        return;
-    }
+    const bool gemIsArmor   = g_gems[gemMapIt->second.first].def->isArmor;
+    // Support gems (m36) are domain-agnostic but only work in a dual-socket
+    // (linked) item. The normal-gem domain rule is checked AFTER the uid is
+    // known, because a Conduit in the item relaxes it (off-domain adapter).
     if (gemIsSupport && SocketCapacity(itemForm) < 2) {
         Notify("Support gems only work in a linked (dual-socket) item.");
         return;
@@ -2209,6 +2281,14 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
                 return;
             }
         }
+    }
+    // m36: the normal-gem domain rule — off-domain is allowed ONLY when a Conduit
+    // is present in the item to adapt it (DESIGN §5). A plain (Conduit-less) item
+    // still refuses a mismatched gem.
+    if (!gemIsSupport && gemIsArmor != itemForm->Is(RE::FormType::Armor) &&
+        !ItemHasConduit(a_itemBase, uid)) {
+        Notify("That gem doesn't fit that kind of gear.");
+        return;
     }
     const auto [gemIdx, itemLevel] = gemMapIt->second;
     int          level = itemLevel;
@@ -2937,8 +3017,8 @@ namespace menuhook {
                     if (sel.capacity < 2) {
                         continue;  // m36: support gems need a dual-socket (linked) item
                     }
-                } else if (gem.isArmor != sel.isArmor) {
-                    continue;  // weapon gems only fit weapons; armor only armor
+                } else if (gem.isArmor != sel.isArmor && !sel.hasConduit) {
+                    continue;  // domain-locked unless a Conduit adapts it (m36)
                 }
                 ++shown;
                 const ImVec2 rp = ImGui::GetCursorScreenPos();
@@ -4697,7 +4777,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.48.0 (m36b support gems: linking + Focus) loaded");
+            console->Print("MEO native v0.48.1 (m36 support gems: Focus + Conduit) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4758,7 +4838,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.48.0 (m36b support gems: linking + Focus) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.48.1 (m36 support gems: Focus + Conduit) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
