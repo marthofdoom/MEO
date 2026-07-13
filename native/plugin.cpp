@@ -405,6 +405,13 @@ RE::BGSPerk* g_perkGemCutter = nullptr;
 RE::BGSPerk* g_perkSoulFeeder = nullptr;
 RE::BGSPerk* g_perkTwinned = nullptr;
 RE::BGSPerk* g_perkJeweler = nullptr;
+// m33: vanilla/Requiem "Arcane Blacksmith" (Skyrim.esm 0x05218E, overridden
+// in place by Requiem). The engine hardcodes tempering of ENCHANTED items to
+// this perk by FormID (it carries no entry points), so the only way to let
+// socketed weapons be improved without it is to grant it. MEO converts all
+// generic enchanted loot to sockets, so in practice this only frees socketed
+// gear (+ artifacts) — Marth's ruling 2026-07-12.
+RE::BGSPerk* g_perkArcaneBlacksmith = nullptr;
 bool g_treeMode = false;  // MEO - Patch.esp installed: perks come from the tree, not auto-grant
 // Cached from the player's perks (refreshed on load + menu close).
 int  g_attuneRank = 0;      // 0..5 → +8% gem magnitude per rank
@@ -699,6 +706,7 @@ void ResolveCatalog() {
     g_perkSoulFeeder = dh->LookupForm<RE::BGSPerk>(kPerkSoulFeeder, kPluginName);
     g_perkTwinned = dh->LookupForm<RE::BGSPerk>(kPerkTwinned, kPluginName);
     g_perkJeweler = dh->LookupForm<RE::BGSPerk>(kPerkJeweler, kPluginName);
+    g_perkArcaneBlacksmith = dh->LookupForm<RE::BGSPerk>(0x05218E, "Skyrim.esm");
     // Tree mode: the installer-generated patch replaces the enchanting perk
     // tree with MEO's perks, so the player earns them with perk points and
     // the interim skill-based auto-grant must stand down.
@@ -3802,6 +3810,16 @@ void EnsurePlayerSetup() {
         spdlog::info("granted Gem Pouch power");
         Notify("You have learned to socket gems (Gem Pouch power).");
     }
+    // m33: let socketed weapons/armor be improved at a grindstone/workbench
+    // without the Arcane Blacksmith smithing perk. The engine gates enchanted
+    // tempering on that exact perk (Skyrim.esm 0x05218E, no entry point to
+    // replicate), so granting it is the only lever. MEO converts all generic
+    // enchanted loot to sockets, so this in practice only frees socketed gear.
+    // Ensured present each setup — MEO's design needs it.
+    if (g_perkArcaneBlacksmith && !player->HasPerk(g_perkArcaneBlacksmith)) {
+        player->AddPerk(g_perkArcaneBlacksmith, 1);
+        spdlog::info("[temper] granted Arcane Blacksmith — socketed gear improvable without it");
+    }
     if (!g_starterGranted) {
         int given = 0;
         for (const char* gid : { "firedamage", "frost", "shockdamage" }) {
@@ -4269,7 +4287,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.42.0 (M32g pouch record-follow + installer CC) loaded");
+            console->Print("MEO native v0.43.0 (M33 temper socketed gear without Arcane Blacksmith) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4330,7 +4348,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.42.0 (M32g pouch record-follow + installer CC) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.43.0 (M33 temper socketed gear without Arcane Blacksmith) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }

@@ -352,6 +352,15 @@ static class Commands
             else
                 Console.WriteLine($"  cond: {c}");
         }
+        foreach (var eff in perk.Effects)
+        {
+            var tn = eff.GetType().Name;
+            var ep = eff.GetType().GetProperty("EntryPoint")?.GetValue(eff);
+            var fn = eff.GetType().GetProperty("Function")?.GetValue(eff);
+            Console.WriteLine($"  effect: {tn}" +
+                              (ep != null ? $" entryPoint={ep}" : "") +
+                              (fn != null ? $" function={fn}" : ""));
+        }
         return 0;
     }
 
