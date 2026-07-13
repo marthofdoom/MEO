@@ -69,7 +69,7 @@ for key, fam in fams.items():
     domain = 'weapon' if fam['weap'] >= fam['armo'] else 'armor'
     entry = {'class': cls, 'domain': domain, 'vanilla_mags': mags,
              'vanilla_durs': durs, 'weap': fam['weap'], 'armo': fam['armo']}
-    # --- Decided curves (Marth, balance pass 2026-07-05) ---
+    # --- Decided curves (marth, balance pass 2026-07-05) ---
     if cls == 'LINEAR' and mags:
         b = base_tier2(mags); entry['base'] = b
         entry['curve'] = linear_curve(b); entry['note'] = 'base=tier2, V=basex3.5'

@@ -5,7 +5,7 @@ v0.7.2) on a heavy load order (Lorerim). Reference implementation:
 `native/plugin.cpp`. Cross-project copy lives in
 `../Linux-Native-Tools/instance-data-and-events.md`.
 
-**Standing doctrine (Marth):** replicate engine features by CALLING the
+**Standing doctrine (marth):** replicate engine features by CALLING the
 engine's own flow, the way SKSE's Papyrus natives do — never hand-write the
 state a flow produces. Before mutating instance/extra data, read the SKSE64
 source (github.com/ianpatt/skse64) for the equivalent Papyrus native and
@@ -157,7 +157,7 @@ The `- 4` offset on the callback message is the trap everyone hits.
   charge, so it never fired at all — the m11 bug report). Forcing the enchant
   free (cost 0 + `0xFFFF` charge, §3 step 2) makes it permanently active, so
   socket/unsocket/level changes — damage AND visual — apply immediately in all
-  cases, drawn or not, no sheathe/redraw. Marth confirmed in-game 2026-07-08.
+  cases, drawn or not, no sheathe/redraw. marth confirmed in-game 2026-07-08.
   (Confidence: the cost/charge change is definitely the cause — it's the only
   weapon-side change; the exact charge→shader gating path is inferred, not
   instrumented. Revisit here if it ever regresses.)
@@ -174,11 +174,11 @@ The `- 4` offset on the callback message is the trap everyone hits.
   `UpdateArmorAbility` do NOT rebuild that cache here: m15 called them 4× over
   8s and the weapon still never fired. The ONLY thing that reactivates it is
   the engine's own equip flow — a real unequip → re-equip (which is exactly the
-  manual fix Marth found). m16 fix: `ReapplyWornSockets` collects worn socketed
+  manual fix marth found). m16 fix: `ReapplyWornSockets` collects worn socketed
   items (refresh created enchant for MCM magnitude), then
   `RE::ActorEquipManager::UnequipObject` → `EquipObject` on each (weapons to
   their `BGSDefaultObjectManager` hand slot kLeft/kRightHandEquip; armor
-  slotless). REFINED (v0.27.4-m19f, Marth's insight): the real rule is that
+  slotless). REFINED (v0.27.4-m19f, marth's insight): the real rule is that
   **the ability refresh only takes when the enchant extra CHANGES.**
   In-session socketing reactivates without any equip cycle (it changes the
   extra); post-load, a rebuild dedupes to the SAME FF form, so
@@ -188,7 +188,7 @@ The `- 4` offset on the callback message is the trap everyone hits.
   then NEXT task rebuild + Update*Ability) was **RETIRED in m35d**: it leaned on
   Update*Ability to REPLACE the worn ability, but that call early-outs on
   teardown and each restamp minted a NEW FF form, so old abilities lingered and
-  the same effect stacked ("base item + renamed item", Marth). The shipped model
+  the same effect stacked ("base item + renamed item", marth). The shipped model
   (v0.47.1-m35d) reactivates worn sockets with the engine's own complete
   teardown — a real **equip cycle** (`EquipCycleWorn`, the same call in-session
   socketing uses) — which is IDEMPOTENT: unequip drops ALL old abilities, equip
@@ -280,7 +280,7 @@ installed in `SKSEPluginLoad` — before the renderer exists):
 - **Spawn-and-pickup is THEFT in owned locations (found in-game 2026-07-08,
   fixed v0.25.1-m17b).** A `PlaceObjectAtMe` ref has NO owner, so ownership
   falls back to the cell/location owner; `PickUpObject` on it near guards =
-  witnessed theft → instant bounty (Marth: 100g per gem swap in town). Any
+  witnessed theft → instant bounty (marth: 100g per gem swap in town). Any
   spawn→stamp→pickup recipe MUST first
   `ref->extraList.SetOwner(player->GetActorBase())`. Applied to the
   gem-return path (GiveGemInstance) and the plain-stack drop/pickup mint.

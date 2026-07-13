@@ -146,7 +146,7 @@ struct ResolvedGem {
     std::array<RE::TESObjectMISC*, 5>   items{};
 };
 std::vector<ResolvedGem>                          g_gems;
-// m27 (Marth confirmed the 'pen' in game): Requiem-style lists REPURPOSE
+// m27 (marth confirmed the 'pen' in game): Requiem-style lists REPURPOSE
 // vanilla MGEFs at their original FormKeys (0x07A0FB 'Fortify Light Armor'
 // is now 'Fortify Armor Penetration'), so catalog labels can lie. The gem's
 // spoken name follows the WINNING record: relabel when neither name
@@ -189,7 +189,7 @@ constexpr RE::FormID kBossLocRefTypeID = 0x0130F7;// Skyrim.esm LCRT "Boss"
 constexpr RE::FormID kDragonKeywordID = 0x035D59; // Skyrim.esm KYWD ActorTypeDragon
 constexpr RE::FormID kReusableSoulGemKW = 0x0ED2F1;// Skyrim.esm KYWD ReusableSoulGem
 RE::TESObjectCONT*      g_pouchCont = nullptr;
-// m27 (Marth: gems must not clutter the player's inventory): every gem the
+// m27 (marth: gems must not clutter the player's inventory): every gem the
 // player owns lives in a hidden persistent container ref — the Gem Pouch
 // made literal. Created once per save (co-save v7 keeps the ref id), gems
 // route here on arrival; the menu reads it; socketing consumes from it.
@@ -287,7 +287,7 @@ void RecoverStrandedGems() {
 RE::ExtraDataList* FindInstanceXList(RE::TESObjectREFR* a_owner, RE::TESBoundObject* a_form,
                                     std::uint16_t a_uid);  // defined below
 
-// m36l (Marth cleanup): one-shot removal of ALL loose support gems from the
+// m36l (marth cleanup): one-shot removal of ALL loose support gems from the
 // player + the pouch, for wiping test-scaffold gems off a save. Dev-only,
 // gated on bPurgeSupportGems, run once per load. Erases their loose (slot-0)
 // co-save records first so RecoverStrandedGems can't re-add them. Socketed
@@ -377,7 +377,7 @@ void RouteGemsToPouch() {
     // The engine rewrites a moved instance's uid (m19), and MISC gems aren't
     // enchanted so the event-driven rekey (enchant-only) never followed them:
     // the record stranded and the gem read as PLAIN, merging with the no-XP
-    // stack (Marth 2026-07-12). Diffing the pouch's uid-set across a single
+    // stack (marth 2026-07-12). Diffing the pouch's uid-set across a single
     // move pins the arriving uid deterministically — rewrite or not — so the
     // record follows by hand, here, for MISC gems.
     auto pouchUids = [&](RE::FormID a_base, std::vector<std::uint16_t>& out) {
@@ -434,7 +434,7 @@ RE::BGSKeyword*         g_reusableSoulGemKW = nullptr;
 bool                    g_mentorGranted = false;  // co-save v4
 bool                    g_armorStarterGranted = false;  // co-save v6
 // DESIGN §3 soul-feed Gem XP by soul size (petty..grand; black counts grand).
-// m26b (Marth 2026-07-10): soul feeding was power-leveling gems (a grand
+// m26b (marth 2026-07-10): soul feeding was power-leveling gems (a grand
 // soul = half a level-I threshold) — cut ~80%. Socketed gem POWER is
 // untouched ("skill gems are perfect"); this is only the soul->XP rate.
 // Destroy-reclaim uses the same table, so the soul<->XP exchange stays
@@ -469,7 +469,7 @@ RE::BGSPerk* g_perkFacet = nullptr;
 // this perk by FormID (it carries no entry points), so the only way to let
 // socketed weapons be improved without it is to grant it. MEO converts all
 // generic enchanted loot to sockets, so in practice this only frees socketed
-// gear (+ artifacts) — Marth's ruling 2026-07-12.
+// gear (+ artifacts) — marth's ruling 2026-07-12.
 RE::BGSPerk* g_perkArcaneBlacksmith = nullptr;
 bool         g_meoGrantedArcane = false;  // co-save v8: MEO added the perk (revocable)
 bool         g_supportScaffoldGranted = false;  // co-save v9: test-scaffold support gems handed out
@@ -517,11 +517,11 @@ std::unordered_map<std::string, std::vector<CalRider>> g_calibration;
 struct CalLevel { std::string plugin; RE::FormID fid = 0; };
 std::unordered_map<std::string, std::array<CalLevel, 5>> g_calLevels;
 // m35b: per-list magnitude curve derived by the installer from THIS load
-// order's own enchant strengths (Marth: derive, don't hardcode). Overrides
+// order's own enchant strengths (marth: derive, don't hardcode). Overrides
 // the compiled catalog curve when present; families absent keep the default.
 std::unordered_map<std::string, std::array<float, 5>> g_calCurves;
 
-// m23 loot conversion (Marth: covered enchanted generics CONVERT, never
+// m23 loot conversion (marth: covered enchanted generics CONVERT, never
 // vanish): at spawn/acquire, "Iron Sword of Embers" becomes an Iron Sword
 // with a Fire gem socketed and ACTIVE, level I/II rolled with the same
 // sliders as loose drops. The installer derives this table per list.
@@ -742,7 +742,7 @@ void ResolveCatalog() {
         RE::TESObjectMISC* prev = nullptr;
         for (int lv = 0; lv < levels; ++lv) {
             rg.items[lv] = dh->LookupForm<RE::TESObjectMISC>(def.gemItem[lv], kPluginName);
-            // Gems are not sellable (Marth): they live in the hidden pouch so a
+            // Gems are not sellable (marth): they live in the hidden pouch so a
             // vendor never sees them, and a zero gold value closes any transient
             // window where one sits in visible inventory. The ESP bakes 0 too.
             if (rg.items[lv]) {
@@ -1173,7 +1173,7 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         }
     }
     // m36: Echo on a WEAPON gives the linked on-hit effect an area (AoE) that
-    // grows with tier. Start with the obvious damaging elemental gems (Marth);
+    // grows with tier. Start with the obvious damaging elemental gems (marth);
     // more gems opt in as their linkage is added. (Armor Echo = follower-share,
     // a runtime heartbeat handled separately.)
     int echoArea = 0;
@@ -1199,7 +1199,7 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     }
 
     // One primary effect per filled socket, plus that gem's recipe riders
-    // (m21, Marth: gems mirror the load order's elemental recipe — frost
+    // (m21, marth: gems mirror the load order's elemental recipe — frost
     // carries slow, shock carries magicka bite — at ratio × primary).
     // m36: when Conduit remaps, the single effect is the sibling's (no riders).
     std::size_t nEff = 0;
@@ -1372,7 +1372,7 @@ bool IsSocketableWeaponBase(const RE::TESObjectWEAP* a_weap) {
         a_weap->HasKeywordString("MagicDisallowEnchanting")) {
         return false;
     }
-    // m19d (Marth: "no socketed pickaxes"): tools and nameless bases are out.
+    // m19d (marth: "no socketed pickaxes"): tools and nameless bases are out.
     // Byte-diffed Skyrim.esm — vanilla gives tools NO semantic marker (same
     // animType/skill as war axes; the plain Pickaxe even carries
     // WeapTypeWarAxe; Woodcutter's Axe has no WeapType* at all), so a name
@@ -1403,7 +1403,7 @@ bool IsSocketableArmorBase(const RE::TESObjectARMO* a_armo) {
     // per-slot and OR'd — a combined mask would demand one piece fill all slots.
     using S = RE::BGSBipedObjectForm::BipedObjectSlot;
     // kHair: vanilla-line helmets occupy biped slot 31 (Hair), not 30 —
-    // head gear was silently ineligible until 2026-07-10 (Marth's helmet
+    // head gear was silently ineligible until 2026-07-10 (marth's helmet
     // "became unslotted" once its conversion record was removed).
     // kCirclet (slot 42): circlets occupy their own slot, not kHead — without
     // this they were hidden from the socketing menu, refused instance conversion
@@ -1429,7 +1429,7 @@ void ApplyWornAbility(RE::Actor* a_owner, RE::TESBoundObject* a_base,
     }
 }
 
-// m23c (Marth's stale-Resist-Fire report): Update*Ability REPLACES a worn
+// m23c (marth's stale-Resist-Fire report): Update*Ability REPLACES a worn
 // ability when an enchant extra is present, but when the extra is GONE it
 // early-outs without unregistering — removing the LAST gem from a worn item
 // left its constant effect active until a real unequip. The engine's own
@@ -1601,7 +1601,7 @@ void RefreshPerks() {
     g_hasFroststone = g_perkFroststone && player->HasPerk(g_perkFroststone);
     g_hasStormstone = g_perkStormstone && player->HasPerk(g_perkStormstone);
     g_hasFacet = g_perkFacet && player->HasPerk(g_perkFacet);
-    // m36 debug (Marth): force every MEO perk ON for testing without grinding
+    // m36 debug (marth): force every MEO perk ON for testing without grinding
     // Enchanting or spending points. Overrides only the CACHED flags — no perks
     // are added to the player, so toggling it off (menu close → RefreshPerks)
     // reverts to what's actually held. Grants both dual-socket perks (Twinned +
@@ -1666,7 +1666,7 @@ struct MenuState {
     // m19e: selection is IDENTITY, not index — rows are label-sorted and a
     // socket/unsocket changes the label, moving the row. After each rebuild
     // the index is re-derived from (base, uid); a raw index silently landed
-    // on a DIFFERENT item (Marth: "frost disappeared", phantom-empty sockets).
+    // on a DIFFERENT item (marth: "frost disappeared", phantom-empty sockets).
     RE::FormID               selBase = 0;
     std::uint16_t            selUid = 0;
 };
@@ -1948,7 +1948,7 @@ void GiveGemInstance(int a_gemIdx, int a_level, float a_xp) {
     auto&               xl = ref->extraList;
     // A PlaceObjectAtMe ref has NO owner, so ownership falls back to the
     // cell/location owner — picking it up in town, witnessed, was THEFT
-    // (Marth's 100g bounty on gem swaps near guards, m17b). Own it first.
+    // (marth's 100g bounty on gem swaps near guards, m17b). Own it first.
     xl.SetOwner(player->GetActorBase());
     const std::uint16_t uid = g_nextUID++;
     xl.Add(new RE::ExtraUniqueID(gemForm->GetFormID(), uid));
@@ -2348,7 +2348,7 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
         return;
     }
     // Multi-socket placement. Our own combined enchant doesn't block — only a
-    // foreign (player/base) one. m35e (Marth: swap without removing first): when
+    // foreign (player/base) one. m35e (marth: swap without removing first): when
     // a_targetSlot names a slot that already holds one of OUR gems, we evict it
     // to the pouch below and stamp the replacement in its place — the "remove +
     // apply" the player would otherwise do by hand, in one click. a_targetSlot
@@ -2589,7 +2589,7 @@ void FeedSoulToGem(RE::FormID a_itemBase, std::uint16_t a_uid, std::uint8_t a_sl
     const int   idx = std::clamp(bestSoul, 1, 5) - 1;
     const float xp = kSoulFeedXP[idx] * (g_hasSoulFeeder ? 2.0f : 1.0f);  // Soul Feeder: x2
     player->RemoveItem(bestGem, 1, RE::ITEM_REMOVE_REASON::kRemove, bestXL, nullptr);
-    // m25 (Marth: "this needs to yield more"): soul feeding IS this list's
+    // m25 (marth: "this needs to yield more"): soul feeding IS this list's
     // enchanting practice — MEO replaced the vanilla table flow that used to
     // train the skill, so the skill trains here. Roughly a vanilla enchant's
     // worth per soul of the same size, MCM-scalable.
@@ -2615,7 +2615,7 @@ void QueueMenuTask(std::function<void()> a_fn) {
     g_menu.busy = true;
     SKSE::GetTaskInterface()->AddTask([fn = std::move(a_fn)]() {
         fn();
-        // m24c (Marth: adding a 2nd gem "changed" the 1st gem's magnitude):
+        // m24c (marth: adding a 2nd gem "changed" the 1st gem's magnitude):
         // Update*Ability's replace can leave the PREVIOUS combined ability
         // alive next to the new one — two Resist Fire entries summing in the
         // effects list. Same engine gap as the unsocket orphan, socket
@@ -2706,7 +2706,7 @@ namespace menuhook {
         }
     }
 
-    // m24: four runtime skins, an MCM dropdown away (Marth's "diabolical
+    // m24: four runtime skins, an MCM dropdown away (marth's "diabolical
     // idea" — ship ALL directions, pick live). Palettes are the mockup
     // artifact's values verbatim; the nine gem THEME colors stay fixed
     // across skins so gems always read by color. Square corners and flat
@@ -2831,7 +2831,7 @@ namespace menuhook {
         }
         auto* dl = ImGui::GetWindowDrawList();
         const float lineH = ImGui::GetTextLineHeight();
-        // m29 (Marth: "gains X at gem level IV" must be readable in game):
+        // m29 (marth: "gains X at gem level IV" must be readable in game):
         // hovering a gem or a filled socket lists the rank ladder's grants,
         // pulled from each rung MGEF's own description — per-list truth.
         auto gemBasics = [&](int a_idx, int a_level) -> std::string {
@@ -2903,7 +2903,7 @@ namespace menuhook {
         const float footer = ImGui::GetFrameHeightWithSpacing() + 6.0f;
         const float half = ImGui::GetContentRegionAvail().x * 0.5f;
         const float rowH = lineH + 10.0f;
-        // m36e (Marth: d-pad left/right only crossed panes when aligned with a
+        // m36e (marth: d-pad left/right only crossed panes when aligned with a
         // slotted gem — too geometry-dependent). Make left/right DETERMINISTICALLY
         // jump between the two panes: track which pane held nav focus last frame,
         // and on the opposite d-pad press request focus into the other pane.
@@ -2922,7 +2922,7 @@ namespace menuhook {
         // brief busy window read as "the menu misses clicks" in the field.
         ImGui::BeginChild("items", ImVec2(half - 6.0f, -footer),
                           ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);  // m32f
-        // m24c (Marth: long lists "leave the pane"): rows were drawn through
+        // m24c (marth: long lists "leave the pane"): rows were drawn through
         // the OUTER window's draw list, which ignores the child's clip rect.
         // Each pane draws through its own list so scrolled-out rows clip.
         auto* dlL = ImGui::GetWindowDrawList();
@@ -2983,7 +2983,7 @@ namespace menuhook {
             ImGui::TextDisabled("%s%s", sel.label.c_str(),
                                 sel.capacity > 1 ? "  — 2 linked sockets" : "");
             ImGui::Separator();
-            // m25 station redesign (Marth): at a bench the right pane is
+            // m25 station redesign (marth): at a bench the right pane is
             // SELECT-a-gem (top, highlight like the item pane) + the SOUL GEM
             // list (below) — click a soul to burn it into the selected gem.
             // Pouch mode: click a filled socket to remove; pick a loose gem to
@@ -3123,7 +3123,7 @@ namespace menuhook {
                 }
             } else {
             ImGui::Separator();
-            // m35e (Marth): the loose-gem list is ALWAYS shown, even with every
+            // m35e (marth): the loose-gem list is ALWAYS shown, even with every
             // socket filled — picking a gem SWAPS it in (remove + apply in one
             // click, the old gem returns to the pouch). Target slot = first
             // empty one; if all are full it's a swap into socket 1 (capacity 1
@@ -3418,7 +3418,7 @@ namespace menuhook {
                             // Closing on the press leaked the release to the
                             // game once the menu shut, and that release cast
                             // the pouch power again — the close-then-instant-
-                            // reopen Marth hit. Requiring a press seen while
+                            // reopen marth hit. Requiring a press seen while
                             // OPEN also keeps the release of the press that
                             // opened the menu from closing it on arrival.
                             if (down) {
@@ -3643,7 +3643,7 @@ Arch DetectArchetype(RE::Actor* a_actor) {
 // Deterministic per-reference roll (same discipline as world weapons): a given
 // NPC decides once, forever. The gem is LIVE on the enemy (ApplyWornAbility) —
 // you fight the effect; at death it converts to a lootable loose gem (below).
-// ── m23: loot conversion (Marth: covered enchants CONVERT to socketed) ──
+// ── m23: loot conversion (marth: covered enchants CONVERT to socketed) ──
 // Any actor-held item in the conversion table is swapped for its
 // unenchanted base carrying the matching family's gem — level I/II rolled
 // with the same fGemLevel2Chance as loose drops, deterministic per
@@ -3671,7 +3671,7 @@ RE::ExtraDataList* FindWornXListFor(RE::Actor* a_actor, RE::TESBoundObject* a_ba
     return nullptr;
 }
 
-// m26 (Marth's rulings 2026-07-10): pre-MEO PLAYER-MADE enchants convert on
+// m26 (marth's rulings 2026-07-10): pre-MEO PLAYER-MADE enchants convert on
 // load like loot. The item already IS the right base, so no remove/re-add —
 // strip the old enchant extras and stamp matching family gems into the same
 // instance (slots up to capacity). ALL GEMS LEVEL I, no magnitude matching —
@@ -3811,7 +3811,7 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
         hits.push_back({ obj, &it->second, data.first, worn, left });
     }
     int converted = 0;
-    // m25d (Marth's helmet/cuirass): when the PLAYER sweep misses enchanted
+    // m25d (marth's helmet/cuirass): when the PLAYER sweep misses enchanted
     // gear, say exactly what and why — an enchanted BASE not in the table is
     // an installer question; an INSTANCE enchant (on the copy, not the
     // record) is the player-enchant signature and skipped by design.
@@ -3851,7 +3851,7 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
                     }
                 }
                 if (!ours) {
-                    converted += ConvertInstanceEnchant(actor, obj, xl);  // m26: Marth's ruling
+                    converted += ConvertInstanceEnchant(actor, obj, xl);  // m26: marth's ruling
                     break;
                 }
             }
@@ -3871,7 +3871,7 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
                 continue;
             }
             auto& xl = ref->extraList;
-            // m34c (Marth: converted BANDIT loot flagged as owned/theft):
+            // m34c (marth: converted BANDIT loot flagged as owned/theft):
             // stamp ownership ONLY for the player's own conversion — m17b
             // prevents the PLAYER's place-and-pickup near guards from reading
             // as theft. Enemy loot must stay unowned (vanilla free corpse
@@ -3891,7 +3891,7 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
             ++converted;
         }
         // The list picked this enemy to fight with an enchanted weapon; the
-        // converted gem stays worn and ACTIVE (Marth's ruling).
+        // converted gem stays worn and ACTIVE (marth's ruling).
         if (hit.worn) {
             RE::ActorEquipManager::GetSingleton()->EquipObject(
                 actor, hit.tgt->base, nullptr, 1, nullptr, false, false, false, true);
@@ -3907,7 +3907,7 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
     return converted;
 }
 
-// m26 (Marth: an enchanted name floating over a world item until pickup
+// m26 (marth: an enchanted name floating over a world item until pickup
 // "is jarring"): loose world refs of convertible generics swap IN PLACE at
 // cell attach — but only disposable clutter. Persistent and quest-aliased
 // refs are exactly the ones scripts point at, so they keep converting on
@@ -3972,7 +3972,7 @@ void MaybeStampNPCGear(RE::Actor* a_actor) {
     if (!race || !race->HasKeyword(g_kwNPC)) {
         return;  // humanoids only — creatures don't wear gear
     }
-    // m19e: ENEMY classes only (Marth) — civilians are Unaggressive (0);
+    // m19e: ENEMY classes only (marth) — civilians are Unaggressive (0);
     // bandits/Forsworn/raiders are Aggressive+ (>=1). Base AV, not current.
     if (auto* avo = a_actor->AsActorValueOwner();
         !avo || avo->GetBaseActorValue(RE::ActorValue::kAggression) < 1.0f) {
@@ -4043,7 +4043,7 @@ void MaybeStampNPCGear(RE::Actor* a_actor) {
     }
 }
 
-// m19: enemy gems STAY IN THE GEAR (Marth 2026-07-09) — the corpse's socketed
+// m19: enemy gems STAY IN THE GEAR (marth 2026-07-09) — the corpse's socketed
 // item is itself the loot; loose corpse gems (fGemDropChance) are a separate
 // pool. That makes the §1 uid-rewrite trap unavoidable: any container
 // transfer (corpse->player loot, buying, chests) REWRITES ExtraUniqueID and
@@ -4671,7 +4671,7 @@ public:
             SKSE::GetTaskInterface()->AddTask([]() {
                 EnsurePouchRef();
                 RouteGemsToPouch();
-                // m32h (Marth: 'delayed sync between pouch and inv'): a gem
+                // m32h (marth: 'delayed sync between pouch and inv'): a gem
                 // that just routed to the pouch got a new uid — an open menu's
                 // snapshot now holds the stale one. Rebuild it so socketing
                 // always sees the gem's current uid.
@@ -4711,7 +4711,7 @@ public:
 };
 
 // m19e: outdoors, cell-attach fires before actors equip their gear (no worn
-// candidates yet -> silent miss; Marth saw 1 socketed orc in 20+ at 0.24).
+// candidates yet -> silent miss; marth saw 1 socketed orc in 20+ at 0.24).
 // TESObjectLoadedEvent fires when the ref's 3D loads — equipment is worn by
 // then. Both triggers stay live: the deterministic hash + already-blessed
 // guard make MaybeStampNPCGear idempotent, so whichever fires second no-ops.
@@ -4841,7 +4841,7 @@ void EnsurePlayerSetup() {
 // did by hand. a_rebuild refreshes the created enchant (picks up MCM magnitude);
 // a_reequip does the equip cycle. Targets are collected BEFORE re-equipping so
 // the equip calls can't invalidate the entryList mid-iteration.
-// m24b (Marth's "improperly escalated skills"): before the m23c worn-teardown
+// m24b (marth's "improperly escalated skills"): before the m23c worn-teardown
 // fix, unsocketing a worn item's LAST gem orphaned its constant ability — the
 // ActiveEffect (with its fortify-skill / resist AV modifier) could ride along
 // in the save with no owning socket. Sweep the player's active effects for
@@ -4859,7 +4859,7 @@ void DispelStaleGemEffects() {
     if (!mt || !changes || !changes->entryList) {
         return;
     }
-    // m26e (Marth's "removed a non gem effect"): protect enchants attached
+    // m26e (marth's "removed a non gem effect"): protect enchants attached
     // to ANY inventory item, worn or not. The old worn-only set raced
     // EquipCycleWorn — mid-cycle the item is briefly unworn, its own live
     // enchant fell out of the set, and the sweep dispelled it; if the
@@ -4901,7 +4901,7 @@ void DispelStaleGemEffects() {
         return;
     }
     std::vector<RE::ActiveEffect*> stale;
-    // m32e (Marth's deck finding): the valid-guard shielded SAME-FORM
+    // m32e (marth's deck finding): the valid-guard shielded SAME-FORM
     // duplicates — every extra registration of a still-worn enchant shares
     // that worn form, so orphan logic never touched them while refresh
     // passes could stack them. Track (ench form, effect) pairs among OUR
@@ -4967,7 +4967,7 @@ void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag = false) {
             }
             auto* xid = xl->GetByType<RE::ExtraUniqueID>();
             if (a_diag) {
-                // m19e forensics (Marth's "loaded ungemmed" report): the full
+                // m19e forensics (marth's "loaded ungemmed" report): the full
                 // truth for every worn piece — uid (or none), each slot's
                 // record (or NONE), and whether an enchant extra is present.
                 std::string slots;
@@ -5038,7 +5038,7 @@ void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag = false) {
                      RE::UI::GetSingleton() && RE::UI::GetSingleton()->GameIsPaused(),
                      player->Is3DLoaded(),
                      player->AsActorState() && player->AsActorState()->IsWeaponDrawn());
-        // m35d (Marth's "effect stacks as base item + renamed item"): the m19f
+        // m35d (marth's "effect stacks as base item + renamed item"): the m19f
         // blinkless strip/restamp is retired. It relied on Update*Ability to
         // REPLACE the worn ability, but that call early-outs on teardown (when
         // the enchant extra is gone it never unregisters — m23c) and the

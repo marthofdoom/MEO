@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MEO_GenerateESP.py  — P1 plugin generator for Marth's Enchanting Overhaul.
+MEO_GenerateESP.py  — P1 plugin generator for marth's Enchanting Overhaul.
 
 Emits MEO.esp (single master: Skyrim.esm) + Data/MEO/meo_runtime.json:
   - MISC: every gem x level from data/gem_catalog.json (234 forms)
@@ -77,7 +77,7 @@ def prop_obj_array(fids):
 
 def make_tes4(next_id):
     hedr=struct.pack('<f',1.70)+struct.pack('<I',100)+struct.pack('<I',next_id)
-    body=subrec('HEDR',hedr)+subrec('CNAM',zstr("Marth"))+subrec('SNAM',zstr("Marth's Enchanting Overhaul"))
+    body=subrec('HEDR',hedr)+subrec('CNAM',zstr("marth"))+subrec('SNAM',zstr("marth's Enchanting Overhaul"))
     body+=subrec('MAST',zstr("Skyrim.esm"))+subrec('DATA',struct.pack('<Q',0))
     return record('TES4',0,0x00000200,body)
 
@@ -179,13 +179,13 @@ def allocate_gems():
             name=g['name'] if levels==1 else f"{g['name']} {ROMAN[lvl]}"
             body =subrec('EDID',zstr(f"MEO_Gem_{gid}_{lvl}"))
             body+=subrec('OBND',b'\x00'*12)+subrec('FULL',zstr(f"{name} Gem" if levels==1 else name))
-            # m27 (Marth): dropped gems look like real gemstones in the gem's
+            # m27 (marth): dropped gems look like real gemstones in the gem's
             # color — vanilla meshes, flawed cut at I-III, flawless at IV-V.
             stone=THEME_STONE.get(GEM_THEME.get(gid,'ARCANE'),'Amethyst')
             mesh=f"Clutter\\Gemstones\\{stone}.nif" if lvl>=4 or levels==1 \
                  else f"Clutter\\Gemstones\\{stone}Flawed.nif"
             body+=subrec('MODL',zstr(mesh))
-            # Gems are not sellable (Marth): value 0. They live in the hidden
+            # Gems are not sellable (marth): value 0. They live in the hidden
             # pouch so a vendor never lists them; the DLL also zeroes value at
             # load as belt-and-suspenders. Weight 0.1.
             body+=subrec('DATA',struct.pack('<If',0,0.1))
@@ -383,7 +383,7 @@ def write_mcm_files(out_dir):
             ctrl={"id":f"{key}:{section}","text":label,"type":"toggle","help":help_,
                   "valueOptions":{"sourceType":"ModSettingBool","defaultValue":bool(dflt)}}
         pages[page].append(ctrl)
-    config={"modName":"MEO","displayName":"Marth's Enchanting Overhaul",
+    config={"modName":"MEO","displayName":"marth's Enchanting Overhaul",
             "minMcmVersion":9,"cursorFillMode":"topToBottom",
             "pages":[{"pageDisplayName":p,"cursorFillMode":"topToBottom",
                       "content":[{"text":p,"type":"header"}]+ctrls}

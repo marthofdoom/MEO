@@ -83,7 +83,7 @@ mandatory, and that failure is what justifies fronting the native work earlier.
   save/load and a New Game reverts it. Per the per-instance decision this is the
   load-bearing persistence proof (not a throwaway). Stress-test the instance-ID
   mechanism against stacking/merging. M1 and M2 ship together as the first
-  genuinely working native socket (apply + unique persistence), per Marth's
+  genuinely working native socket (apply + unique persistence), per marth's
   "working version on the next run".
 - **M2 native socket apply**: from C++, apply / rebuild / remove a gem
   enchantment on an inventory item *instance* (including non-worn); repoint the
@@ -115,7 +115,7 @@ mandatory, and that failure is what justifies fronting the native work earlier.
   real play; features swap via config, not deletion.
 - Crash logs checked after every session (`Docs/DEBUGGING.md`).
 
-## Decisions (settled 2026-07-06, Marth)
+## Decisions (settled 2026-07-06, marth)
 
 1. **Per-instance XP — DECIDED.** Each socketed gem is a unique instance with
    its own level/XP in the co-save; NOT per-type pools ("the design falls apart

@@ -14,7 +14,7 @@ Curation layer (small, documented):
   - merge:   Frost = Frost+Slow, Chaos = DLC2 tri-element (one gem each)
   - exclude: artifact/creature/junk single-effects (non-Ench) + uniques
 Assigns each gem a draft POWER TIER -> XP multiplier for the per-gem curve
-(the point of this pass). Tiers are a proposal for Marth to adjust.
+(the point of this pass). Tiers are a proposal for marth to adjust.
 """
 import json, sys, os
 sys.path.insert(0, 'tools')
@@ -39,7 +39,7 @@ CURATED_MULTI = {
               'class':'LINEAR','domain':'weapon','base_mgef':'DLC2EnchFireDamageFFContact50'},
 }
 
-# ---- power tier assignment (DECIDED, Marth) ----
+# ---- power tier assignment (DECIDED, marth) ----
 # S build-defining (slowest), A strong (normal), B minor (fast), U utility (no XP).
 XP_MULT = {'S':1.5,'A':1.0,'B':0.6,'U':0.0}
 # S = genuinely build-defining (slowest XP). Single-element damage (Fire/Frost/

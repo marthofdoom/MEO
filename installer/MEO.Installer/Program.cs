@@ -1,4 +1,4 @@
-// MEO.Installer — install-time patcher for Marth's Enchanting Overhaul.
+// MEO.Installer — install-time patcher for marth's Enchanting Overhaul.
 //
 // Resolves an MO2 profile's load order on Linux (no VFS running), reads it
 // with Mutagen, and generates "MEO - Patch.esp": an override of the
@@ -472,7 +472,7 @@ static class Commands
             }
         }
 
-        // Interactive curation (Marth 2026-07-09): the classifier decides what
+        // Interactive curation (marth 2026-07-09): the classifier decides what
         // is MEO's domain; the human decides which surviving perks are worth
         // keeping. Decisions persist next to the patch so re-runs don't re-ask
         // — delete or edit the .choices.json to change your mind.
@@ -565,22 +565,22 @@ static class Commands
         }
 
         // MEO nodes get fresh indices and grid cells that don't collide with
-        // anything kept. Layout (m36k, Marth): the elemental affinities are
-        // PARALLEL CHOICES off the hub, so the trio sits adjacent at the SAME
-        // depth (gridY=1) — never stacked one behind another (the constellation
-        // UI reads same-column/increasing-gridY as a sequential chain, which was
-        // the "shock behind fire / similar perks split" bug). Every choice perk
-        // is a depth-1 sibling; the Feeder->Twinned->Jeweler socket unlocks are
-        // the one intentional sequential branch.
-        //   pyre  frost storm       cutter facet   feeder (x+3,1)
-        //   (x-3) (x-2) (x-1)       (x+1)  (x+2)    twinned(x+3,2)
-        //                 attune1-5 (x,0)           jeweler(x+3,3)
+        // anything kept. Layout (m36k/m36m, marth): the elemental affinities are
+        // PARALLEL CHOICES off the hub — the trio sits adjacent at the SAME depth
+        // (gridY=1), never stacked one behind another (the constellation UI reads
+        // same-column/increasing-gridY as a sequential chain, which was the "shock
+        // behind fire / similar perks split" bug). Choices sit at depth 1; the two
+        // sequential branches grow downward: Gem Cutter -> Soul Feeder (economy)
+        // and Twinned -> Jeweler (socket unlocks).
+        //   pyre  frost storm      cutter  facet  twinned (x+3,1)
+        //   (x-3) (x-2) (x-1)      (x+1,1) (x+2)  jeweler (x+3,2)
+        //               attune1-5 (x,0)   feeder (x+1,2)
         var occupied = over.PerkTree.Where(n => (n.Index ?? 0) != 0)
             .Select(n => (n.PerkGridX ?? 0, n.PerkGridY ?? 0)).ToHashSet();
         uint xBase = 3;  // leftmost reach is x-3; start clear of the grid edge
         (uint, uint)[] Cells(uint x) => [(x, 0u), (x - 3, 1u), (x - 2, 1u), (x - 1, 1u),
-                                         (x + 1, 1u), (x + 2, 1u), (x + 3, 1u),
-                                         (x + 3, 2u), (x + 3, 3u)];
+                                         (x + 1, 1u), (x + 1, 2u), (x + 2, 1u),
+                                         (x + 3, 1u), (x + 3, 2u)];
         while (Cells(xBase).Any(c => occupied.Contains(c))) xBase++;
         uint nextIdx = over.PerkTree.Max(n => n.Index ?? 0) + 1;
 
@@ -604,22 +604,22 @@ static class Commands
         uint iAtt = nextIdx, iCut = nextIdx + 1, iFeed = nextIdx + 2,
              iTwin = nextIdx + 3, iJwl = nextIdx + 4,
              iPyr = nextIdx + 5, iFro = nextIdx + 6, iSto = nextIdx + 7, iFac = nextIdx + 8;
-        // Layout principle (Marth): CHOICES fan out in parallel from the hub;
+        // Layout principle (marth): CHOICES fan out in parallel from the hub;
         // flat cumulative power goes SEQUENTIAL. Attunement (5 ranks) is the
         // sequential spine; the affinities + Facet Insight are a CHOICE fan —
         // each branches straight off the hub, none chained to another, so the
         // player picks which elements/type to boost. Twinned->Jeweler stays
         // sequential (progressive socket unlocks).
         over.PerkTree.Add(Node(iAtt, attune1, xBase, 0,
-                               iCut, iFeed, iPyr, iFro, iSto, iFac));  // hub fans to all choices
+                               iCut, iTwin, iPyr, iFro, iSto, iFac));  // hub fans to the choices
         over.PerkTree.Add(Node(iPyr, pyrestone,  xBase - 3, 1));  // elemental affinity trio:
         over.PerkTree.Add(Node(iFro, froststone, xBase - 2, 1));  // parallel choices, adjacent,
         over.PerkTree.Add(Node(iSto, stormstone, xBase - 1, 1));  // same depth off the hub
-        over.PerkTree.Add(Node(iCut, gemCutter, xBase + 1, 1));   // choice
-        over.PerkTree.Add(Node(iFac, facet, xBase + 2, 1));       // choice
-        over.PerkTree.Add(Node(iFeed, soulFeeder, xBase + 3, 1, iTwin));  // sequential branch:
-        over.PerkTree.Add(Node(iTwin, twinned, xBase + 3, 2, iJwl));      // Feeder -> Twinned
-        over.PerkTree.Add(Node(iJwl, jeweler, xBase + 3, 3));             // -> Jeweler
+        over.PerkTree.Add(Node(iCut, gemCutter, xBase + 1, 1, iFeed));  // Gem Cutter ->
+        over.PerkTree.Add(Node(iFeed, soulFeeder, xBase + 1, 2));       // Soul Feeder (sequential, marth)
+        over.PerkTree.Add(Node(iFac, facet, xBase + 2, 1));            // choice
+        over.PerkTree.Add(Node(iTwin, twinned, xBase + 3, 1, iJwl));   // socket unlocks:
+        over.PerkTree.Add(Node(iJwl, jeweler, xBase + 3, 2));          // Twinned -> Jeweler
         root.ConnectionLineToIndices.Add(iAtt);
 
         Console.WriteLine($"tree: {removedIdx.Count} craft node(s) replaced, " +
@@ -805,7 +805,7 @@ static class Commands
             if (clsByItem[r.Key].StartsWith("strip") || clsByItem[r.Key] == "keep-generic-multifx")
                 enchWeight[r.Ench] = enchWeight.GetValueOrDefault(r.Ench) + 1;
 
-        // Human-curated rulings (Marth's tuning loop): effects HE has ruled
+        // Human-curated rulings (marth's tuning loop): effects HE has ruled
         // perk-domain — Requiem grants them through perks, they are not
         // native to equipment. They (a) never count as conversion loss and
         // (b) NEVER ride on gems (2026-07-10: lockpick durability rode @60
@@ -980,13 +980,13 @@ static class Commands
             }
             adopted[famKey] = set;
         }
-        // m28 (Marth + records): lists RANK-TIER kin MGEFs of one signature,
+        // m28 (marth + records): lists RANK-TIER kin MGEFs of one signature,
         // and the higher ranks carry protection KEYWORDS the attacking spells
         // check (REQ_ProtectionFromAbsorbSpells on Fortify Magicka Rank II).
         // Map gem levels onto that ladder so leveling EARNS the protections:
         // kin ordered by observed enchant magnitude, spread across levels 1-5.
         var kinBySig = new Dictionary<string, Dictionary<FormKey, (IMagicEffectGetter M, float MinMag)>>();
-        // m32c (Marth: 'why does fortify magicka do irresistible fire at
+        // m32c (marth: 'why does fortify magicka do irresistible fire at
         // level V?'): a Vonos ARTIFACT effect shared sig+name-root and won
         // the top rung. Kin may only come from GENERIC (strip-class) enchants
         // — uniques keep their tricks.
@@ -1043,7 +1043,7 @@ static class Commands
             Console.WriteLine($"  {famKey}: {tiers.Count}-rank ladder -> levels " +
                 string.Join(" | ", tiers.Select(m => m.Name?.String ?? m.EditorID)));
         }
-        // m35b (Marth: derive per list, don't hardcode LoreRim numbers): each
+        // m35b (marth: derive per list, don't hardcode LoreRim numbers): each
         // gem family's magnitude curve is rescaled from the catalog SHAPE to
         // THIS load order's own enchant strength. Level-V anchor = a robust
         // high (90th percentile of observed generic-enchant magnitudes, so one
@@ -1075,7 +1075,7 @@ static class Commands
             .Select(kv => $"{kv.Key} — {kv.Value} item(s)").ToList();
         foreach (var n in notes) Console.WriteLine("  note: " + n);
 
-        // Loot conversion (Marth's ruling): a covered enchanted generic never
+        // Loot conversion (marth's ruling): a covered enchanted generic never
         // leaves the world — at spawn the DLL swaps it for its unenchanted
         // base with the matching family's gem socketed and ACTIVE (level I/II
         // rolled with the same sliders as loose drops). This is the table;
@@ -1092,7 +1092,7 @@ static class Commands
             if (!honored.Contains(clsByItem[r.Key])) continue;
             if (!data.StripBase.TryGetValue(r.Key, out var baseKey)) continue;
             if (!enchFamily.TryGetValue(r.Ench, out var famKey)) { noFamily++; continue; }
-            // Lossless gate (Marth's ruling, 2026-07-10): convert ONLY when
+            // Lossless gate (marth's ruling, 2026-07-10): convert ONLY when
             // every UNCOVERED companion is either carried by the family's
             // adopted riders or is hidden framework machinery (HideInUI —
             // Requiem/perk-applied bookkeeping, not loot value). Anything
@@ -1106,7 +1106,7 @@ static class Commands
                     (adopted.GetValueOrDefault(famKey)?.Contains(l.M.FormKey) ?? false))
                     continue;  // rides
                 if (l.M is not null && ruledWaived.Contains(l.M.FormKey))
-                { waived = true; continue; }  // Marth ruled it perk-domain
+                { waived = true; continue; }  // marth ruled it perk-domain
                 // Machinery = hidden AND valueless. HideInUI alone is not
                 // enough: Requiem hides real procs too (the stagger companion
                 // on 'of Stunning' weapons carries mag 20-30 while hidden —
@@ -1346,7 +1346,7 @@ static class Commands
             else if (enchUse[r.Ench] >= 3)
             {
                 baseKey = GenericShapedBase(r.Name);
-                // Renamed-base generics (Marth 2026-07-09, "keep-named leak"):
+                // Renamed-base generics (marth 2026-07-09, "keep-named leak"):
                 // Requiem renames template bases ("Glass Bow of Fire" sits on
                 // "Glass Light Bow", "Glass Armor of ..." on "Glass Cuirass"),
                 // so both name tests fail even though the ENCH is a shared
@@ -1360,7 +1360,7 @@ static class Commands
             }
             var cls = Classify(r.Ench, baseKey is not null);
             // m25: partial generics (family + companions we don't cover) are
-            // conversion candidates too — record their base (Marth's Squire
+            // conversion candidates too — record their base (marth's Squire
             // cuirass blockade: Fortify Light Armor + 3 armor-pen companions).
             if ((cls.StartsWith("strip") || cls == "keep-generic-multifx") && baseKey is { } bk)
                 data.StripBase[r.Key] = bk;
@@ -1455,7 +1455,7 @@ static class Commands
             Console.WriteLine($"      e.g. {string.Join("; ", a.Examples)}");
         }
 
-        // Player-learnable coverage (Marth 2026-07-10: the in-game no-family
+        // Player-learnable coverage (marth 2026-07-10: the in-game no-family
         // dump is bootstrap-only — the INSTALLER must surface this per list).
         // Any enchant on a disenchantable item is learnable at a pre-MEO
         // table, so its effects can live on in player-made instance enchants
@@ -1608,7 +1608,7 @@ static class Mo2LoadOrder
         // base masters and plugins.txt — the base-game AE mechanism, active
         // even with an empty plugins.txt (Steam Deck vanilla: 74 cc plugins
         // the old base-masters-only read missed, so their loot never
-        // converted — Marth 2026-07-12).
+        // converted — marth 2026-07-12).
         var ccc = new List<string>();
         var cccPath = Path.Combine(gameRoot, "Skyrim.ccc");
         if (File.Exists(cccPath))

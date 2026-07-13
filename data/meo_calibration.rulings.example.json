@@ -4,7 +4,7 @@
     {
       "formKey": "ADE45A:Requiem.esp",
       "editorId": "REQ_Ench_FortifyLockpicking",
-      "why": "Lockpick durability is a Lockpicking-perk bonus in Requiem/LoreRim, not native to equipment \u2014 convert without it, never ride it (Marth, 2026-07-10).",
+      "why": "Lockpick durability is a Lockpicking-perk bonus in Requiem/LoreRim, not native to equipment \u2014 convert without it, never ride it (marth, 2026-07-10).",
       "revisit": "Deferred: a full perk-domain-vs-equipment-native classification pass over all rider candidates (token-expensive; M34/M35 window)."
     }
   ]

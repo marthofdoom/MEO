@@ -196,7 +196,7 @@ def scan(mo2_root, profile):
             continue
         m = mgefs.get(mk, {})
         gems = covered_sigs.get(sig_of(m) or (), None) if m else None
-        # Keep-blacklist (Marth 2026-07-09): named themed sets stay enchanted
+        # Keep-blacklist (marth 2026-07-09): named themed sets stay enchanted
         # even when single-effect and family-covered (artifact-class).
         KEEP_SETS = ('silentmoons',)
         blob = f"{m.get('edid') or ''} {e['edid'] or ''}".lower()
@@ -263,7 +263,7 @@ def main():
                   f"{'; '.join(n.split(':', 1)[1] for n in g['item_names'][:3])[:60]}")
     n_multi_items = sum(m['items'] for m in multi.values())
     print(f"\n== MULTI-EFFECT enchantments on worn items (artifact-class per"
-          f" Marth 2026-07-09; tiered-generic ruling pending)"
+          f" marth 2026-07-09; tiered-generic ruling pending)"
           f" — {len(multi)} enchants / {n_multi_items} items ==")
     for m in sorted(multi.values(), key=lambda m: -m['items'])[:12]:
         names = '; '.join(n.split(':', 1)[1] for n in m['item_names'])

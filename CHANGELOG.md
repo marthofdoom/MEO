@@ -1,4 +1,4 @@
-# Changelog — Marth's Enchanting Overhaul
+# Changelog — marth's Enchanting Overhaul
 
 Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone

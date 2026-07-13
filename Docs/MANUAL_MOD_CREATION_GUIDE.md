@@ -2,7 +2,7 @@
 
 A field guide for building a complete Skyrim SE mod (ESP + Papyrus scripts +
 FOMOD installer) entirely from Linux with Python and wine. Everything here was
-validated while building Marth Requiem Overhaul (MRO) against the LoreRim
+validated while building marth Requiem Overhaul (MRO) against the LoreRim
 modlist. Where a byte layout is stated, it was verified against real records
 parsed from Skyrim.esm or Requiem.esp — do the same for any record type not
 covered here: **find a vanilla record that does what you want and copy its

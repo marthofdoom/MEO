@@ -30,7 +30,7 @@ shift
 DESC=""
 RUN_ID=""
 INST_RUN_ID=""
-# Every release is a COMPLETE, standalone mod (Marth's rule 2026-07-08: MO2
+# Every release is a COMPLETE, standalone mod (marth's rule 2026-07-08: MO2
 # install REPLACES a mod's content, so a partial zip = broken download). ESP,
 # MCM config + settings, the compiled MCM script, and the runtime JSON are
 # ALWAYS packaged alongside the DLL. --esp/--json accepted for back-compat, ignored.
@@ -105,15 +105,15 @@ gh run download "$INST_RUN_ID" -n MEO-installer -D "$STAGE"
 mkdir -p "$STAGE/fomod"
 cat > "$STAGE/fomod/info.xml" <<EOF
 <fomod>
-  <Name>Marth's Enchanting Overhaul</Name>
-  <Author>Marth</Author>
+  <Name>marth's Enchanting Overhaul</Name>
+  <Author>marth</Author>
   <Version>$VER</Version>
   <Website>https://github.com/marthofdoom/MEO</Website>
   <Description>Socketable, leveling enchantment gems. After installing, run MEO.Installer.exe from this mod's folder to adapt the enchanting perk tree to your load order — see MEO-README.txt.</Description>
 </fomod>
 EOF
 cat > "$STAGE/MEO-README.txt" <<'EOF'
-Marth's Enchanting Overhaul (MEO)
+marth's Enchanting Overhaul (MEO)
 =================================
 Socketable, leveling enchantment gems.
 

@@ -14,7 +14,7 @@ below are historical (the Sun gem and supports landed after that review).
 
 ## The confirmed model (LINEAR effects)
 
-From Marth's two anchors (Fire 10->35, Fortify Health 20->70), both exactly
+From marth's two anchors (Fire 10->35, Fortify Health 20->70), both exactly
 **×3.5** — the global Requiem skill+perk+Grand-soul crafting multiplier, which
 is uniform across effects. So for magnitude-scaling effects:
 
@@ -25,7 +25,7 @@ is uniform across effects. So for magnitude-scaling effects:
 
 This reproduced Fire `[10,16,22,29,35]` and Fortify Health `[20,32,45,58,70]`.
 
-**Global -15% pass (Marth, 2026-07-08, shipped v0.13.0):** every LINEAR and
+**Global -15% pass (marth, 2026-07-08, shipped v0.13.0):** every LINEAR and
 ABSORB curve ×0.85 (rounded to 1 decimal) — effective V = base × 2.975. Fire
 is now `[8.5, 13.6, 18.7, 24.6, 29.8]`, Fortify Health
 `[17, 27.2, 38.2, 49.3, 59.5]`. Strict scaling at all levels (level I lands
@@ -37,7 +37,7 @@ Applies as-is to: Fire, Frost, Shock, Damage Magicka/Stamina, Fortify
 Health/Magicka/Stamina, the three Regen effects, Carry Weight, and (per-hit)
 Absorb Health/Magicka/Stamina.
 
-## Per-class decisions (Marth, 2026-07-08 — full 50-gem review)
+## Per-class decisions (marth, 2026-07-08 — full 50-gem review)
 
 ×3.5 was wrong for these; each was a balance call, now made. Investment
 multipliers (×1.40 perks, ×1.50 CSF) apply to ALL of these unless noted —

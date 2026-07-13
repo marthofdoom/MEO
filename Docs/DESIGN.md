@@ -1,4 +1,4 @@
-# Marth's Enchanting Overhaul (MEO) — Design Document
+# marth's Enchanting Overhaul (MEO) — Design Document
 
 Socketed-gem enchanting for Skyrim SE. Enchantments become **gems**: removable,
 socketable, leveling items. This fully replaces vanilla enchanting for weapons
@@ -132,7 +132,7 @@ armor gem fits any apparel slot.
 
 ### Converting found loot (SHIPPED — m23 conversion model)
 The original lazy design ("decode on first socket touch") was superseded by
-Marth's m23 ruling further down this section: a covered enchanted generic
+marth's m23 ruling further down this section: a covered enchanted generic
 **converts at spawn/acquire** into its unenchanted base with the matching
 family's gem socketed and ACTIVE. The installer emits the per-list
 `conversions` table; the DLL swaps instances via engine flows on actor
@@ -201,7 +201,7 @@ generic catalog). A curated subset with clean effects (e.g. Silent Moons)
 can graduate into extractable **unique gems** (level normally, cannot birth)
 in a later version.
 
-### Installer prime directive (Marth 2026-07-09, RULE)
+### Installer prime directive (marth 2026-07-09, RULE)
 The installer **tracks what is actually happening in the load order — never
 assumes values, never hardcodes matches**. Nearly every list carries author
 tweaks (LoreRim's fire MGEF was last touched by Big Tweaks, not Requiem).
@@ -237,7 +237,7 @@ Duration-anchored primaries (paralysis, soultrap: magnitude 0) can't
 ratio-normalize — deferred, noted in the JSON. LoreRim validation: derived
 frost rider Slow ×2.0/3s reproduces the m21 hand-read exactly.
 
-**New-family rarity (Marth 2026-07-09, RULE):** families added from
+**New-family rarity (marth 2026-07-09, RULE):** families added from
 list-discovered recipes (Force, Spellbreaking, burst variants,
 armor-penetration packages) enter at the **second-rarest tier (A)**.
 
@@ -252,11 +252,11 @@ install-time tool remaps and extends against the *actual* load order. Two jobs:
    extension ESP + runtime JSON; the DLL loads the extension catalog at
    kDataLoaded (revisits "no runtime JSON in the DLL").
 
-Decisions (Marth): **inclusion = threshold ≥4 wearable items + a maintained
+Decisions (marth): **inclusion = threshold ≥4 wearable items + a maintained
 blacklist** (drops the 1–2-item artifact tail automatically; blacklists MGEFs
 that duplicate effects we already cover, e.g. Requiem's tier-2 fortifies).
 
-Strip classification (Marth 2026-07-09):
+Strip classification (marth 2026-07-09):
 - **Artifact-class → KEEP enchanted, socket-sealed**: true artifacts/uniques;
   multi-effect enchantment packages (mage robes = school + regen, etc.);
   named themed sets even when single-effect (Silent Moons/Lunar — keep
@@ -269,14 +269,14 @@ Strip classification (Marth 2026-07-09):
   (formEnchanting) or a foreign ExtraEnchantment. Already enforced in the DLL
   (IsSocketable*Base + apply-path + menu listing + NPC stamper); artifacts
   stay enchanted AND cannot take gems.
-- RULED (Marth 2026-07-09): Requiem's tiered 2-effect generics ("of
+- RULED (marth 2026-07-09): Requiem's tiered 2-effect generics ("of
   Freezing" = frost+slow tiers; ~560 enchants / ~4,351 items in LoreRim)
   are **stripped**. Artifact-class means distinctive named *packages* only
   (mage robes, Silent Moons, uniques) — generic "of X" tier lines go even
   with 2 effects, so gems fully replace generic enchanted loot. Practical
   test for the tool: an enchantment is a generic tier line if its effects
   are all family-covered AND it appears on ≥4 items across material tiers.
-- Doctrine refinement (Marth, same day): those second effects are
+- Doctrine refinement (marth, same day): those second effects are
   **incidental riders**, not packages — they're what the element *means* in
   the load order (Requiem frost = frost + slow 2M/3s; shock = shock +
   magicka bite 2M; fire = fire alone). **Gems follow the recipe**: catalog
@@ -285,7 +285,7 @@ Strip classification (Marth 2026-07-09):
   fire — no 50% proc conditions on built instances; flagged for balance
   review). Explicit doubles (deliberate distinct-effect packages like
   robes) remain artifact-class.
-- **CORRECTED to CONVERSION (Marth 2026-07-09, m23 SHIPPED v0.31.0)**: the
+- **CORRECTED to CONVERSION (marth 2026-07-09, m23 SHIPPED v0.31.0)**: the
   "strip" never removes loot — a covered enchanted generic **converts, at
   spawn/acquire, into its unenchanted base with the matching family's gem
   socketed and ACTIVE** (level I/II rolled with the same fGemLevel2Chance
@@ -309,10 +309,10 @@ prototype in python, build the C#/Mutagen tool via CI).
 
 - Gems are MISC items, one form per type × level: `MEO_Gem<Type><1..5>`.
   Support gems level too, but in **3 tiers** (`MEO_Support<Type><1..3>`); see §5.
-- **Terminology (Marth, 2026-07-07): the currency is "Gem XP"** — never "AP"
+- **Terminology (marth, 2026-07-07): the currency is "Gem XP"** — never "AP"
   (banned term; all naming must be original to MEO). Code/serialization keep `xp`.
 - **Every unique gem owns its own Gem XP pool — no pooling, no fungibility
-  of any kind (Marth, 2026-07-07).** A gem is a unique individual for its
+  of any kind (marth, 2026-07-07).** A gem is a unique individual for its
   whole life: socketed or loose, it keeps its own {level, Gem XP}. A Fire I
   can be slotted alongside a Fire III; two Fire I gems with different
   partial progress stay distinct items. **Unsocketing returns THE gem**
@@ -330,7 +330,7 @@ prototype in python, build the C#/Mutagen tool via CI).
   once is an **atomic swap** (the old gem leaves the weapon only when the
   new one arrives — fixing the M4b message-box Swap, which unsocketed
   before a choice was made). The M4a/M4b message-box menus are retired.
-- **Followers earn Gem XP too (Marth, 2026-07-07):** kills made by a player
+- **Followers earn Gem XP too (marth, 2026-07-07):** kills made by a player
   teammate award Gem XP to the gems socketed in *that follower's* worn gear —
   each actor levels their own gems, so equipping followers with gems is never
   a waste. (Fallback if per-follower proves hard: share the player's awards.)
@@ -339,12 +339,12 @@ prototype in python, build the C#/Mutagen tool via CI).
     awards Gem XP to *every* socketed gem in parallel: **1 per standard
     enemy, 10 per boss**. Native `TESDeathEvent` sink (implemented v0.7.1).
   - **Soul feeding** (SHIPPED m10) — at an **enchanting station** (SETTLED,
-    Marth 2026-07-07: feeding and destruction are station interactions, NOT
+    marth 2026-07-07: feeding and destruction are station interactions, NOT
     pouch ones — the pouch/socket menu never grows a feeding zone), consume
     a filled soul gem to grant Gem XP to one gem:
     **petty 1, lesser 2.5, common 5, greater 12, grand/black 40**
     (`kSoulFeedXP` in plugin.cpp). These values are THE balance choice
-    (Marth, m26b v0.35.1): the original 5/12/25/60/200 table power-leveled
+    (marth, m26b v0.35.1): the original 5/12/25/60/200 table power-leveled
     gems — a grand soul was half a level-I threshold — so the soul→XP rate
     was cut ~80% while gem POWER stayed untouched. With the **Soul Feeder**
     perk the yield is **2×** (both when fed and when reclaimed), so a Grand
@@ -362,7 +362,7 @@ prototype in python, build the C#/Mutagen tool via CI).
     ALL Gem XP earned by whoever carries it (whole-carrier aura; making it
     a true linked support gem is a possible later refinement). Grant is
     latched in the co-save.
-  - **Gems are NOT sellable (Marth, RULE):** gold value 0, enforced both in
+  - **Gems are NOT sellable (marth, RULE):** gold value 0, enforced both in
     the ESP source and at runtime by the DLL; loose gems live in the hidden
     pouch so vendors never even list them. Gems are progression items, not
     currency.
@@ -372,7 +372,7 @@ prototype in python, build the C#/Mutagen tool via CI).
   Reaching 7,000 = **Level V = Master**: the gem **births** one fresh
   Level-1 copy (notification) and stops accruing. Birthing is the only way
   to replicate a gem.
-- **Calibration ladder (Marth, 2026-07-07)** — thresholds are derived from
+- **Calibration ladder (marth, 2026-07-07)** — thresholds are derived from
   content budgets, not vibes; see BALANCE.md "Content budget" for the model:
   - Main quest alone → **Level II comfortably, ~⅔ toward III, cannot reach
     III** without extra content.
@@ -504,7 +504,7 @@ the economy — roughly **doubling gem accrual while keeping it varied**:
    equipment instead — same shelves, gem-flavored.
    *Implementation status (m19b)*: loose gem sales BUILT (per-item roll at
    barter open, deterministic per vendor per game day, cap 3, tier-weighted).
-   *Enemy worn gems STAY IN THE GEAR* (Marth 2026-07-09) — the corpse's
+   *Enemy worn gems STAY IN THE GEAR* (marth 2026-07-09) — the corpse's
    socketed item is itself the loot; loose corpse gems are a separate pool.
    That requires surviving container transfers, so m19 adds the
    **container re-key** (`TESContainerChangedEvent` sink): when a base with
@@ -526,7 +526,7 @@ the economy never dipped.)
 
 ## 4. Sockets and the Gem Pouch
 
-Socket layout (Marth, DECIDED — supersedes the earlier "cuirass dual by
+Socket layout (marth, DECIDED — supersedes the earlier "cuirass dual by
 default" sketch):
 
 | Gear | Unperked | Perked |
@@ -574,7 +574,7 @@ default" sketch):
 - NPCs never level gems. Enemies can spawn *wearing* socketed gear (m19,
   themed per enemy archetype) — the socketed piece is itself the loot.
 
-### Onboarding — CUT (Marth, 1.0 decision)
+### Onboarding — CUT (marth, 1.0 decision)
 
 **No in-game onboarding ships.** The earlier "Jeweler's Primer" readable +
 one-time contextual hint design was cut for 1.0: no tutorials, no guides, no

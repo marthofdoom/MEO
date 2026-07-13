@@ -1,5 +1,5 @@
 Scriptname MEO_MCM extends MCM_ConfigBase
-; Marth's Enchanting Overhaul — MCM registration shim.
+; marth's Enchanting Overhaul — MCM registration shim.
 ;
 ; Deliberately empty. MCM Helper renders every control from
 ; Data/MCM/Config/MEO/config.json and persists each ModSetting to

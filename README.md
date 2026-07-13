@@ -1,4 +1,4 @@
-# Marth's Enchanting Overhaul (MEO)
+# marth's Enchanting Overhaul (MEO)
 
 A full replacement for Skyrim SE enchanting that turns enchantments into
 **gems**: socketed into your own equipment from a pouch menu anywhere, and
@@ -282,7 +282,7 @@ SKSE co-save that migrates itself forward across updates.
 
 ## Credits
 
-- **Marth** — design, direction, and all in-game testing
+- **marth** — design, direction, and all in-game testing
 - **Claude (Anthropic)** — implementation pair: native plugin, ESP generator,
   installer, catalog parser, tooling, and documentation
 - Reference sources this project learns from: Skyrim.esm itself, the sibling

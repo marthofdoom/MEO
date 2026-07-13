@@ -7,8 +7,8 @@
     <Nullable>enable</Nullable>
     <!-- Real version metadata on the exe: unsigned binaries with blank
          properties look worse to SmartScreen/AV heuristics and to users. -->
-    <Product>Marth's Enchanting Overhaul Installer</Product>
-    <Company>Marth</Company>
+    <Product>marth's Enchanting Overhaul Installer</Product>
+    <Company>marth</Company>
     <Description>Post-install patcher: adapts the enchanting perk tree to your load order.</Description>
     <InformationalVersion>0.29.0</InformationalVersion>
   </PropertyGroup>

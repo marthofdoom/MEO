@@ -9,7 +9,7 @@ deltas afterwards — they persist in the save.
 - Active Effects UI shows "Elemental Absorb" and "Carry Weight Bonus"
   (constant self abilities with FULL names; may take one 30s heartbeat)
 - `player.getav CarryWeight` — +150 over base
-- MCM "Marth Requiem Overhaul" present (else `setstage ski_configmanagerinstance 1`)
+- MCM "marth Requiem Overhaul" present (else `setstage ski_configmanagerinstance 1`)
 
 ## Elemental absorb
 ```

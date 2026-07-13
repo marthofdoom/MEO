@@ -26,7 +26,7 @@ enum class GemClass : std::uint8_t {
 // transferred ratio, Echo follower-share fraction).
 enum class SupportType : std::uint8_t { kNone, kFocus, kConduit, kEcho };
 
-// Secondary effect riding on the gem's primary (m21, Marth: gems follow the
+// Secondary effect riding on the gem's primary (m21, marth: gems follow the
 // load order's elemental recipe — frost carries slow, shock carries magicka
 // bite, chaos carries all three elements). magnitude = primary × ratio.
 struct GemRider {
