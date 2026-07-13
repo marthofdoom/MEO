@@ -308,6 +308,9 @@ MCM_TUNABLES=[
     ("XP & Balance","UI","bStationTakeover","Gem menu replaces enchanting table",
      "Enchanting stations open the gem menu (soul feeding and gem destruction) instead of the vanilla enchanting menu. MEO replaces enchanting entirely; disable only to overlay the vanilla menu instead.",
      'b',1,None,None,None,None),
+    ("XP & Balance","UI","bTemperNoPerk","Temper socketed gear without Arcane Blacksmith",
+     "Socketed weapons and armor carry a gem enchantment, which normally makes the grindstone and workbench require the Arcane Blacksmith perk to improve them. ON grants that perk so socketed gear improves freely; since MEO converts generic enchanted loot into sockets, only artifacts still need the perk. OFF revokes MEO's grant (never a perk you earned yourself).",
+     'b',1,None,None,None,None),
     # type 'e' = enum dropdown; the options list rides in the min slot.
     ("XP & Balance","UI","iMenuStyle","Gem menu style",
      "Visual skin for the gem socketing menu. Applies the next time the menu opens.",

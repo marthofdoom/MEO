@@ -118,7 +118,7 @@ bool          g_starterGranted = false;
 
 constexpr std::uint32_t kSerID = 'MEO1';
 constexpr std::uint32_t kRecGems = 'GEMS';
-constexpr std::uint32_t kSerVersion = 7;  // v7: + pouchRefID.  // v6: + armorStarterGranted. v5: per-socket slot. v3/v4 → slot 0
+constexpr std::uint32_t kSerVersion = 8;  // v8: + meoGrantedArcane. v7: pouchRefID. v6: armorStarter. v5: slot.
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -412,6 +412,7 @@ RE::BGSPerk* g_perkJeweler = nullptr;
 // generic enchanted loot to sockets, so in practice this only frees socketed
 // gear (+ artifacts) — Marth's ruling 2026-07-12.
 RE::BGSPerk* g_perkArcaneBlacksmith = nullptr;
+bool         g_meoGrantedArcane = false;  // co-save v8: MEO added the perk (revocable)
 bool g_treeMode = false;  // MEO - Patch.esp installed: perks come from the tree, not auto-grant
 // Cached from the player's perks (refreshed on load + menu close).
 int  g_attuneRank = 0;      // 0..5 → +8% gem magnitude per rank
@@ -1061,6 +1062,7 @@ float g_bossXPMult = 10.0f;       // [XP] fBossXPMult — boss/dragon kill multi
 bool  g_xpNotify = true;          // [UI] bXPNotify — "Gem XP +N" on kills
 bool  g_stationTakeover = true;   // [UI] bStationTakeover — gem menu REPLACES the vanilla enchanting menu
 int   g_menuStyle = 0;            // [UI] iMenuStyle — gem menu skin 0..3 (m24 MCM dropdown)
+bool  g_temperNoPerk = true;      // [UI] bTemperNoPerk — socketed gear tempers w/o Arcane Blacksmith (m33)
 float g_enchSkillXPMult = 1.0f;   // [XP] fEnchSkillXP — Enchanting SKILL xp per soul fed (m25)
 // g_magnitudeMult [XP] fMagnitudeMult is declared up top (StampInstance uses it)
 
@@ -1099,6 +1101,7 @@ static void ApplyIniFile(const char* a_path) {
         else if (key == "bXPNotify")          g_xpNotify = val != 0.0f;
         else if (key == "bStationTakeover")   g_stationTakeover = val != 0.0f;
         else if (key == "iMenuStyle")         g_menuStyle = std::clamp(static_cast<int>(val), 0, 3);
+        else if (key == "bTemperNoPerk")      g_temperNoPerk = val != 0.0f;
         else if (key == "fEnchSkillXP")       g_enchSkillXPMult = val;
     }
 }
@@ -1236,6 +1239,7 @@ public:
         if (!a_event->opening && a_event->menuName == RE::JournalMenu::MENU_NAME) {
             ReadConfig();
             RefreshPerks();  // pick up Enchanting skill-ups (interim auto-grant)
+            ApplyTemperPerk();  // m33: MCM toggle takes effect on menu close
         } else if (!a_event->opening && a_event->menuName == RE::LoadingMenu::MENU_NAME) {
             // m19e: gameplay just resumed after a load — NOW the worn-socket
             // re-equip can take (a blind post-load timer fired during long
@@ -3800,6 +3804,30 @@ public:
 };
 
 // ── Player setup: grant the pouch power + one-time starter gems ───────
+// m33: the grindstone/workbench gate enchanted tempering on Arcane Blacksmith
+// (Skyrim.esm 0x05218E — Requiem overrides in place; no entry point, engine
+// hardcodes it by FormID). Socketed items read as enchanted, so the only lever
+// is the perk itself. bTemperNoPerk ON = ensure present (marking it MEO-added
+// so OFF can revoke ONLY our grant, never a perk the player earned). Because
+// conversion sockets all generic enchanted loot, this effectively frees only
+// socketed gear (artifacts sit under a different perk).
+void ApplyTemperPerk() {
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    if (!player || !g_perkArcaneBlacksmith) {
+        return;
+    }
+    const bool has = player->HasPerk(g_perkArcaneBlacksmith);
+    if (g_temperNoPerk && !has) {
+        player->AddPerk(g_perkArcaneBlacksmith, 1);
+        g_meoGrantedArcane = true;
+        spdlog::info("[temper] granted Arcane Blacksmith — socketed gear improvable without it");
+    } else if (!g_temperNoPerk && g_meoGrantedArcane && has) {
+        player->RemovePerk(g_perkArcaneBlacksmith);
+        g_meoGrantedArcane = false;
+        spdlog::info("[temper] revoked MEO-granted Arcane Blacksmith (toggle off)");
+    }
+}
+
 void EnsurePlayerSetup() {
     auto* player = RE::PlayerCharacter::GetSingleton();
     if (!player) {
@@ -3810,16 +3838,7 @@ void EnsurePlayerSetup() {
         spdlog::info("granted Gem Pouch power");
         Notify("You have learned to socket gems (Gem Pouch power).");
     }
-    // m33: let socketed weapons/armor be improved at a grindstone/workbench
-    // without the Arcane Blacksmith smithing perk. The engine gates enchanted
-    // tempering on that exact perk (Skyrim.esm 0x05218E, no entry point to
-    // replicate), so granting it is the only lever. MEO converts all generic
-    // enchanted loot to sockets, so this in practice only frees socketed gear.
-    // Ensured present each setup — MEO's design needs it.
-    if (g_perkArcaneBlacksmith && !player->HasPerk(g_perkArcaneBlacksmith)) {
-        player->AddPerk(g_perkArcaneBlacksmith, 1);
-        spdlog::info("[temper] granted Arcane Blacksmith — socketed gear improvable without it");
-    }
+    ApplyTemperPerk();  // m33: socketed gear temperable w/o Arcane Blacksmith (MCM)
     if (!g_starterGranted) {
         int given = 0;
         for (const char* gid : { "firedamage", "frost", "shockdamage" }) {
@@ -4173,6 +4192,8 @@ void SaveCallback(SKSE::SerializationInterface* a_intfc) {
     const std::uint8_t armorStarter = g_armorStarterGranted ? 1 : 0;  // v6 field
     a_intfc->WriteRecordData(armorStarter);
     a_intfc->WriteRecordData(g_pouchRefID);  // v7 field: hidden gem container ref
+    const std::uint8_t grantedArcane = g_meoGrantedArcane ? 1 : 0;  // v8 field
+    a_intfc->WriteRecordData(grantedArcane);
     const std::uint32_t count = static_cast<std::uint32_t>(g_sockets.size());
     a_intfc->WriteRecordData(count);
     for (const auto& [key, rec] : g_sockets) {
@@ -4195,6 +4216,7 @@ void SaveCallback(SKSE::SerializationInterface* a_intfc) {
 void LoadCallback(SKSE::SerializationInterface* a_intfc) {
     g_sockets.clear();
     g_pouchRefID = 0;
+    g_meoGrantedArcane = false;
     g_nextUID = 0x9000;
     g_starterGranted = false;
     g_mentorGranted = false;
@@ -4231,6 +4253,11 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
         if (version >= 7) {  // v7: pouch container ref (recreated when absent)
             a_intfc->ReadRecordData(g_pouchRefID);
         }
+        if (version >= 8) {  // v8: MEO-granted Arcane Blacksmith flag
+            std::uint8_t grantedArcane = 0;
+            a_intfc->ReadRecordData(grantedArcane);
+            g_meoGrantedArcane = grantedArcane != 0;
+        }
         std::uint32_t count = 0;
         a_intfc->ReadRecordData(count);
         for (std::uint32_t i = 0; i < count; ++i) {
@@ -4264,6 +4291,7 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
 
 void RevertCallback(SKSE::SerializationInterface*) {
     g_pouchRefID = 0;  // m27: pouch ref is save-scoped
+    g_meoGrantedArcane = false;  // m33
     g_sockets.clear();
     g_nextUID = 0x9000;
     g_starterGranted = false;
@@ -4287,7 +4315,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.43.0 (M33 temper socketed gear without Arcane Blacksmith) loaded");
+            console->Print("MEO native v0.43.1 (M33b temper-perk MCM toggle) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4348,7 +4376,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.43.0 (M33 temper socketed gear without Arcane Blacksmith) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.43.1 (M33b temper-perk MCM toggle) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
