@@ -3,11 +3,14 @@
 Install-time patcher, run once against the user's MO2 setup. Two jobs:
 
 1. **Perk tree replacement** — swap the load order's enchanting perk tree
-   (whatever won the AVEnchanting override) for MEO's 9 gem perks, retiring
-   the DLL's auto-grant.
-2. **Loot strip** — remove generic (non-artifact) enchanted items from
-   leveled lists, replacing them with their plain base items. Artifacts and
-   unique enchantments stay.
+   (whatever won the AVEnchanting override) for MEO's 13 gem perks (attunement
+   ×5, Gem Cutter, Soul Feeder, the three elemental affinities, Facet Insight,
+   and the two socket perks), retiring the DLL's auto-grant.
+2. **Per-list calibration + conversion table** — scan the load order and write
+   `meo_calibration.json`: per-family magnitude curves, rider recipes, rank
+   ladders, and the CONVERSION table that maps generic (non-artifact) enchanted
+   items to a plain base + the matching gem. The DLL converts them in-game
+   (no leveled-list surgery); artifacts and unique enchantments stay untouched.
 
 ## Stack
 

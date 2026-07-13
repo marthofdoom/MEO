@@ -184,11 +184,17 @@ The `- 4` offset on the callback message is the trap everyone hits.
   extra); post-load, a rebuild dedupes to the SAME FF form, so
   UpdateWeaponAbility no-ops against the save's stale ability bookkeeping —
   and re-equip only worked because unequip is a forced teardown. The
-  blinkless recipe: strip `ExtraEnchantment` + Update*Ability (teardown),
-  then NEXT task rebuild + Update*Ability (fresh ability). No equip cycle,
-  no gear blink. Run it anchored to Loading-Menu close (+5s and +12s — a
-  blind +1.5s was field-swallowed during the fade; it's invisible, so two
-  passes are free), with a long fallback timer for menu-less loads. GOTCHA: `d3d11.h` pulls `wingdi.h` which `#define`s
+  m19f blinkless recipe (strip `ExtraEnchantment` + Update*Ability teardown,
+  then NEXT task rebuild + Update*Ability) was **RETIRED in m35d**: it leaned on
+  Update*Ability to REPLACE the worn ability, but that call early-outs on
+  teardown and each restamp minted a NEW FF form, so old abilities lingered and
+  the same effect stacked ("base item + renamed item", Marth). The shipped model
+  (v0.47.1-m35d) reactivates worn sockets with the engine's own complete
+  teardown — a real **equip cycle** (`EquipCycleWorn`, the same call in-session
+  socketing uses) — which is IDEMPOTENT: unequip drops ALL old abilities, equip
+  installs exactly one from the current extra, so repeated passes can't
+  accumulate. Still anchored to Loading-Menu close (+5s/+12s) with a long
+  fallback for menu-less loads; the one-frame blink hides behind the post-load fade. GOTCHA: `d3d11.h` pulls `wingdi.h` which `#define`s
   `GetObject`→`GetObjectW`, hijacking `BGSDefaultObjectManager::GetObject<T>()`
   — `#undef GetObject` after the D3D includes.
   SETTLED (2026-07-08, m17b AV probe): the kLeft/RightItemCharge AV-gate
