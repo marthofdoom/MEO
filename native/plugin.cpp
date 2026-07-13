@@ -400,11 +400,19 @@ constexpr RE::FormID kPerkGemCutter  = 0x815;
 constexpr RE::FormID kPerkSoulFeeder = 0x816;
 constexpr RE::FormID kPerkTwinned    = 0x817;  // Twinned Fitting: chest 2nd socket
 constexpr RE::FormID kPerkJeweler    = 0x818;  // Master Jeweler: weapon 2nd socket
+constexpr RE::FormID kPerkPyrestone  = 0x819;  // Pyrestone Affinity: Fire/Chaos +25% (m34)
+constexpr RE::FormID kPerkFroststone = 0x81A;  // Froststone Affinity: Frost/Chaos +25%
+constexpr RE::FormID kPerkStormstone = 0x81B;  // Stormstone Affinity: Shock/Chaos +25%
+constexpr RE::FormID kPerkFacet      = 0x81C;  // Facet Insight: skill/attribute armor gems +25%
 RE::BGSPerk* g_perkAttune[5] = {};
 RE::BGSPerk* g_perkGemCutter = nullptr;
 RE::BGSPerk* g_perkSoulFeeder = nullptr;
 RE::BGSPerk* g_perkTwinned = nullptr;
 RE::BGSPerk* g_perkJeweler = nullptr;
+RE::BGSPerk* g_perkPyrestone = nullptr;   // m34 elemental affinities + Facet Insight
+RE::BGSPerk* g_perkFroststone = nullptr;
+RE::BGSPerk* g_perkStormstone = nullptr;
+RE::BGSPerk* g_perkFacet = nullptr;
 // m33: vanilla/Requiem "Arcane Blacksmith" (Skyrim.esm 0x05218E, overridden
 // in place by Requiem). The engine hardcodes tempering of ENCHANTED items to
 // this perk by FormID (it carries no entry points), so the only way to let
@@ -420,6 +428,10 @@ bool g_hasGemCutter = false;  // +50% Gem XP
 bool g_hasSoulFeeder = false; // soul feeding is twice as potent
 bool g_hasTwinned = false;    // chest armor holds 2 linked gems
 bool g_hasJeweler = false;    // weapons hold 2 linked gems
+bool g_hasPyrestone = false;  // Fire/Chaos +25% (m34)
+bool g_hasFroststone = false; // Frost/Chaos +25%
+bool g_hasStormstone = false; // Shock/Chaos +25%
+bool g_hasFacet = false;      // skill/attribute armor gems +25%
 
 void SetupLog() {
     auto logDir = SKSE::log::log_directory();
@@ -707,6 +719,10 @@ void ResolveCatalog() {
     g_perkSoulFeeder = dh->LookupForm<RE::BGSPerk>(kPerkSoulFeeder, kPluginName);
     g_perkTwinned = dh->LookupForm<RE::BGSPerk>(kPerkTwinned, kPluginName);
     g_perkJeweler = dh->LookupForm<RE::BGSPerk>(kPerkJeweler, kPluginName);
+    g_perkPyrestone = dh->LookupForm<RE::BGSPerk>(kPerkPyrestone, kPluginName);
+    g_perkFroststone = dh->LookupForm<RE::BGSPerk>(kPerkFroststone, kPluginName);
+    g_perkStormstone = dh->LookupForm<RE::BGSPerk>(kPerkStormstone, kPluginName);
+    g_perkFacet = dh->LookupForm<RE::BGSPerk>(kPerkFacet, kPluginName);
     g_perkArcaneBlacksmith = dh->LookupForm<RE::BGSPerk>(0x05218E, "Skyrim.esm");
     // Tree mode: the installer-generated patch replaces the enchanting perk
     // tree with MEO's perks, so the player earns them with perk points and
@@ -769,6 +785,25 @@ int SocketCapacity(RE::TESBoundObject* a_obj) {
 // slots. One created enchant carries one Effect per gem; the name lists them.
 // No filled slots -> strip the enchant + name. Caller applies the worn ability.
 // This is the multi-socket core: every socket/unsocket/level-up rebuilds here.
+// m34 (DESIGN §6): elemental affinities + Facet Insight, each +25%. Chaos is
+// every element, so all three affinities stack on it. Facet Insight covers
+// skill (SKILL) and attribute (LINEAR) armor gems — not resist/utility.
+float GemPerkMult(const meo::GemDef* a_def) {
+    if (!a_def) {
+        return 1.0f;
+    }
+    float m = 1.0f;
+    const bool chaos = std::strcmp(a_def->gid, "chaos") == 0;
+    if (g_hasPyrestone && (a_def->theme == meo::Theme::kFire || chaos)) m += 0.25f;
+    if (g_hasFroststone && (a_def->theme == meo::Theme::kFrost || chaos)) m += 0.25f;
+    if (g_hasStormstone && (a_def->theme == meo::Theme::kShock || chaos)) m += 0.25f;
+    if (g_hasFacet && a_def->isArmor &&
+        (a_def->gclass == meo::GemClass::kSkill || a_def->gclass == meo::GemClass::kLinear)) {
+        m += 0.25f;
+    }
+    return m;
+}
+
 void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList) {
     auto* xid = a_xList ? a_xList->GetByType<RE::ExtraUniqueID>() : nullptr;
     if (!a_base || !xid) {
@@ -811,10 +846,11 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     std::string namePart;
     std::size_t e = 0;
     for (std::size_t i = 0; i < filled.size(); ++i) {
-        // Master power scale (MCM) × Gem Attunement (+8%/rank, DESIGN §6).
+        // Master power scale (MCM) × Gem Attunement (+8%/rank) × affinity/
+        // Facet Insight (+25% each, DESIGN §6).
         const float primaryMag =
             filled[i].rg->def->magnitude[filled[i].lvIdx] * g_magnitudeMult *
-            (1.0f + 0.08f * g_attuneRank);
+            (1.0f + 0.08f * g_attuneRank) * GemPerkMult(filled[i].rg->def);
         auto& eff = effects[e++];
         eff.effectItem.magnitude = primaryMag;
         eff.effectItem.area = 0;
@@ -829,7 +865,9 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
             auto& reff = effects[e++];
             reff.effectItem.magnitude =
                 rd.absMag > 0.0f
-                    ? rd.absMag * g_magnitudeMult * (1.0f + 0.08f * g_attuneRank)  // m32
+                    ? rd.absMag * g_magnitudeMult * (1.0f + 0.08f * g_attuneRank) *
+                          GemPerkMult(filled[i].rg->def)  // m32/m34
+
                     : primaryMag * rd.ratio;
             reff.effectItem.area = 0;
             reff.effectItem.duration = static_cast<std::uint32_t>(rd.dur);
@@ -1146,6 +1184,10 @@ void RefreshPerks() {
         grant(g_perkSoulFeeder, skill >= 40.0f);
         grant(g_perkTwinned, skill >= 70.0f);   // DESIGN §6 Corpus-tier req
         grant(g_perkJeweler, skill >= 100.0f);  // DESIGN §6 Extra Effect req
+        grant(g_perkPyrestone, skill >= 30.0f);   // Fire Enchanter req (m34)
+        grant(g_perkFroststone, skill >= 40.0f);  // Frost Enchanter req
+        grant(g_perkStormstone, skill >= 50.0f);  // Storm Enchanter req
+        grant(g_perkFacet, skill >= 50.0f);       // Insightful Enchanter req
     }
     g_attuneRank = 0;
     for (int i = 0; i < 5; ++i) {
@@ -1157,8 +1199,13 @@ void RefreshPerks() {
     g_hasSoulFeeder = g_perkSoulFeeder && player->HasPerk(g_perkSoulFeeder);
     g_hasTwinned = g_perkTwinned && player->HasPerk(g_perkTwinned);
     g_hasJeweler = g_perkJeweler && player->HasPerk(g_perkJeweler);
-    spdlog::info("[perks] enchanting={:.0f} treeMode={} attuneRank={} gemCutter={} soulFeeder={} twinned={} jeweler={}",
-                 skill, g_treeMode, g_attuneRank, g_hasGemCutter, g_hasSoulFeeder, g_hasTwinned, g_hasJeweler);
+    g_hasPyrestone = g_perkPyrestone && player->HasPerk(g_perkPyrestone);
+    g_hasFroststone = g_perkFroststone && player->HasPerk(g_perkFroststone);
+    g_hasStormstone = g_perkStormstone && player->HasPerk(g_perkStormstone);
+    g_hasFacet = g_perkFacet && player->HasPerk(g_perkFacet);
+    spdlog::info("[perks] enchanting={:.0f} treeMode={} attuneRank={} gemCutter={} soulFeeder={} twinned={} jeweler={} pyre={} frost={} storm={} facet={}",
+                 skill, g_treeMode, g_attuneRank, g_hasGemCutter, g_hasSoulFeeder, g_hasTwinned, g_hasJeweler,
+                 g_hasPyrestone, g_hasFroststone, g_hasStormstone, g_hasFacet);
 }
 
 // Menu snapshot rows + shared state (declared here so MenuSink can read
@@ -2296,7 +2343,7 @@ namespace menuhook {
             const int   li = std::clamp(a_level, 1, 5) - 1;
             auto*       m = rg.mgefLv[li] ? rg.mgefLv[li] : rg.mgef;
             const float mag = rg.def->magnitude[li] * g_magnitudeMult *
-                              (1.0f + 0.08f * g_attuneRank);
+                              (1.0f + 0.08f * g_attuneRank) * GemPerkMult(rg.def);
             const char* d = m ? m->magicItemDescription.c_str() : nullptr;
             if (d && *d) {
                 std::string s(d);
@@ -4360,7 +4407,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.43.2 (M32h pouch-sync uid drift fix) loaded");
+            console->Print("MEO native v0.44.0 (M34 elemental affinities + Facet Insight) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4421,7 +4468,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.43.2 (M32h pouch-sync uid drift fix) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.44.0 (M34 elemental affinities + Facet Insight) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }

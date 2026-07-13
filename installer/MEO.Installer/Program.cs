@@ -382,6 +382,10 @@ static class Commands
         var soulFeeder = Perk(0x816);
         var twinned = Perk(0x817);
         var jeweler = Perk(0x818);
+        var pyrestone = Perk(0x819);   // m34 affinities + Facet Insight
+        var froststone = Perk(0x81A);
+        var stormstone = Perk(0x81B);
+        var facet = Perk(0x81C);
 
         var patch = new SkyrimMod(ModKey.FromNameAndExtension("MEO - Patch.esp"),
                                   SkyrimRelease.SkyrimSE)
@@ -542,7 +546,8 @@ static class Commands
         var occupied = over.PerkTree.Where(n => (n.Index ?? 0) != 0)
             .Select(n => (n.PerkGridX ?? 0, n.PerkGridY ?? 0)).ToHashSet();
         uint xBase = 2;
-        (uint, uint)[] Cells(uint x) => [(x, 0u), (x - 1, 1u), (x + 1, 1u), (x, 2u), (x, 3u)];
+        (uint, uint)[] Cells(uint x) => [(x, 0u), (x - 1, 1u), (x + 1, 1u), (x, 2u), (x, 3u),
+                                         (x - 2, 1u), (x + 2, 1u), (x - 2, 2u), (x + 2, 2u)];
         while (Cells(xBase).Any(c => occupied.Contains(c))) xBase++;
         uint nextIdx = over.PerkTree.Max(n => n.Index ?? 0) + 1;
 
@@ -564,16 +569,23 @@ static class Commands
         }
 
         uint iAtt = nextIdx, iCut = nextIdx + 1, iFeed = nextIdx + 2,
-             iTwin = nextIdx + 3, iJwl = nextIdx + 4;
-        over.PerkTree.Add(Node(iAtt, attune1, xBase, 0, iCut, iFeed));
+             iTwin = nextIdx + 3, iJwl = nextIdx + 4,
+             iPyr = nextIdx + 5, iFro = nextIdx + 6, iSto = nextIdx + 7, iFac = nextIdx + 8;
+        // Attunement is the hub; affinities + Facet Insight branch off it
+        // alongside cutter/feeder (m34, DESIGN §6 reqs 30-50).
+        over.PerkTree.Add(Node(iAtt, attune1, xBase, 0, iCut, iFeed, iPyr, iFro, iFac));
         over.PerkTree.Add(Node(iCut, gemCutter, xBase - 1, 1));
         over.PerkTree.Add(Node(iFeed, soulFeeder, xBase + 1, 1, iTwin));
         over.PerkTree.Add(Node(iTwin, twinned, xBase, 2, iJwl));
         over.PerkTree.Add(Node(iJwl, jeweler, xBase, 3));
+        over.PerkTree.Add(Node(iPyr, pyrestone, xBase - 2, 1, iSto));   // pyre -> storm chain
+        over.PerkTree.Add(Node(iFro, froststone, xBase + 2, 1));
+        over.PerkTree.Add(Node(iSto, stormstone, xBase - 2, 2));
+        over.PerkTree.Add(Node(iFac, facet, xBase + 2, 2));
         root.ConnectionLineToIndices.Add(iAtt);
 
         Console.WriteLine($"tree: {removedIdx.Count} craft node(s) replaced, " +
-                          $"{over.PerkTree.Count - 6} kept, MEO at x={xBase}, " +
+                          $"{over.PerkTree.Count - 10} kept, MEO at x={xBase}, " +
                           $"{orphans.Count} kept orphan(s) reparented to root");
         patch.WriteToBinary(outPath);
         Console.WriteLine($"wrote {outPath}");

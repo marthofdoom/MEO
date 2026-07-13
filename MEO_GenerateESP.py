@@ -231,6 +231,10 @@ MEO_PERKS = [
     ("MEO_Perk_SoulFeeder",  "Soul Feeder",    "Soul gems fed to gems at an enchanting station are twice as potent.", 40, None),
     ("MEO_Perk_TwinnedFitting","Twinned Fitting","Chest armor can hold a second linked gem.", 70, None),   # 0x817
     ("MEO_Perk_MasterJeweler", "Master Jeweler", "Weapons can hold a second linked gem.", 100, None),      # 0x818
+    ("MEO_Perk_Pyrestone",  "Pyrestone Affinity",  "Fire and Chaos gems are 25% stronger.", 30, None),     # 0x819
+    ("MEO_Perk_Froststone", "Froststone Affinity", "Frost and Chaos gems are 25% stronger.", 40, None),    # 0x81A
+    ("MEO_Perk_Stormstone", "Stormstone Affinity", "Shock and Chaos gems are 25% stronger.", 50, None),    # 0x81B
+    ("MEO_Perk_FacetInsight","Facet Insight","Skill and attribute armor gems are 25% stronger.", 50, None),# 0x81C
 ]
 def ctda_skill_req(av_index, value):
     """CTDA: GetBaseActorValue(av) >= value, run on subject. 32 bytes."""
