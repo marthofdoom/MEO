@@ -1,0 +1,2 @@
+1.0 release candidate — leveling socketable gems, loot conversion, per-list calibration, rebuilt perk tree, and the full support-gem pillar
+built from native run 29293657074, installer run 29293657047
