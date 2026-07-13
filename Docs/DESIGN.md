@@ -644,12 +644,19 @@ The **installer** rewrites the load order's winning enchanting perk tree
 into MEO's perks, writing `MEO - Patch.esp`; other perks it finds in the
 tree are offered keep/drop interactively. The DLL applies all perk math at
 stamp/re-stamp time via `HasPerk` checks — the PERK records themselves are
-plain flag perks. The affinities + Facet Insight sit as a CHOICE FAN off the
-Attunement spine (m34b); obsolete vanilla enchanting perks are dropped.
+plain flag perks. The installer performs full perk-tree surgery: it deletes
+the winning tree's enchanting-craft nodes and inserts MEO's own nodes with
+fresh grid positions and connections — node *positions* are NOT kept (on
+vanilla, zero nodes survive). Only the SKILL REQUIREMENTS carry over, as
+`GetBaseActorValue(Enchanting) >= req` conditions baked into MEO.esp's PERK
+records. The three elemental affinities are PARALLEL CHOICES off the
+Attunement hub — the trio sits adjacent at the same depth, never chained one
+behind another (m36k); Attunement (5 ranks) and Feeder→Twinned→Jeweler are
+the sequential branches; Gem Cutter and Facet Insight are single choices.
 Enchanting skill still exists and levels from socketing, feeding, and gem
 level-ups; an MCM Debug toggle (`bDebugAllPerks`) force-grants every MEO
-perk for testing. The table below maps the vanilla tree (node positions and
-skill requirements are kept when the vanilla tree is the winner):
+perk for testing. The table below lists each MEO perk and the vanilla-era
+skill requirement it inherits:
 
 | Vanilla perk (req) | Becomes | Effect |
 |---|---|---|

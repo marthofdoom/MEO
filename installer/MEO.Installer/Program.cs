@@ -564,17 +564,23 @@ static class Commands
             }
         }
 
-        // MEO nodes get fresh indices and a grid column that doesn't collide
-        // with anything kept. Layout (y grows outward from the root):
-        //           jeweler   (x , 3)
-        //           twinned   (x , 2)
-        //   cutter (x-1, 1)   feeder (x+1, 1)
-        //           attune1-5 (x , 0)
+        // MEO nodes get fresh indices and grid cells that don't collide with
+        // anything kept. Layout (m36k, Marth): the elemental affinities are
+        // PARALLEL CHOICES off the hub, so the trio sits adjacent at the SAME
+        // depth (gridY=1) — never stacked one behind another (the constellation
+        // UI reads same-column/increasing-gridY as a sequential chain, which was
+        // the "shock behind fire / similar perks split" bug). Every choice perk
+        // is a depth-1 sibling; the Feeder->Twinned->Jeweler socket unlocks are
+        // the one intentional sequential branch.
+        //   pyre  frost storm       cutter facet   feeder (x+3,1)
+        //   (x-3) (x-2) (x-1)       (x+1)  (x+2)    twinned(x+3,2)
+        //                 attune1-5 (x,0)           jeweler(x+3,3)
         var occupied = over.PerkTree.Where(n => (n.Index ?? 0) != 0)
             .Select(n => (n.PerkGridX ?? 0, n.PerkGridY ?? 0)).ToHashSet();
-        uint xBase = 2;
-        (uint, uint)[] Cells(uint x) => [(x, 0u), (x - 1, 1u), (x + 1, 1u), (x, 2u), (x, 3u),
-                                         (x - 2, 1u), (x + 2, 1u), (x - 2, 2u), (x + 2, 2u)];
+        uint xBase = 3;  // leftmost reach is x-3; start clear of the grid edge
+        (uint, uint)[] Cells(uint x) => [(x, 0u), (x - 3, 1u), (x - 2, 1u), (x - 1, 1u),
+                                         (x + 1, 1u), (x + 2, 1u), (x + 3, 1u),
+                                         (x + 3, 2u), (x + 3, 3u)];
         while (Cells(xBase).Any(c => occupied.Contains(c))) xBase++;
         uint nextIdx = over.PerkTree.Max(n => n.Index ?? 0) + 1;
 
@@ -606,14 +612,14 @@ static class Commands
         // sequential (progressive socket unlocks).
         over.PerkTree.Add(Node(iAtt, attune1, xBase, 0,
                                iCut, iFeed, iPyr, iFro, iSto, iFac));  // hub fans to all choices
-        over.PerkTree.Add(Node(iCut, gemCutter, xBase - 1, 1));
-        over.PerkTree.Add(Node(iFeed, soulFeeder, xBase + 1, 1, iTwin));
-        over.PerkTree.Add(Node(iTwin, twinned, xBase, 2, iJwl));  // sequential: Twinned -> Jeweler
-        over.PerkTree.Add(Node(iJwl, jeweler, xBase, 3));
-        over.PerkTree.Add(Node(iPyr, pyrestone, xBase - 2, 1));   // parallel choice
-        over.PerkTree.Add(Node(iSto, stormstone, xBase - 2, 2));  // parallel choice
-        over.PerkTree.Add(Node(iFro, froststone, xBase + 2, 1));  // parallel choice
-        over.PerkTree.Add(Node(iFac, facet, xBase + 2, 2));       // parallel choice
+        over.PerkTree.Add(Node(iPyr, pyrestone,  xBase - 3, 1));  // elemental affinity trio:
+        over.PerkTree.Add(Node(iFro, froststone, xBase - 2, 1));  // parallel choices, adjacent,
+        over.PerkTree.Add(Node(iSto, stormstone, xBase - 1, 1));  // same depth off the hub
+        over.PerkTree.Add(Node(iCut, gemCutter, xBase + 1, 1));   // choice
+        over.PerkTree.Add(Node(iFac, facet, xBase + 2, 1));       // choice
+        over.PerkTree.Add(Node(iFeed, soulFeeder, xBase + 3, 1, iTwin));  // sequential branch:
+        over.PerkTree.Add(Node(iTwin, twinned, xBase + 3, 2, iJwl));      // Feeder -> Twinned
+        over.PerkTree.Add(Node(iJwl, jeweler, xBase + 3, 3));             // -> Jeweler
         root.ConnectionLineToIndices.Add(iAtt);
 
         Console.WriteLine($"tree: {removedIdx.Count} craft node(s) replaced, " +
