@@ -1503,16 +1503,32 @@ static class Mo2LoadOrder
                 .Select(l => l[1..].Trim())
                 .ToList();
         if (pluginsPath is null)
-            Console.WriteLine("no plugins.txt found — base game + DLC only " +
+            Console.WriteLine("no plugins.txt found — base game + DLC + Creation Club only " +
                               "(pass a plugins.txt path as the profile argument)");
         else
             Console.WriteLine($"plugins.txt: {pluginsPath}");
+        // Creation Club content loads via Skyrim.ccc (game root), between the
+        // base masters and plugins.txt — the base-game AE mechanism, active
+        // even with an empty plugins.txt (Steam Deck vanilla: 74 cc plugins
+        // the old base-masters-only read missed, so their loot never
+        // converted — Marth 2026-07-12).
+        var ccc = new List<string>();
+        var cccPath = Path.Combine(gameRoot, "Skyrim.ccc");
+        if (File.Exists(cccPath))
+        {
+            ccc = File.ReadLines(cccPath)
+                .Select(l => l.Trim())
+                .Where(l => l.Length > 0 && !l.StartsWith('#'))
+                .ToList();
+            Console.WriteLine($"Skyrim.ccc: {ccc.Count} Creation Club plugin(s)");
+        }
         var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var f in Directory.EnumerateFiles(dataDir))
             files.TryAdd(Path.GetFileName(f), f);
         var outList = new List<(string, string)>();
         missing = [];
-        foreach (var p in BaseMasters.Concat(plugins).Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var p in BaseMasters.Concat(ccc).Concat(plugins)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
         {
             if (files.TryGetValue(p, out var full)) outList.Add((p, full));
             else missing.Add(p);

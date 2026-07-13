@@ -281,22 +281,95 @@ void RecoverStrandedGems() {
     }
 }
 
+RE::ExtraDataList* FindInstanceXList(RE::TESObjectREFR* a_owner, RE::TESBoundObject* a_form,
+                                    std::uint16_t a_uid);  // defined below
 void RouteGemsToPouch() {
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* pouch = PouchRef();
     if (!player || !pouch) {
         return;
     }
-    int moved = 0;
+    // Snapshot first (moving invalidates the inventory iterator). XP instances
+    // (uid + slot-0 record) move ONE AT A TIME so each hop's uid rewrite is
+    // unambiguous; plain gems (no record) batch freely.
+    struct Inst { RE::TESBoundObject* obj; std::uint16_t uid; SocketRecord rec; };
+    std::vector<Inst>                                     instances;
+    std::vector<std::pair<RE::TESBoundObject*, std::int32_t>> plains;
     for (const auto& [obj, data] : player->GetInventory(
              [](RE::TESBoundObject& o) { return o.Is(RE::FormType::Misc); })) {
         if (data.first <= 0 || !g_gemByItem.contains(obj->GetFormID())) {
             continue;
         }
-        // The container re-key sink follows each instance's record across
-        // the hop (m19 field-proven), so banked XP survives the move.
-        player->RemoveItem(obj, data.first, RE::ITEM_REMOVE_REASON::kRemove, nullptr, pouch);
-        moved += data.first;
+        std::int32_t plain = data.first;
+        if (data.second && data.second->extraLists) {
+            for (auto* xl : *data.second->extraLists) {
+                auto* xid = xl ? xl->GetByType<RE::ExtraUniqueID>() : nullptr;
+                if (!xid) {
+                    continue;
+                }
+                auto recIt = g_sockets.find(MakeKey(obj->GetFormID(), xid->uniqueID));
+                if (recIt != g_sockets.end()) {
+                    instances.push_back({ obj, xid->uniqueID, recIt->second });
+                    plain -= std::max(xl->GetCount(), 1);
+                }
+            }
+        }
+        if (plain > 0) {
+            plains.emplace_back(obj, plain);
+        }
+    }
+    int moved = 0;
+    for (auto& [obj, n] : plains) {
+        player->RemoveItem(obj, n, RE::ITEM_REMOVE_REASON::kRemove, nullptr, pouch);
+        moved += n;
+    }
+    // The engine rewrites a moved instance's uid (m19), and MISC gems aren't
+    // enchanted so the event-driven rekey (enchant-only) never followed them:
+    // the record stranded and the gem read as PLAIN, merging with the no-XP
+    // stack (Marth 2026-07-12). Diffing the pouch's uid-set across a single
+    // move pins the arriving uid deterministically — rewrite or not — so the
+    // record follows by hand, here, for MISC gems.
+    auto pouchUids = [&](RE::FormID a_base, std::vector<std::uint16_t>& out) {
+        auto* ch = pouch->GetInventoryChanges();
+        if (!ch || !ch->entryList) {
+            return;
+        }
+        for (auto* e : *ch->entryList) {
+            if (!e || !e->object || e->object->GetFormID() != a_base || !e->extraLists) {
+                continue;
+            }
+            for (auto* xl : *e->extraLists) {
+                if (auto* xid = xl ? xl->GetByType<RE::ExtraUniqueID>() : nullptr) {
+                    out.push_back(xid->uniqueID);
+                }
+            }
+        }
+    };
+    for (auto& in : instances) {
+        const RE::FormID base = in.obj->GetFormID();
+        auto* xl = FindInstanceXList(player, in.obj, in.uid);
+        if (!xl) {
+            continue;  // vanished mid-pass; RecoverStrandedGems reclaims the record
+        }
+        std::vector<std::uint16_t> before;
+        pouchUids(base, before);
+        g_sockets.erase(MakeKey(base, in.uid));
+        player->RemoveItem(in.obj, 1, RE::ITEM_REMOVE_REASON::kRemove, xl, pouch);
+        std::vector<std::uint16_t> after;
+        pouchUids(base, after);
+        std::uint16_t newUid = in.uid;
+        for (auto u : after) {
+            if (std::find(before.begin(), before.end(), u) == before.end()) {
+                newUid = u;
+                break;
+            }
+        }
+        g_sockets[MakeKey(base, newUid)] = in.rec;
+        ++moved;
+        if (newUid != in.uid) {
+            spdlog::info("[pouch] gem {:08X} record followed uid {} -> {} (L{} xp {:.0f})",
+                         base, in.uid, newUid, in.rec.level, in.rec.xp);
+        }
     }
     if (moved > 0) {
         spdlog::info("[pouch] {} gem(s) tucked away", moved);
@@ -4196,7 +4269,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.41.0 (M32f controller support in the pouch) loaded");
+            console->Print("MEO native v0.42.0 (M32g pouch record-follow + installer CC) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4257,7 +4330,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.41.0 (M32f controller support in the pouch) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.42.0 (M32g pouch record-follow + installer CC) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
