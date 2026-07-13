@@ -2036,7 +2036,7 @@ void DestroyGem(RE::FormID a_base, std::uint16_t a_uid, std::uint8_t a_slot) {
 }
 
 void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gemBase,
-                std::uint16_t a_gemUid) {
+                std::uint16_t a_gemUid, int a_targetSlot = -1) {
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* itemForm = RE::TESForm::LookupByID<RE::TESBoundObject>(a_itemBase);
     auto* gemForm = RE::TESForm::LookupByID<RE::TESObjectMISC>(a_gemBase);
@@ -2072,24 +2072,29 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
         Notify("That item is no longer in your inventory.");
         return;
     }
-    // Multi-socket: fill the next free slot (up to this item's capacity). Our
-    // own combined enchant doesn't block — only a foreign (player/base) one.
+    // Multi-socket placement. Our own combined enchant doesn't block — only a
+    // foreign (player/base) one. m35e (Marth: swap without removing first): when
+    // a_targetSlot names a slot that already holds one of OUR gems, we evict it
+    // to the pouch below and stamp the replacement in its place — the "remove +
+    // apply" the player would otherwise do by hand, in one click. a_targetSlot
+    // -1 keeps the old behaviour (fill the first free slot).
     auto* itemXid = xl->GetByType<RE::ExtraUniqueID>();
     const std::uint16_t uid = itemXid ? itemXid->uniqueID : 0;
     const int cap = SocketCapacity(itemForm);
-    int  freeSlot = -1;
+    int  firstFree = -1;
     bool ourSockets = false;
     for (int s = 0; s < cap; ++s) {
         if (g_sockets.contains(MakeKey(a_itemBase, uid, static_cast<std::uint8_t>(s)))) {
             ourSockets = true;
-        } else if (freeSlot < 0) {
-            freeSlot = s;
+        } else if (firstFree < 0) {
+            firstFree = s;
         }
     }
     if (xl->HasType(RE::ExtraDataType::kEnchantment) && !ourSockets) {
         Notify("That item is already enchanted.");
         return;
     }
+    const int freeSlot = (a_targetSlot >= 0 && a_targetSlot < cap) ? a_targetSlot : firstFree;
     if (freeSlot < 0) {
         Notify(cap > 1 ? "Every socket is already filled." : "That item's socket is filled.");
         return;
@@ -2173,6 +2178,24 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
             Notify("That gem is no longer in your pouch.");
             return;
         }
+    }
+    // m35e swap: the target slot may already hold one of our gems (a full-item
+    // swap). Return that gem to the pouch before stamping the replacement — the
+    // remove half of the one-click swap. Done AFTER the incoming gem is fully
+    // resolved so a failed lookup above aborts before we disturb the old gem.
+    if (auto occ = g_sockets.find(MakeKey(a_itemBase, uid, static_cast<std::uint8_t>(freeSlot)));
+        occ != g_sockets.end()) {
+        const SocketRecord oldRec = occ->second;
+        auto               oldIt = g_gemByGid.find(oldRec.gid);
+        g_sockets.erase(occ);
+        if (oldIt != g_gemByGid.end()) {
+            GiveGemInstance(oldIt->second, oldRec.level, oldRec.xp);
+            const auto& oldRg = g_gems[oldIt->second];
+            Notify(std::format("{} {} returned to your pouch.", GemName(oldRg),
+                               meo::kRoman[std::clamp(oldRec.level, 1, 5) - 1]));
+        }
+        spdlog::info("[menu] swap: evicted '{}' L{} from {:08X}/{}[{}]", oldRec.gid,
+                     oldRec.level, a_itemBase, uid, freeSlot);
     }
     if (!StampInstance(itemForm, xl, gemIdx, level, static_cast<std::uint8_t>(freeSlot), xp)) {
         if (hadRec) {
@@ -2638,15 +2661,13 @@ namespace menuhook {
             // m25 station redesign (Marth): at a bench the right pane is
             // SELECT-a-gem (top, highlight like the item pane) + the SOUL GEM
             // list (below) — click a soul to burn it into the selected gem.
-            // Pouch mode keeps the socket/swap flow: click a filled socket to
-            // remove, pick a loose gem for an empty one.
+            // Pouch mode: click a filled socket to remove; pick a loose gem to
+            // socket an empty slot OR swap into a full one (m35e).
             const bool station = g_menu.station.load();
-            int freeSlots = 0;
             for (int s = 0; s < sel.capacity && s < kMaxSockets; ++s) {
                 ImGui::PushID(s);
                 const ImVec2 rp = ImGui::GetCursorScreenPos();
                 if (sel.slotGem[s].empty()) {
-                    ++freeSlots;
                     ImGui::Dummy(ImVec2(0.0f, rowH));
                     DrawDiamond(dlR, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 4.5f,
                                 ImGui::GetColorU32(ImGuiCol_TextDisabled), false);
@@ -2777,51 +2798,66 @@ namespace menuhook {
                 }
             } else {
             ImGui::Separator();
-            if (freeSlots <= 0) {
-                ImGui::TextDisabled(sel.capacity > 1 ? "Both sockets filled — remove one to swap."
-                                                     : "Socket filled — click it above to remove.");
+            // m35e (Marth): the loose-gem list is ALWAYS shown, even with every
+            // socket filled — picking a gem SWAPS it in (remove + apply in one
+            // click, the old gem returns to the pouch). Target slot = first
+            // empty one; if all are full it's a swap into socket 1 (capacity 1
+            // is unambiguous; on a 2-socket item, remove the socket you want
+            // gone first to target it precisely).
+            int  target = -1;
+            for (int s = 0; s < sel.capacity && s < kMaxSockets; ++s) {
+                if (sel.slotGem[s].empty()) { target = s; break; }
+            }
+            const bool swapping = target < 0;
+            if (swapping) {
+                target = 0;  // all filled → replace socket 1 by default
+                if (sel.capacity > 1) {
+                    ImGui::TextDisabled("SWAP — replaces socket 1 (remove a socket above to target it)");
+                } else {
+                    ImGui::TextDisabled("SWAP — pick a gem to replace the current one");
+                }
             } else {
                 ImGui::TextDisabled(sel.isArmor ? "ARMOR GEMS" : "WEAPON GEMS");
-                int shown = 0;
-                for (int i = 0; i < static_cast<int>(g_menu.gems.size()); ++i) {
-                    const auto gem = g_menu.gems[i];  // copy for the closure
-                    if (gem.isArmor != sel.isArmor) {
-                        continue;  // weapon gems only fit weapons; armor only armor
-                    }
-                    ++shown;
-                    const ImVec2 rp = ImGui::GetCursorScreenPos();
-                    ImGui::PushID(1000 + i);
-                    const bool nav = ImGui::Selectable("##gem", false, 0, ImVec2(0.0f, rowH));
-                    const bool act = nav || ImGui::IsItemClicked(ImGuiMouseButton_Left);
-                    rungTooltip(gem.gemIdx, gem.level,
-                                std::format("Socket {}", gem.label));
-                    ImGui::PopID();
-                    const ImVec4 tcol = ThemeCol(gem.theme);
-                    // Plain gems get a slightly dimmed swatch; instances with
-                    // banked XP glow full and show their progress numbers.
-                    DrawDiamond(dlR, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 4.5f,
-                                ImGui::GetColorU32(ImVec4(tcol.x, tcol.y, tcol.z,
-                                                          gem.uid ? 1.0f : 0.72f)),
-                                true);
-                    dlR->AddText(ImVec2(rp.x + 28.0f, rp.y + (rowH - lineH) * 0.5f),
-                                ImGui::GetColorU32(ImGuiCol_Text), gem.label.c_str());
-                    if (gem.xp >= 0.0f && gem.need > 0.0f) {
-                        const std::string xps = std::format("{:.0f} / {:.0f}", gem.xp, gem.need);
-                        dlR->AddText(
-                            ImVec2(rp.x + innerW - ImGui::CalcTextSize(xps.c_str()).x - 8.0f,
-                                   rp.y + (rowH - lineH) * 0.5f),
-                            ImGui::GetColorU32(ImGuiCol_TextDisabled), xps.c_str());
-                    }
-                    if (act) {
-                        g_destroyArm = 0;
-                        QueueMenuTask([sel, gem]() {
-                            MenuSocket(sel.base, sel.uid, gem.base, gem.uid);
-                        });
-                    }
+            }
+            int shown = 0;
+            for (int i = 0; i < static_cast<int>(g_menu.gems.size()); ++i) {
+                const auto gem = g_menu.gems[i];  // copy for the closure
+                if (gem.isArmor != sel.isArmor) {
+                    continue;  // weapon gems only fit weapons; armor only armor
                 }
-                if (shown == 0) {
-                    ImGui::TextDisabled(sel.isArmor ? "No loose armor gems." : "No loose weapon gems.");
+                ++shown;
+                const ImVec2 rp = ImGui::GetCursorScreenPos();
+                ImGui::PushID(1000 + i);
+                const bool nav = ImGui::Selectable("##gem", false, 0, ImVec2(0.0f, rowH));
+                const bool act = nav || ImGui::IsItemClicked(ImGuiMouseButton_Left);
+                rungTooltip(gem.gemIdx, gem.level,
+                            std::format("{} {}", swapping ? "Swap in" : "Socket", gem.label));
+                ImGui::PopID();
+                const ImVec4 tcol = ThemeCol(gem.theme);
+                // Plain gems get a slightly dimmed swatch; instances with
+                // banked XP glow full and show their progress numbers.
+                DrawDiamond(dlR, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 4.5f,
+                            ImGui::GetColorU32(ImVec4(tcol.x, tcol.y, tcol.z,
+                                                      gem.uid ? 1.0f : 0.72f)),
+                            true);
+                dlR->AddText(ImVec2(rp.x + 28.0f, rp.y + (rowH - lineH) * 0.5f),
+                            ImGui::GetColorU32(ImGuiCol_Text), gem.label.c_str());
+                if (gem.xp >= 0.0f && gem.need > 0.0f) {
+                    const std::string xps = std::format("{:.0f} / {:.0f}", gem.xp, gem.need);
+                    dlR->AddText(
+                        ImVec2(rp.x + innerW - ImGui::CalcTextSize(xps.c_str()).x - 8.0f,
+                               rp.y + (rowH - lineH) * 0.5f),
+                        ImGui::GetColorU32(ImGuiCol_TextDisabled), xps.c_str());
                 }
+                if (act) {
+                    g_destroyArm = 0;
+                    QueueMenuTask([sel, gem, target]() {
+                        MenuSocket(sel.base, sel.uid, gem.base, gem.uid, target);
+                    });
+                }
+            }
+            if (shown == 0) {
+                ImGui::TextDisabled(sel.isArmor ? "No loose armor gems." : "No loose weapon gems.");
             }
             }
         } else {
@@ -4586,7 +4622,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.47.1 (m35d effect-dup fix) loaded");
+            console->Print("MEO native v0.47.2 (m35e one-click gem swap) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4647,7 +4683,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.47.1 (m35d effect-dup fix) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.47.2 (m35e one-click gem swap) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
