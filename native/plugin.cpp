@@ -1121,6 +1121,22 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         !isArmor && IsElementalGem(filled[0].rg)) {
         echoArea = static_cast<int>(std::lround(support->def->tierParam[supportTier - 1] * 15.0f));
     }
+    // m36: spell out the linkage so "kind of works" reports have a paper trail.
+    if (support) {
+        const char* type = support->def->supportType == meo::SupportType::kFocus     ? "Focus"
+                           : support->def->supportType == meo::SupportType::kConduit  ? "Conduit"
+                           : support->def->supportType == meo::SupportType::kEcho     ? "Echo"
+                                                                                      : "?";
+        spdlog::info("[link] {:08X}/{} {} T{} + '{}' L{} ({}): focusMag={:.2f} conduit->{} echoArea={} "
+                     "elemental={}",
+                     a_base->GetFormID(), uid, type, supportTier, filled[0].rg->def->gid,
+                     filled[0].lvIdx + 1, isArmor ? "armor" : "weapon", supportMag,
+                     conduitTarget ? conduitTarget->def->gid : "-", echoArea,
+                     IsElementalGem(filled[0].rg));
+    } else if (supportCount > 0) {
+        spdlog::info("[link] {:08X}/{} has {} support(s) but is NOT linked (need exactly 1 support "
+                     "+ 1 normal) — support inert", a_base->GetFormID(), uid, supportCount);
+    }
 
     // One primary effect per filled socket, plus that gem's recipe riders
     // (m21, Marth: gems mirror the load order's elemental recipe — frost
@@ -1411,6 +1427,7 @@ bool  g_stationTakeover = true;   // [UI] bStationTakeover — gem menu REPLACES
 int   g_menuStyle = 0;            // [UI] iMenuStyle — gem menu skin 0..3 (m24 MCM dropdown)
 bool  g_temperNoPerk = true;      // [UI] bTemperNoPerk — socketed gear tempers w/o Arcane Blacksmith (m33)
 float g_enchSkillXPMult = 1.0f;   // [XP] fEnchSkillXP — Enchanting SKILL xp per soul fed (m25)
+bool  g_debugAllPerks = false;    // [Debug] bDebugAllPerks — force every MEO perk ON for testing (m36)
 // g_magnitudeMult [XP] fMagnitudeMult is declared up top (StampInstance uses it)
 
 // Apply one INI file's key=value lines onto the config globals. Tolerates the
@@ -1450,6 +1467,7 @@ static void ApplyIniFile(const char* a_path) {
         else if (key == "iMenuStyle")         g_menuStyle = std::clamp(static_cast<int>(val), 0, 3);
         else if (key == "bTemperNoPerk")      g_temperNoPerk = val != 0.0f;
         else if (key == "fEnchSkillXP")       g_enchSkillXPMult = val;
+        else if (key == "bDebugAllPerks")     g_debugAllPerks = val != 0.0f;
     }
 }
 
@@ -1512,6 +1530,18 @@ void RefreshPerks() {
     g_hasFroststone = g_perkFroststone && player->HasPerk(g_perkFroststone);
     g_hasStormstone = g_perkStormstone && player->HasPerk(g_perkStormstone);
     g_hasFacet = g_perkFacet && player->HasPerk(g_perkFacet);
+    // m36 debug (Marth): force every MEO perk ON for testing without grinding
+    // Enchanting or spending points. Overrides only the CACHED flags — no perks
+    // are added to the player, so toggling it off (menu close → RefreshPerks)
+    // reverts to what's actually held. Grants both dual-socket perks (Twinned +
+    // Master Jeweler) so chest and weapons become dual/linkable too.
+    if (g_debugAllPerks) {
+        g_attuneRank = 5;
+        g_hasGemCutter = g_hasSoulFeeder = g_hasTwinned = g_hasJeweler = true;
+        g_hasPyrestone = g_hasFroststone = g_hasStormstone = g_hasFacet = true;
+        spdlog::warn("[perks] DEBUG bDebugAllPerks=ON — all MEO perks forced (attune 5, "
+                     "both socket perks, affinities, facet, cutter, feeder)");
+    }
     spdlog::info("[perks] enchanting={:.0f} treeMode={} attuneRank={} gemCutter={} soulFeeder={} twinned={} jeweler={} pyre={} frost={} storm={} facet={}",
                  skill, g_treeMode, g_attuneRank, g_hasGemCutter, g_hasSoulFeeder, g_hasTwinned, g_hasJeweler,
                  g_hasPyrestone, g_hasFroststone, g_hasStormstone, g_hasFacet);
@@ -4818,7 +4848,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.48.3 (m36: support gems always visible + ESP forms) loaded");
+            console->Print("MEO native v0.48.4 (m36: link logging + bDebugAllPerks MCM) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4879,7 +4909,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.48.3 (m36: support gems always visible + ESP forms) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.48.4 (m36: link logging + bDebugAllPerks MCM) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
