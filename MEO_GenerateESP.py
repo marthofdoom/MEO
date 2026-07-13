@@ -169,7 +169,7 @@ def allocate_gems():
     out=BytesIO(); gem_form_map={}; weapon_fids=[]; armor_fids=[]
     for gid in sorted(CATALOG, key=lambda g: CATALOG[g]['type_index']):
         g=CATALOG[gid]
-        levels=1 if g['single_level'] else min(5,len(g['curve']))
+        levels=1 if g['single_level'] else min(5,len(g.get('curve', g.get('tiers', []))))  # m36: supports use tiers
         gem_form_map[gid]={}
         for lvl in range(1,levels+1):
             fid=frozen.get(gid,{}).get(lvl)
@@ -286,7 +286,7 @@ def write_runtime_json(out_dir, gem_form_map):
         rt[gid]={
             'name':g['name'],'type_index':g['type_index'],'domain':g['domain'],
             'tier':g['power_tier'],'xp_mult':g['xp_mult'],'single_level':g['single_level'],
-            'curve':g['curve'],'mgef_refs':g['mgef_refs'],
+            'curve':g.get('curve', g.get('tiers', [])),'mgef_refs':g['mgef_refs'],
             # LOCAL FormID (lower 24 bits) for Game.GetFormFromFile(id,"MEO.esp")
             'forms':{str(l):f"0x{fid & 0xFFFFFF:06X}" for l,fid in gem_form_map[gid].items()},
         }

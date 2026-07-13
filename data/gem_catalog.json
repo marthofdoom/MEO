@@ -1312,5 +1312,59 @@
   "xp_mult": 1.0,
   "type_index": 51,
   "note": "Marth 2026-07-08: fire-equal curve; undead-only, unresisted. Artifact-only in vanilla (Auriel's Bow) so absent from the ench scan; MEO builds the ENCH from the MGEF directly."
+ },
+ "focus": {
+  "name": "Focus",
+  "support": true,
+  "support_type": "FOCUS",
+  "mgefs": [],
+  "mgef_refs": [],
+  "domain": "support",
+  "class": "SUPPORT",
+  "tiers": [
+   0.2,
+   0.35,
+   0.5
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0,
+  "type_index": 52
+ },
+ "conduit": {
+  "name": "Conduit",
+  "support": true,
+  "support_type": "CONDUIT",
+  "mgefs": [],
+  "mgef_refs": [],
+  "domain": "support",
+  "class": "SUPPORT",
+  "tiers": [
+   0.5,
+   0.75,
+   1.0
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0,
+  "type_index": 53
+ },
+ "echo": {
+  "name": "Echo",
+  "support": true,
+  "support_type": "ECHO",
+  "mgefs": [],
+  "mgef_refs": [],
+  "domain": "support",
+  "class": "SUPPORT",
+  "tiers": [
+   0.34,
+   0.67,
+   1.0
+  ],
+  "single_level": false,
+  "power_tier": "A",
+  "xp_mult": 1.0,
+  "type_index": 54
  }
 }
