@@ -1351,9 +1351,14 @@ bool IsSocketableArmorBase(const RE::TESObjectARMO* a_armo) {
     // kHair: vanilla-line helmets occupy biped slot 31 (Hair), not 30 —
     // head gear was silently ineligible until 2026-07-10 (Marth's helmet
     // "became unslotted" once its conversion record was removed).
+    // kCirclet (slot 42): circlets occupy their own slot, not kHead — without
+    // this they were hidden from the socketing menu, refused instance conversion
+    // ("not socketable gear"), and never stamped on NPCs, even though the
+    // installer's table already converts base-enchanted circlets (m36f, Fable).
     return a_armo->HasPartOf(S::kHead) || a_armo->HasPartOf(S::kHair) ||
            a_armo->HasPartOf(S::kBody) || a_armo->HasPartOf(S::kHands) ||
-           a_armo->HasPartOf(S::kAmulet) || a_armo->HasPartOf(S::kRing);
+           a_armo->HasPartOf(S::kAmulet) || a_armo->HasPartOf(S::kRing) ||
+           a_armo->HasPartOf(S::kCirclet);
 }
 
 // Re-apply a socketed instance's ability to an already-worn item after a
@@ -3838,15 +3843,24 @@ void ConvertWorldRef(RE::TESObjectREFR* a_ref) {
     if (it == g_convert.end()) {
         return;
     }
+    // m36f (Fable): these three deferrals are BY DESIGN — the item still converts,
+    // just on pickup, not on the shelf. Logging the reason makes "it's not
+    // converting!" reports self-diagnosing (the item is convertible, deferred).
     if ((a_ref->formFlags & RE::TESObjectREFR::RecordFlags::kPersistent) != 0) {
+        spdlog::info("[convert-defer] '{}' {:08X} persistent world ref — converts on pickup",
+                     base->GetName(), a_ref->GetFormID());
         return;  // scripts/quests may hold this exact ref
     }
     if (a_ref->extraList.GetCount() > 1) {
+        spdlog::info("[convert-defer] '{}' {:08X} stacked pile x{} — converts per-unit on pickup",
+                     base->GetName(), a_ref->GetFormID(), a_ref->extraList.GetCount());
         return;  // m35: a stacked world pile — PlaceObjectAtMe makes only one,
                  // so converting in place would destroy the rest. Let it convert
                  // per-unit on pickup via the container sink instead.
     }
     if (a_ref->extraList.HasType(RE::ExtraDataType::kAliasInstanceArray)) {
+        spdlog::info("[convert-defer] '{}' {:08X} quest-aliased — converts on pickup",
+                     base->GetName(), a_ref->GetFormID());
         return;  // quest-aliased — same caution
     }
     auto newRef = a_ref->PlaceObjectAtMe(it->second.base, false);
@@ -5133,7 +5147,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         StartEchoHeartbeat();  // m36: Echo armor follower-share
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.49.0 (m36: Echo armor follower-share) loaded");
+            console->Print("MEO native v0.49.1 (m36f: circlet slot + convert-defer log) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -5194,7 +5208,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.49.0 (m36: Echo armor follower-share) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.49.1 (m36f: circlet slot + convert-defer log) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
