@@ -123,6 +123,7 @@ constexpr std::uint32_t kSerVersion = 9;  // v9: + supportScaffoldGranted. v8: m
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
 constexpr RE::FormID  kPouchSpellID = 0x803;  // MEO.esp-local
+constexpr RE::FormID  kEchoShareSpellID = 0x809;  // m36: Echo armor follower-share (effect swapped at runtime)
 
 // m21 recipe riders; m22: rider set comes from the per-list calibration file
 // when it names the family (installer derives it from the list's own generic
@@ -159,6 +160,7 @@ std::unordered_map<std::string_view, int>         g_gemByGid;
 std::vector<int>                                  g_lootableGems;  // weapon-domain, world-weapon stamps
 std::vector<int>                                  g_corpseGems;    // weapon+armor, corpse drops
 RE::SpellItem*                                    g_pouchSpell = nullptr;
+RE::SpellItem*                                    g_echoShareSpell = nullptr;  // m36: Echo armor follower-share
 
 // ── m19: themed NPC spawn pools (DESIGN §3 "Post-strip gem economy") ──
 // Enemy archetype × gem theme weights build per-archetype weighted pools
@@ -588,6 +590,10 @@ void ResolveCatalog() {
     if (!dh) {
         spdlog::error("TESDataHandler missing — catalog not resolved");
         return;
+    }
+    g_echoShareSpell = dh->LookupForm<RE::SpellItem>(kEchoShareSpellID, kPluginName);  // m36
+    if (!g_echoShareSpell) {
+        spdlog::warn("Echo share spell {:X} not found — armor follower-share disabled", kEchoShareSpellID);
     }
     g_pouchSpell = dh->LookupForm<RE::SpellItem>(kPouchSpellID, kPluginName);
     if (!g_pouchSpell) {
@@ -4248,6 +4254,117 @@ public:
     }
 };
 
+// m36: Echo (armor half) — follower-share. If the player wears a linked
+// Echo-armor gem, re-cast that gem's effect (× the Echo tier fraction) on every
+// current follower for a short duration, every heartbeat. SELF-EXPIRING: no
+// permanent abilities are added, so if the pairing breaks (unlinked/unequipped)
+// or MEO is removed, the effect simply lapses within its duration — nothing to
+// track, nothing to leak. Uses ONE persistent ESP spell (MEO_EchoShare, real
+// FormID) whose single effect is rewritten each tick, so follower saves only
+// ever reference a real form, never a runtime-created one.
+void EchoFollowerShareTick() {
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    if (!player || !g_echoShareSpell || g_echoShareSpell->effects.size() == 0) {
+        return;
+    }
+    const ResolvedGem* shareGem = nullptr;
+    int   shareLvIdx = 0;
+    float echoFrac = 0.0f;
+    auto* changes = player->GetInventoryChanges();
+    if (changes && changes->entryList) {
+        for (auto* entry : *changes->entryList) {
+            if (shareGem || !entry || !entry->object || !entry->object->Is(RE::FormType::Armor) ||
+                !entry->extraLists) {
+                continue;
+            }
+            for (auto* xl : *entry->extraLists) {
+                if (!xl || !IsWornXList(xl)) {
+                    continue;
+                }
+                auto* xid = xl->GetByType<RE::ExtraUniqueID>();
+                if (!xid) {
+                    continue;
+                }
+                const ResolvedGem* support = nullptr;
+                const ResolvedGem* normal = nullptr;
+                int                stier = 1, nlvl = 1;
+                for (int s = 0; s < kMaxSockets; ++s) {
+                    auto it = g_sockets.find(MakeKey(entry->object->GetFormID(), xid->uniqueID,
+                                                     static_cast<std::uint8_t>(s)));
+                    if (it == g_sockets.end()) {
+                        continue;
+                    }
+                    auto gi = g_gemByGid.find(it->second.gid);
+                    if (gi == g_gemByGid.end()) {
+                        continue;
+                    }
+                    if (g_gems[gi->second].def->isSupport) {
+                        support = &g_gems[gi->second];
+                        stier = std::clamp<int>(it->second.level, 1, 3);
+                    } else {
+                        normal = &g_gems[gi->second];
+                        nlvl = it->second.level;
+                    }
+                }
+                if (support && support->def->supportType == meo::SupportType::kEcho && normal &&
+                    normal->mgef) {
+                    shareGem = normal;
+                    shareLvIdx = std::clamp<int>(nlvl, 1, 5) - 1;
+                    echoFrac = support->def->tierParam[stier - 1];
+                }
+                break;
+            }
+        }
+    }
+    if (!shareGem) {
+        return;  // no linked Echo-armor — prior casts expire on their own
+    }
+    // Rewrite the share spell's single effect to this gem's, scaled by tier.
+    const float mag = GemBaseMag(shareGem->def, shareLvIdx) * g_magnitudeMult *
+                      (1.0f + 0.08f * g_attuneRank) * GemPerkMult(shareGem->def) * echoFrac;
+    auto* eff = g_echoShareSpell->effects[0];
+    if (!eff) {
+        return;
+    }
+    eff->baseEffect = shareGem->mgefLv[shareLvIdx];
+    eff->effectItem.magnitude = mag;
+    eff->effectItem.area = 0;
+    eff->effectItem.duration = 12;  // seconds; > heartbeat so followers stay buffed
+    auto* lists = RE::ProcessLists::GetSingleton();
+    auto* caster = player->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant);
+    if (!lists || !caster) {
+        return;
+    }
+    int shared = 0;
+    for (auto& handle : lists->highActorHandles) {
+        auto a = handle.get();
+        if (!a || a.get() == player || !a->IsPlayerTeammate() || a->IsDead()) {
+            continue;
+        }
+        caster->CastSpellImmediate(g_echoShareSpell, false, a.get(), 1.0f, false, 0.0f, player);
+        ++shared;
+    }
+    if (shared > 0) {
+        spdlog::info("[echo-share] '{}' mag={:.1f} dur=12 → {} follower(s)", shareGem->def->gid,
+                     mag, shared);
+    }
+}
+
+// Heartbeat: drives EchoFollowerShareTick on the main thread every 8s. Started
+// once at data-load; harmless at the main menu (the tick no-ops with no player).
+void StartEchoHeartbeat() {
+    static std::atomic<bool> started{ false };
+    if (started.exchange(true)) {
+        return;
+    }
+    std::thread([]() {
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::seconds(8));
+            SKSE::GetTaskInterface()->AddTask([]() { EchoFollowerShareTick(); });
+        }
+    }).detach();
+}
+
 // m36: Echo (weapon half) — a linked elemental gem's on-hit effect bursts in an
 // area. The enchant `area` field does nothing on a weapon (contact delivery), so
 // the AoE is delivered here: on a player weapon hit, re-cast that weapon's own
@@ -5014,8 +5131,9 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESObjectLoadedEvent>(ObjectLoadedSink::GetSingleton());
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
+        StartEchoHeartbeat();  // m36: Echo armor follower-share
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.48.9 (m36: Echo AoE hostile+combat catch, dpad pane-jump) loaded");
+            console->Print("MEO native v0.49.0 (m36: Echo armor follower-share) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -5076,7 +5194,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.48.9 (m36: Echo AoE hostile+combat catch, dpad pane-jump) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.49.0 (m36: Echo armor follower-share) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }

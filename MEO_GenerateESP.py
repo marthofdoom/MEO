@@ -32,6 +32,7 @@ FID_MARKER_CONTACT = OWN | 0x800   # weapon effects (fire-and-forget, contact)
 FID_MARKER_SELF    = OWN | 0x801   # armor effects (constant, self)
 FID_POUCH_MGEF     = OWN | 0x802
 FID_POUCH_SPELL    = OWN | 0x803
+FID_ECHO_SPELL     = OWN | 0x809   # m36: Echo armor follower-share (DLL swaps its effect at runtime); FROZEN
 FID_STARTUP_QUEST  = OWN | 0x804
 FID_FLST_ALL       = OWN | 0x805
 FID_FLST_WEAPON    = OWN | 0x806
@@ -200,12 +201,25 @@ def make_flst(fid,edid,member_fids):
 
 def spit_lesser_power():
     return struct.pack('<fIIfIIffI',0.0,0,3,0.0,1,0,0.0,0.0,0)  # type3 lesser power, FF self
+def spit_ff_target_actor():
+    # SPIT: cost 0, flags 0, type 0 (Spell), chargeTime 0, castType 1 (Fire&Forget),
+    # delivery 4 (Target Actor), castDuration 0, range 0, castingPerk 0. The DLL
+    # rewrites this spell's single effect (MGEF + magnitude + duration) each tick
+    # before casting it on followers (m36 Echo armor share).
+    return struct.pack('<fIIfIIffI',0.0,0,0,0.0,1,4,0.0,0.0,0)
+def make_echo_spell():
+    # One placeholder effect (marker-self MGEF, mag 0, 12s) — swapped at runtime.
+    body =subrec('EDID',zstr("MEO_EchoShare"))+subrec('OBND',b'\x00'*12)+subrec('FULL',zstr("Echo"))
+    body+=subrec('MDOB',struct.pack('<I',0))+subrec('ETYP',struct.pack('<I',FREF_EQUP_VOICE))
+    body+=subrec('DESC',zstr(""))
+    body+=subrec('SPIT',spit_ff_target_actor())+subrec('EFID',struct.pack('<I',FID_MARKER_SELF))+subrec('EFIT',struct.pack('<fII',0.0,0,12))
+    return record('SPEL',FID_ECHO_SPELL,0,body)
 def make_spel():
     body =subrec('EDID',zstr("MEO_GemPouchPower"))+subrec('OBND',b'\x00'*12)+subrec('FULL',zstr("Gem Pouch"))
     body+=subrec('MDOB',struct.pack('<I',0))+subrec('ETYP',struct.pack('<I',FREF_EQUP_VOICE))
     body+=subrec('DESC',zstr("Open the Gem Pouch to socket, view, or remove gems."))
     body+=subrec('SPIT',spit_lesser_power())+subrec('EFID',struct.pack('<I',FID_POUCH_MGEF))+subrec('EFIT',struct.pack('<fII',0.0,0,0))
-    return group('SPEL',record('SPEL',FID_POUCH_SPELL,0,body))
+    return record('SPEL',FID_POUCH_SPELL,0,body)
 
 def make_cont():
     # Hidden Gem Pouch container: no model, no contents, no respawn flags.
@@ -401,7 +415,7 @@ def main():
     esp.write(make_mgefs())
     esp.write(group('MISC',misc_bytes))
     esp.write(make_cont())
-    esp.write(make_spel())
+    esp.write(group('SPEL',make_spel()+make_echo_spell()))
     flsts=(make_flst(FID_FLST_ALL,"MEO_AllGems",weapon_fids+armor_fids)
           +make_flst(FID_FLST_WEAPON,"MEO_WeaponGems",weapon_fids)
           +make_flst(FID_FLST_ARMOR,"MEO_ArmorGems",armor_fids))
