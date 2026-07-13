@@ -4222,6 +4222,113 @@ public:
     }
 };
 
+// m36: Echo (weapon half) — a linked elemental gem's on-hit effect bursts in an
+// area. The enchant `area` field does nothing on a weapon (contact delivery), so
+// the AoE is delivered here: on a player weapon hit, re-cast that weapon's own
+// enchantment on nearby hostiles within a tier-scaled radius. Casting applies
+// magic (no weapon swing), so it cannot re-enter this hit event.
+class HitSink : public RE::BSTEventSink<RE::TESHitEvent> {
+public:
+    static HitSink* GetSingleton() {
+        static HitSink singleton;
+        return &singleton;
+    }
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESHitEvent* a_event,
+                                          RE::BSTEventSource<RE::TESHitEvent>*) override {
+        auto* player = RE::PlayerCharacter::GetSingleton();
+        if (!a_event || !player || !a_event->cause || a_event->cause.get() != player) {
+            return RE::BSEventNotifyControl::kContinue;  // player weapon hits only (for now)
+        }
+        auto* victim = a_event->target ? a_event->target->As<RE::Actor>() : nullptr;
+        if (!victim || victim->IsDead()) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        // Is the weapon that struck (a_event->source) Echo-linked to an elemental
+        // gem? If so, capture its enchant to re-cast and the tier radius.
+        RE::EnchantmentItem* ench = nullptr;
+        float                radius = 0.0f;
+        auto* changes = player->GetInventoryChanges();
+        if (changes && changes->entryList) {
+            for (auto* entry : *changes->entryList) {
+                if (ench || !entry || !entry->object ||
+                    entry->object->GetFormID() != a_event->source ||
+                    !entry->object->Is(RE::FormType::Weapon) || !entry->extraLists) {
+                    continue;
+                }
+                for (auto* xl : *entry->extraLists) {
+                    if (!xl || !IsWornXList(xl)) {
+                        continue;
+                    }
+                    auto* xid = xl->GetByType<RE::ExtraUniqueID>();
+                    if (!xid) {
+                        continue;
+                    }
+                    const ResolvedGem* support = nullptr;
+                    const ResolvedGem* normal = nullptr;
+                    int                stier = 1;
+                    for (int s = 0; s < kMaxSockets; ++s) {
+                        auto it = g_sockets.find(MakeKey(a_event->source, xid->uniqueID,
+                                                         static_cast<std::uint8_t>(s)));
+                        if (it == g_sockets.end()) {
+                            continue;
+                        }
+                        auto gi = g_gemByGid.find(it->second.gid);
+                        if (gi == g_gemByGid.end()) {
+                            continue;
+                        }
+                        if (g_gems[gi->second].def->isSupport) {
+                            support = &g_gems[gi->second];
+                            stier = std::clamp<int>(it->second.level, 1, 3);
+                        } else {
+                            normal = &g_gems[gi->second];
+                        }
+                    }
+                    if (support && support->def->supportType == meo::SupportType::kEcho &&
+                        normal && IsElementalGem(normal)) {
+                        radius = support->def->tierParam[stier - 1] * 300.0f;
+                        if (auto* xe = xl->GetByType<RE::ExtraEnchantment>()) {
+                            ench = xe->enchantment;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        if (!ench || radius <= 0.0f) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        const RE::NiPoint3     vpos = victim->GetPosition();
+        const RE::ObjectRefHandle vh = victim->GetHandle();
+        // Cast on nearby hostiles on the task queue (main thread, off the event).
+        SKSE::GetTaskInterface()->AddTask([ench, radius, vpos, vh]() {
+            auto* pl = RE::PlayerCharacter::GetSingleton();
+            auto* lists = RE::ProcessLists::GetSingleton();
+            auto* caster = pl ? pl->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant) : nullptr;
+            if (!pl || !lists || !caster) {
+                return;
+            }
+            auto vic = vh.get();
+            int hit = 0;
+            for (auto& handle : lists->highActorHandles) {
+                auto a = handle.get();
+                if (!a || a.get() == pl || (vic && a.get() == vic.get()) || a->IsPlayerTeammate() ||
+                    a->IsDead() || !a->IsHostileToActor(pl)) {
+                    continue;
+                }
+                if (a->GetPosition().GetDistance(vpos) > radius) {
+                    continue;
+                }
+                caster->CastSpellImmediate(ench, false, a.get(), 1.0f, false, 0.0f, pl);
+                ++hit;
+            }
+            if (hit > 0) {
+                spdlog::info("[echo] weapon AoE r={:.0f} → {} nearby hostile(s)", radius, hit);
+            }
+        });
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
 // m19: re-key socket records across container transfers (see
 // RekeyTransferredSockets). Cheap gate: only defer a task when the moved
 // base form has records at all.
@@ -4842,13 +4949,14 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         ReadConfig();
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESSpellCastEvent>(SpellCastSink::GetSingleton());
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESDeathEvent>(DeathSink::GetSingleton());
+        RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESHitEvent>(HitSink::GetSingleton());  // m36 Echo AoE
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESCellAttachDetachEvent>(CellAttachSink::GetSingleton());
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESContainerChangedEvent>(ContainerSink::GetSingleton());
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESObjectLoadedEvent>(ObjectLoadedSink::GetSingleton());
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.48.4 (m36: link logging + bDebugAllPerks MCM) loaded");
+            console->Print("MEO native v0.48.5 (m36: Echo weapon AoE via hit event) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4909,7 +5017,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.48.4 (m36: link logging + bDebugAllPerks MCM) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.48.5 (m36: Echo weapon AoE via hit event) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
