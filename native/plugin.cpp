@@ -159,6 +159,7 @@ std::unordered_map<RE::FormID, std::pair<int, int>> g_gemByItem;  // item -> {ge
 std::unordered_map<std::string_view, int>         g_gemByGid;
 std::vector<int>                                  g_lootableGems;  // weapon-domain, world-weapon stamps
 std::vector<int>                                  g_corpseGems;    // weapon+armor, corpse drops
+std::vector<int>                                  g_supportGems;   // m36h: support gems (boss-loot pool)
 RE::SpellItem*                                    g_pouchSpell = nullptr;
 RE::SpellItem*                                    g_echoShareSpell = nullptr;  // m36: Echo armor follower-share
 
@@ -722,6 +723,10 @@ void ResolveCatalog() {
     // pick becomes a tier rarity curve (S rarest — see SPAWN_WEIGHT). Corpse
     // drops pull weapon+armor; world-weapon stamps pull weapon-domain only.
     for (std::size_t i = 0; i < g_gems.size(); ++i) {
+        if (g_gems[i].def->isSupport) {
+            g_supportGems.push_back(static_cast<int>(i));  // m36h: boss-loot pool (tier I)
+            continue;
+        }
         if (g_gems[i].mgef && !g_gems[i].def->singleLevel) {
             for (int w = 0, n = std::max<int>(g_gems[i].def->spawnWeight, 1); w < n; ++w) {
                 g_corpseGems.push_back(static_cast<int>(i));
@@ -1432,6 +1437,8 @@ float g_worldSocketChance = 0.05f;// [Loot] fWorldSocketChance — world weapon 
 float g_gemLevel2Chance = 0.02f;  // [Loot] fGemLevel2Chance — spawned gem is level II not I
 float g_npcSocketChance = 0.05f;  // [Loot] fNPCSocketChance — enemy spawns with a socketed piece (m19)
 float g_vendorGemChance = 0.04f;  // [Loot] fVendorGemChance — per stock item, vendor adds a gem (m19b)
+float g_supportDropChance = 0.03f;// [Loot] fSupportDropChance — support gem on a lvl15+ boss/dragon kill (m36h, very rare)
+int   g_supportMinLevel = 15;     // [Loot] iSupportMinLevel — no support gems before this player level
 float g_bossXPMult = 10.0f;       // [XP] fBossXPMult — boss/dragon kill multiplier
 bool  g_xpNotify = true;          // [UI] bXPNotify — "Gem XP +N" on kills
 bool  g_stationTakeover = true;   // [UI] bStationTakeover — gem menu REPLACES the vanilla enchanting menu
@@ -1470,6 +1477,8 @@ static void ApplyIniFile(const char* a_path) {
         else if (key == "fWorldSocketChance") g_worldSocketChance = val;
         else if (key == "fGemLevel2Chance")   g_gemLevel2Chance = val;
         else if (key == "fNPCSocketChance")   g_npcSocketChance = val;
+        else if (key == "fSupportDropChance")  g_supportDropChance = val;
+        else if (key == "iSupportMinLevel")    g_supportMinLevel = static_cast<int>(val);
         else if (key == "fVendorGemChance")   g_vendorGemChance = val;
         else if (key == "fBossXPMult")        g_bossXPMult = val;
         else if (key == "fMagnitudeMult")     g_magnitudeMult = val;
@@ -3500,6 +3509,27 @@ void RollCorpseGem(RE::Actor* a_victim) {
     }
 }
 
+// m36h: support gems as rare boss loot (DESIGN §5 "not found before ~level 15").
+// On a player boss/dragon kill past iSupportMinLevel, a small chance drops one
+// random support gem (tier I) on the corpse. Hand-placed famous locations remain
+// the guaranteed per-type source; this is the repeatable RNG backstop.
+void RollBossSupportGem(RE::Actor* a_victim) {
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    if (g_supportGems.empty() || g_supportDropChance <= 0.0f || !a_victim || !player ||
+        player->GetLevel() < g_supportMinLevel) {
+        return;
+    }
+    if (std::uniform_real_distribution<float>(0.0f, 1.0f)(g_rng) >= g_supportDropChance) {
+        return;
+    }
+    const auto& rg = g_gems[g_supportGems[
+        std::uniform_int_distribution<std::size_t>(0, g_supportGems.size() - 1)(g_rng)]];
+    if (auto* item = rg.items[0]) {  // support gems drop at tier I
+        a_victim->AddObjectToContainer(item, nullptr, 1, nullptr);
+        spdlog::info("[loot] BOSS support gem '{}' I on {:08X}", rg.def->gid, a_victim->GetFormID());
+    }
+}
+
 void MaybeStampWorldWeapon(RE::TESObjectREFR* a_ref) {
     auto* base = a_ref->GetBaseObject();
     if (!base || !base->Is(RE::FormType::Weapon) || g_lootableGems.empty() ||
@@ -4247,10 +4277,11 @@ public:
             spdlog::info("[xp] boss/dragon kill: x{:.0f}", mult);
         }
         const bool                fromPlayer = killer->IsPlayerRef();
+        const bool                isBoss = mult > 1.0f;  // m36h: boss/dragon → support-gem roll
         const RE::ObjectRefHandle victim = a_event->actorDying->GetHandle();
         const RE::ObjectRefHandle killerHandle = a_event->actorKiller->GetHandle();
         const float               xp = g_xpPerKill * mult;
-        SKSE::GetTaskInterface()->AddTask([victim, killerHandle, xp, fromPlayer]() {
+        SKSE::GetTaskInterface()->AddTask([victim, killerHandle, xp, fromPlayer, isBoss]() {
             if (auto k = killerHandle.get()) {
                 if (auto* killerActor = k->As<RE::Actor>()) {
                     AwardKillXP(killerActor, xp);
@@ -4260,6 +4291,9 @@ public:
                 if (auto ref = victim.get()) {
                     if (auto* v = ref->As<RE::Actor>()) {
                         RollCorpseGem(v);
+                        if (isBoss) {  // m36h: rare support gem from boss/dragon loot
+                            RollBossSupportGem(v);
+                        }
                     }
                 }
             }
@@ -5175,7 +5209,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         StartEchoHeartbeat();  // m36: Echo armor follower-share
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.49.2 (m36g: echo-share 1x-dispel + quiet log) loaded");
+            console->Print("MEO native v0.49.3 (m36h: support gems as rare boss loot) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -5236,7 +5270,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.49.2 (m36g: echo-share 1x-dispel + quiet log) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.49.3 (m36h: support gems as rare boss loot) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
