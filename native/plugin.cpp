@@ -463,6 +463,10 @@ std::unordered_map<std::string, std::vector<CalRider>> g_calibration;
 // ranks carry protection keywords the list's spells check on the target).
 struct CalLevel { std::string plugin; RE::FormID fid = 0; };
 std::unordered_map<std::string, std::array<CalLevel, 5>> g_calLevels;
+// m35b: per-list magnitude curve derived by the installer from THIS load
+// order's own enchant strengths (Marth: derive, don't hardcode). Overrides
+// the compiled catalog curve when present; families absent keep the default.
+std::unordered_map<std::string, std::array<float, 5>> g_calCurves;
 
 // m23 loot conversion (Marth: covered enchanted generics CONVERT, never
 // vanish): at spawn/acquire, "Iron Sword of Embers" becomes an Iron Sword
@@ -493,6 +497,7 @@ static void LoadCalibration() {
     // m35: reset before load so a re-read never accumulates stale entries.
     g_calibration.clear();
     g_calLevels.clear();
+    g_calCurves.clear();
     g_calConversions.clear();
     nlohmann::json j;
     try {
@@ -533,12 +538,26 @@ static void LoadCalibration() {
                 }
                 g_calLevels[fam] = lv;
             }
+            if (val.contains("curve")) {  // m35b: per-list magnitude curve
+                std::array<float, 5> cv{};
+                int i = 0;
+                for (const auto& m : val.at("curve")) {
+                    if (i >= 5) {
+                        break;
+                    }
+                    cv[i++] = m.get<float>();
+                }
+                if (i == 5) {
+                    g_calCurves[fam] = cv;
+                }
+            }
         }
     } catch (const std::exception& ex) {
         spdlog::error("calibration families parse failed ({}): {} — riders/ladders default",
                       kPath, ex.what());
         g_calibration.clear();
-        g_calLevels.clear();  // m35: keep ladders and riders consistent
+        g_calLevels.clear();   // m35: keep ladders and riders consistent
+        g_calCurves.clear();
     }
     try {
         if (j.contains("conversions")) {
@@ -821,6 +840,16 @@ int SocketCapacity(RE::TESBoundObject* a_obj) {
 // m34 (DESIGN §6): elemental affinities + Facet Insight, each +25%. Chaos is
 // every element, so all three affinities stack on it. Facet Insight covers
 // skill (SKILL) and attribute (LINEAR) armor gems — not resist/utility.
+// m35b: base magnitude — the installer's per-list derived curve if present,
+// else the compiled catalog default. All magnitude reads go through here.
+float GemBaseMag(const meo::GemDef* a_def, int a_lvIdx) {
+    const int li = std::clamp(a_lvIdx, 0, 4);
+    if (auto it = g_calCurves.find(a_def->gid); it != g_calCurves.end()) {
+        return it->second[li];
+    }
+    return a_def->magnitude[li];
+}
+
 float GemPerkMult(const meo::GemDef* a_def) {
     if (!a_def) {
         return 1.0f;
@@ -882,7 +911,7 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         // Master power scale (MCM) × Gem Attunement (+8%/rank) × affinity/
         // Facet Insight (+25% each, DESIGN §6).
         const float primaryMag =
-            filled[i].rg->def->magnitude[filled[i].lvIdx] * g_magnitudeMult *
+            GemBaseMag(filled[i].rg->def, filled[i].lvIdx) * g_magnitudeMult *
             (1.0f + 0.08f * g_attuneRank) * GemPerkMult(filled[i].rg->def);
         auto& eff = effects[e++];
         eff.effectItem.magnitude = primaryMag;
@@ -2375,7 +2404,7 @@ namespace menuhook {
             const auto& rg = g_gems[a_idx];
             const int   li = std::clamp(a_level, 1, 5) - 1;
             auto*       m = rg.mgefLv[li] ? rg.mgefLv[li] : rg.mgef;
-            const float mag = rg.def->magnitude[li] * g_magnitudeMult *
+            const float mag = GemBaseMag(rg.def, li) * g_magnitudeMult *
                               (1.0f + 0.08f * g_attuneRank) * GemPerkMult(rg.def);
             const char* d = m ? m->magicItemDescription.c_str() : nullptr;
             if (d && *d) {
@@ -4456,7 +4485,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.44.3 (M35 audit fixes) loaded");
+            console->Print("MEO native v0.45.0 (M35b per-list magnitudes) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4517,7 +4546,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.44.3 (M35 audit fixes) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.45.0 (M35b per-list magnitudes) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }

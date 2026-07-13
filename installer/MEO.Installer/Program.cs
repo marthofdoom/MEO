@@ -822,6 +822,7 @@ static class Commands
 
         var fams = new Dictionary<string, Dictionary<string, RecipeAgg>>();
         var enchFamily = new Dictionary<FormKey, string>();
+        var famMags = new Dictionary<string, List<float>>();  // m35b: per-list observed magnitudes
         var enchLeftover =
             new Dictionary<FormKey, List<(string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds)>>();
         var noteWeight = new Dictionary<string, int>();
@@ -867,6 +868,11 @@ static class Commands
             }
             enchLeftover[ench] = pool2;  // unmatched companions — the loss audit's input
             var prim = matched[0];
+            if (prim.Mag > 0)  // m35b: collect the list's own magnitudes for this family
+            {
+                if (!famMags.TryGetValue(best, out var ml)) famMags[best] = ml = [];
+                for (int w = 0; w < weight; w++) ml.Add(prim.Mag);
+            }
             // m32: a zero-magnitude primary (paralyze, soul trap) can't ratio-
             // normalize — its riders ride ABSOLUTE instead: flat magnitude and
             // duration observed from the recipe itself. This is what unpins
@@ -1031,6 +1037,34 @@ static class Commands
             Console.WriteLine($"  {famKey}: {tiers.Count}-rank ladder -> levels " +
                 string.Join(" | ", tiers.Select(m => m.Name?.String ?? m.EditorID)));
         }
+        // m35b (Marth: derive per list, don't hardcode LoreRim numbers): each
+        // gem family's magnitude curve is rescaled from the catalog SHAPE to
+        // THIS load order's own enchant strength. Level-V anchor = a robust
+        // high (90th percentile of observed generic-enchant magnitudes, so one
+        // outlier can't inflate it); levels I-IV keep the catalog's ramp
+        // proportions. A gem thus tracks the list's own balance — crafting
+        // included — instead of a baked constant. Families with no generic
+        // enchant in the list keep the compiled default.
+        static float Pct(List<float> v, double p)
+        {
+            var s = v.OrderBy(x => x).ToList();
+            var idx = (int)Math.Clamp(Math.Round(p * (s.Count - 1)), 0, s.Count - 1);
+            return s[idx];
+        }
+        int curvesDerived = 0;
+        foreach (var (fam, mags) in famMags)
+        {
+            if (mags.Count == 0 || !data.CatalogCurve.TryGetValue(fam, out var shape) ||
+                shape.Length < 5 || shape[4] <= 0) continue;
+            var anchor = Pct(mags, 0.90);
+            var scale = anchor / shape[4];
+            var curve = shape.Take(5).Select(v => (float)Math.Round(v * scale, 1)).ToArray();
+            if (!outFams.TryGetValue(fam, out var oobj))
+                outFams[fam] = oobj = new Dictionary<string, object> { ["from"] = $"{mags.Count} item(s)" };
+            ((Dictionary<string, object>)oobj)["curve"] = curve.Select(x => (object)x).ToList();
+            curvesDerived++;
+        }
+        Console.WriteLine($"magnitude curves: {curvesDerived} family/families derived from this list");
         var notes = noteWeight.OrderByDescending(kv => kv.Value)
             .Select(kv => $"{kv.Key} — {kv.Value} item(s)").ToList();
         foreach (var n in notes) Console.WriteLine("  note: " + n);
@@ -1154,6 +1188,7 @@ static class Commands
         public List<(FormKey Key, FormKey Ench, string? Name, string? BaseName, FormKey? Root, ModKey Mod, string? Edid)> Raw = [];
         public List<(FormKey Key, string Cls, string? Name, ModKey Mod, string? Edid)> Items = [];
         public Dictionary<FormKey, FormKey> StripBase = [];   // strip item -> unenchanted base
+        public Dictionary<string, float[]> CatalogCurve = [];  // m35b: catalog curve shape per family
     }
 
     static CensusData? BuildCensus(
@@ -1184,6 +1219,9 @@ static class Commands
                 else unresolved++;
             }
             if (refs.Count > 0) data.FamilyRefs[fam.Name] = refs;
+            if (fam.Value.TryGetProperty("curve", out var cv) && cv.ValueKind == System.Text.Json.JsonValueKind.Array)
+                data.CatalogCurve[fam.Name] = cv.EnumerateArray()
+                    .Select(x => (float)x.GetDouble()).ToArray();
         }
         Console.WriteLine($"catalog: {data.Covered.Count} covered effect signature(s)" +
                           (unresolved > 0 ? $", {unresolved} ref(s) not in this list" : ""));
