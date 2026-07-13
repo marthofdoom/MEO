@@ -4294,6 +4294,12 @@ public:
                 }
             }
         }
+        // m36 diag (Marth: "no messages, no activations"): trace every player
+        // weapon hit so we can see the sink fire, whether an Echo weapon matched,
+        // and (below) how many targets were in range. Temporary — remove once
+        // Echo AoE is confirmed.
+        spdlog::info("[echo-hit] player hit src={:08X} target='{}' echoWeapon={} r={:.0f}",
+                     a_event->source, victim->GetName(), ench != nullptr, radius);
         if (!ench || radius <= 0.0f) {
             return RE::BSEventNotifyControl::kContinue;
         }
@@ -4329,6 +4335,11 @@ public:
                 // fire?" confirmation (crowds are rare, and the effect is silent).
                 Notify(std::format("Echo burst — {} nearby enemy{} caught.", hit,
                                    hit == 1 ? "" : "ies"));
+            } else {
+                // Confirms the sink + Echo detection worked and it was simply a
+                // lone target (no secondary hostiles in range) — not a failure.
+                spdlog::info("[echo] Echo weapon hit but 0 nearby hostiles in r={:.0f} "
+                             "(scanned {} high actors)", radius, lists->highActorHandles.size());
             }
         });
         return RE::BSEventNotifyControl::kContinue;
@@ -4962,7 +4973,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.48.6 (m36: Echo AoE on-screen confirm + per-target log) loaded");
+            console->Print("MEO native v0.48.7 (m36: Echo hit diagnostics) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -5023,7 +5034,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.48.6 (m36: Echo AoE on-screen confirm + per-target log) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.48.7 (m36: Echo hit diagnostics) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
