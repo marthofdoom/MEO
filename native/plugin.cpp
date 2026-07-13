@@ -118,7 +118,7 @@ bool          g_starterGranted = false;
 
 constexpr std::uint32_t kSerID = 'MEO1';
 constexpr std::uint32_t kRecGems = 'GEMS';
-constexpr std::uint32_t kSerVersion = 9;  // v9: + supportScaffoldGranted. v8: meoGrantedArcane. v7: pouchRefID.
+constexpr std::uint32_t kSerVersion = 10;  // v10: + handPlacedMask. v9: supportScaffold. v8: meoGrantedArcane.
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -425,6 +425,7 @@ RE::BGSPerk* g_perkFacet = nullptr;
 RE::BGSPerk* g_perkArcaneBlacksmith = nullptr;
 bool         g_meoGrantedArcane = false;  // co-save v8: MEO added the perk (revocable)
 bool         g_supportScaffoldGranted = false;  // co-save v9: test-scaffold support gems handed out
+std::uint8_t g_handPlacedMask = 0;              // co-save v10: bitmask of hand-placed support gems dropped (m36i)
 bool g_treeMode = false;  // MEO - Patch.esp installed: perks come from the tree, not auto-grant
 // Cached from the player's perks (refreshed on load + menu close).
 int  g_attuneRank = 0;      // 0..5 → +8% gem magnitude per rank
@@ -4188,6 +4189,40 @@ void StockVendorGems() {
     }
 }
 
+// m36i: hand-placed support gems — one guaranteed copy per type at a famous,
+// NON-respawning container (Fable-verified Skyrim.esm refs). Dropped once per
+// save via the v10 co-save bitmask. Master-00 RefIDs (load-order-stable); a
+// null/disabled/deleted ref (a heavy overhaul relocated or emptied it) degrades
+// to a silent no-op — those players still get support gems from boss loot.
+struct HandPlaced { RE::FormID ref; const char* gid; std::uint8_t bit; };
+inline constexpr HandPlaced kHandPlaced[] = {
+    { 0x000C8996, "focus",   0x01 },  // Avanchnzel Boilery boss chest (Dwemer / the Lexicon)
+    { 0x000CE735, "conduit", 0x02 },  // The Midden — Atronach Forge Offering Box (transmutation; persistent ref)
+    { 0x00026B6D, "echo",    0x04 },  // Ustengrav Depths boss chest (Jurgen Windcaller — the Voice)
+};
+
+// Place the hand-placed gem into a container ref if it now resolves and hasn't
+// been placed. a_onlyRef != 0 restricts to that ref (cell-attach); 0 tries all
+// currently-resolvable refs (post-load — catches the persistent Offering Box).
+void TryPlaceHandPlaced(RE::FormID a_onlyRef = 0) {
+    for (const auto& hp : kHandPlaced) {
+        if ((g_handPlacedMask & hp.bit) || (a_onlyRef && a_onlyRef != hp.ref)) {
+            continue;
+        }
+        auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(hp.ref);
+        if (!ref || ref->IsDisabled() || ref->IsDeleted()) {
+            continue;  // cell not loaded yet, or overhaul removed it — retry later / skip
+        }
+        auto gi = g_gemByGid.find(hp.gid);
+        if (gi == g_gemByGid.end() || !g_gems[gi->second].items[0]) {
+            continue;
+        }
+        ref->AddObjectToContainer(g_gems[gi->second].items[0], nullptr, 1, nullptr);  // tier I
+        g_handPlacedMask |= hp.bit;
+        spdlog::info("[handplaced] '{}' I placed in container {:08X}", hp.gid, hp.ref);
+    }
+}
+
 class CellAttachSink : public RE::BSTEventSink<RE::TESCellAttachDetachEvent> {
 public:
     static CellAttachSink* GetSingleton() {
@@ -4198,6 +4233,15 @@ public:
                                           RE::BSTEventSource<RE::TESCellAttachDetachEvent>*) override {
         if (!a_event || !a_event->attached || !a_event->reference) {
             return RE::BSEventNotifyControl::kContinue;
+        }
+        // m36i: a hand-placed support-gem container just loaded — drop its gem
+        // once (the boss chests are temporary refs, resolvable only now).
+        const RE::FormID rid = a_event->reference->GetFormID();
+        for (const auto& hp : kHandPlaced) {
+            if (rid == hp.ref && !(g_handPlacedMask & hp.bit)) {
+                SKSE::GetTaskInterface()->AddTask([rid]() { TryPlaceHandPlaced(rid); });
+                break;
+            }
         }
         if (auto* bo = a_event->reference->GetBaseObject();
             bo && (bo->Is(RE::FormType::Weapon) || bo->Is(RE::FormType::Armor))) {
@@ -5079,6 +5123,7 @@ void SaveCallback(SKSE::SerializationInterface* a_intfc) {
     a_intfc->WriteRecordData(grantedArcane);
     const std::uint8_t supportScaffold = g_supportScaffoldGranted ? 1 : 0;  // v9 field
     a_intfc->WriteRecordData(supportScaffold);
+    a_intfc->WriteRecordData(g_handPlacedMask);  // v10 field: hand-placed support gems dropped
     const std::uint32_t count = static_cast<std::uint32_t>(g_sockets.size());
     a_intfc->WriteRecordData(count);
     for (const auto& [key, rec] : g_sockets) {
@@ -5107,6 +5152,7 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
     g_mentorGranted = false;
     g_armorStarterGranted = false;
     g_supportScaffoldGranted = false;
+    g_handPlacedMask = 0;
     CloseGemMenu();
     std::uint32_t type = 0, version = 0, length = 0;
     while (a_intfc->GetNextRecordInfo(type, version, length)) {
@@ -5149,6 +5195,9 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
             a_intfc->ReadRecordData(supportScaffold);
             g_supportScaffoldGranted = supportScaffold != 0;
         }
+        if (version >= 10) {  // v10: hand-placed support-gem bitmask (older saves = 0)
+            a_intfc->ReadRecordData(g_handPlacedMask);
+        }
         std::uint32_t count = 0;
         a_intfc->ReadRecordData(count);
         for (std::uint32_t i = 0; i < count; ++i) {
@@ -5189,6 +5238,7 @@ void RevertCallback(SKSE::SerializationInterface*) {
     g_mentorGranted = false;
     g_armorStarterGranted = false;
     g_supportScaffoldGranted = false;
+    g_handPlacedMask = 0;
     CloseGemMenu();
     spdlog::info("[revert] socket index cleared");
 }
@@ -5209,7 +5259,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         StartEchoHeartbeat();  // m36: Echo armor follower-share
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.49.3 (m36h: support gems as rare boss loot) loaded");
+            console->Print("MEO native v0.49.4 (m36i: hand-placed support gems) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -5226,6 +5276,8 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
             }
             EnsurePouchRef();     // m27: gems live in the hidden pouch container
             RouteGemsToPouch();
+            TryPlaceHandPlaced();  // m36i: place persistent hand-placed gems now (Offering Box);
+                                   // temporary boss-chest refs place on cell-attach
             // m32d: recovery runs EVERY load — the creation-only gate missed
             // saves holding an alive-but-looted pouch (saved between purge
             // cycles). A healthy load strands nothing and this no-ops; the
@@ -5270,7 +5322,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.49.3 (m36h: support gems as rare boss loot) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.49.4 (m36i: hand-placed support gems) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
