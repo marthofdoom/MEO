@@ -685,6 +685,12 @@ void ResolveCatalog() {
         RE::TESObjectMISC* prev = nullptr;
         for (int lv = 0; lv < levels; ++lv) {
             rg.items[lv] = dh->LookupForm<RE::TESObjectMISC>(def.gemItem[lv], kPluginName);
+            // Gems are not sellable (Marth): they live in the hidden pouch so a
+            // vendor never sees them, and a zero gold value closes any transient
+            // window where one sits in visible inventory. The ESP bakes 0 too.
+            if (rg.items[lv]) {
+                rg.items[lv]->value = 0;
+            }
             // Short-curve gems (e.g. Muffle) pad higher levels with the top
             // form; map each distinct form to its FIRST level only. m36: support
             // gems have no MGEF (inert alone) but are still real socketable

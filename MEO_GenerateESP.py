@@ -184,7 +184,10 @@ def allocate_gems():
             mesh=f"Clutter\\Gemstones\\{stone}.nif" if lvl>=4 or levels==1 \
                  else f"Clutter\\Gemstones\\{stone}Flawed.nif"
             body+=subrec('MODL',zstr(mesh))
-            body+=subrec('DATA',struct.pack('<If',50*lvl,0.1))
+            # Gems are not sellable (Marth): value 0. They live in the hidden
+            # pouch so a vendor never lists them; the DLL also zeroes value at
+            # load as belt-and-suspenders. Weight 0.1.
+            body+=subrec('DATA',struct.pack('<If',0,0.1))
             out.write(record('MISC',fid,0,body))
             gem_form_map[gid][lvl]=fid
             (weapon_fids if g['domain']=='weapon' else armor_fids).append(fid)
