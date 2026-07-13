@@ -3311,7 +3311,18 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
                 continue;
             }
             auto& xl = ref->extraList;
-            xl.SetOwner(actor->GetActorBase());  // m17b: never a theft flag
+            // m34c (Marth: converted BANDIT loot flagged as owned/theft):
+            // stamp ownership ONLY for the player's own conversion — m17b
+            // prevents the PLAYER's place-and-pickup near guards from reading
+            // as theft. Enemy loot must stay unowned (vanilla free corpse
+            // loot); vendor stock is gated by the merchant container, not
+            // per-item ownership; and here the ACTOR, not the player, does the
+            // pickup, so there is no player-theft to prevent. Baking the
+            // actor's ownership was what made a bandit's converted drop
+            // read as stolen.
+            if (actor->IsPlayerRef()) {
+                xl.SetOwner(actor->GetActorBase());
+            }
             const std::uint32_t hi =
                 HashU32(seed ^ hit.old->GetFormID() ^ static_cast<std::uint32_t>(i));
             const int level = (hi % 10000) < l2cut ? 2 : 1;
@@ -4407,7 +4418,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         SKSE::GetCrosshairRefEventSource()->AddEventSink(CrosshairSink::GetSingleton());
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.44.0 (M34 elemental affinities + Facet Insight) loaded");
+            console->Print("MEO native v0.44.2 (M34c enemy-loot ownership fix) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -4468,7 +4479,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.44.0 (M34 elemental affinities + Facet Insight) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.44.2 (M34c enemy-loot ownership fix) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
