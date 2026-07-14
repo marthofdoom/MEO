@@ -8,7 +8,7 @@ REQUIREMENTS
   * Address Library for SKSE Plugins
   * SkyUI
   * MCM Helper
-  * Synthesis  (https://www.nexusmods.com/skyrimspecialedition/mods/76580)
+  * Synthesis  (https://github.com/Mutagen-Modding/Synthesis)
       MEO adapts itself to your load order through a Synthesis patcher (see
       SETUP). Synthesis brings its own .NET dependency, so there is nothing
       extra to install for MEO, and no program to run by hand.

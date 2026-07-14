@@ -4,6 +4,17 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.5 — Synthesis-only install (no exe) (2026-07-14)
+- **The install-time patcher is now a Synthesis patcher, not a bundled exe.**
+  The old `MEO.Installer.exe` (and its unsigned bundled DLLs) tripped Nexus and
+  VirusTotal screening. MEO now adapts to your load order through **Synthesis**,
+  added from GitHub and compiled locally — so the Nexus download ships **no
+  binary tool at all** (just the DLL/ESP/MCM), and there's nothing to get
+  flagged. The patcher reuses the exact same record-analysis code, so its output
+  (gem calibration + rebuilt perk tree) is byte-identical to the old installer.
+- Requirement change: **Synthesis** replaces the standalone installer (and its
+  .NET runtime requirement). No gameplay/DLL logic changes from v1.0.4.
+
 ## v1.0.4 — slim installer (framework-dependent) + MCM name fix (2026-07-14)
 - **Installer no longer bundles the .NET runtime.** The self-contained build was
   a 44 MB single-file exe (the packed runtime is what tripped anti-virus / mod-
