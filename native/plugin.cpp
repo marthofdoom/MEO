@@ -5768,19 +5768,30 @@ namespace sndhook {
                 g_idCount.store(idx + 1, std::memory_order_release);
                 // Resolve descriptor -> SNDR form (bounded: only runs for a new descriptor,
                 // at most 12 times total, never at shutdown since it's in-window only).
+                // Match either the form pointer itself OR its inner soundDescriptor —
+                // PlaySound may hand us either.
                 std::uint32_t fid  = 0;
                 const char*   edid = "";
+                void*         dp   = static_cast<void*>(a_desc);
                 if (auto* dh = RE::TESDataHandler::GetSingleton()) {
                     for (auto* snd : dh->GetFormArray<RE::BGSSoundDescriptorForm>()) {
-                        if (snd && snd->soundDescriptor == a_desc) {
+                        if (snd && (static_cast<void*>(snd) == dp ||
+                                    static_cast<void*>(snd->soundDescriptor) == dp)) {
                             fid  = snd->GetFormID();
                             edid = snd->GetFormEditorID();
                             break;
                         }
                     }
                 }
-                spdlog::warn("[SNDID] in-window sound desc={} flags=0x{:X} -> SNDR {:08X} '{}'",
-                             static_cast<void*>(a_desc), a_flags, fid, edid ? edid : "");
+                // If unresolved, dump the descriptor's vtable RVA so its concrete class can
+                // be identified offline against the 1.6.1170 address library.
+                std::uintptr_t vtblRva = 0;
+                if (fid == 0) {
+                    const auto* vtbl = *reinterpret_cast<void* const*>(a_desc);
+                    vtblRva = reinterpret_cast<std::uintptr_t>(vtbl) - REL::Module::get().base();
+                }
+                spdlog::warn("[SNDID] in-window sound desc={} flags=0x{:X} -> SNDR {:08X} '{}' vtbl=+0x{:X}",
+                             dp, a_flags, fid, edid ? edid : "", vtblRva);
             }
         }
         return g_buildSound(a_self, a_handle, a_desc, a_flags);  // pure pass-through
