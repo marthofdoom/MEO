@@ -4948,6 +4948,60 @@ void DispelStaleGemEffects() {
     }
 }
 
+// m36n (marth): reactivate WORN socketed gear on current followers, so a slotted
+// weapon/armor handed to a companion keeps firing across a save/load. The main
+// reapply was player-only, leaving follower gear dormant until a manual re-equip.
+// Same idempotent equip-cycle teardown the player path uses; runs on the deferred
+// load passes alongside the player's.
+void ReapplyFollowerSockets() {
+    auto* lists = RE::ProcessLists::GetSingleton();
+    if (!lists) {
+        return;
+    }
+    int done = 0;
+    for (auto& h : lists->highActorHandles) {
+        auto a = h.get();
+        if (!a || a->IsPlayerRef() || !a->IsPlayerTeammate() || a->IsDead()) {
+            continue;
+        }
+        auto* changes = a->GetInventoryChanges();
+        if (!changes || !changes->entryList) {
+            continue;
+        }
+        for (auto* entry : *changes->entryList) {
+            if (!entry || !entry->object || !entry->extraLists ||
+                !(entry->object->Is(RE::FormType::Weapon) ||
+                  entry->object->Is(RE::FormType::Armor))) {
+                continue;
+            }
+            for (auto* xl : *entry->extraLists) {
+                if (!xl || !IsWornXList(xl)) {
+                    continue;
+                }
+                auto* xid = xl->GetByType<RE::ExtraUniqueID>();
+                if (!xid) {
+                    continue;
+                }
+                bool ours = false;
+                for (int s = 0; s < kMaxSockets; ++s) {
+                    if (g_sockets.contains(MakeKey(entry->object->GetFormID(), xid->uniqueID,
+                                                   static_cast<std::uint8_t>(s)))) {
+                        ours = true;
+                        break;
+                    }
+                }
+                if (ours) {
+                    EquipCycleWorn(a.get(), entry->object, xl);
+                    ++done;
+                }
+            }
+        }
+    }
+    if (done > 0) {
+        spdlog::info("[load] reactivated {} follower worn socket(s)", done);
+    }
+}
+
 void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag = false) {
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* changes = player ? player->GetInventoryChanges() : nullptr;
@@ -5057,6 +5111,7 @@ void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag = false) {
             EquipCycleWorn(player, t.base, t.xl);  // full teardown → one ability
         }
         DispelStaleGemEffects();  // m24b backstop: clear any save-carried orphan
+        ReapplyFollowerSockets();  // m36n: companions' slotted gear too
         spdlog::info("[load] refresh pass: {} worn socket(s) re-activated (equip cycle)",
                      static_cast<int>(targets.size()));
     }
@@ -5263,7 +5318,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         StartEchoHeartbeat();  // m36: Echo armor follower-share
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v0.50.1 (m36l: support-gem purge cleanup) loaded");
+            console->Print("MEO native v0.50.2 (m36n: follower slotted-gear reactivation) loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -5329,7 +5384,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v0.50.1 (m36l: support-gem purge cleanup) loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v0.50.2 (m36n: follower slotted-gear reactivation) loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
