@@ -1,0 +1,14 @@
+marth's Enchanting Overhaul 1.0.2 — vendor conversion + economy + polish
+built from native run 29309915961; installer published locally (v1.0.1 turn-undead census fix)
+
+Since 1.0.0:
+- Vendor barter stock now converts (dialogue-open sweep ran before the engine's
+  restock; added a barter-open sweep that refreshes the list).
+- Turn-undead / prefix-enchanted loot line recovered in the census (+249).
+- Enchanting XP from gameplay (discover / destroy / level-up / kill trickle).
+- Socketed-item gold value scales with gem tier (no more 20k conversions).
+- Boots are socketable (one socket).
+- Dedup no longer breaks the 2-of-a-kind cap or strips follower gear.
+- Dedup notification removed; bEnableLogging toggle (MCM Debug, default on).
+
+Known issue: a UI sound can still play when dedup/conversion runs.
