@@ -1092,7 +1092,8 @@ const ResolvedGem* ConduitSibling(const ResolvedGem* a_normal, bool a_itemIsArmo
     return nullptr;
 }
 
-void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList) {
+void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList,
+                            RE::Actor* a_owner = nullptr) {
     auto* xid = a_xList ? a_xList->GetByType<RE::ExtraUniqueID>() : nullptr;
     if (!a_base || !xid) {
         return;
@@ -1104,8 +1105,14 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     // m35c: worn items enforce the 2-of-a-kind stacking cap; a 3rd+ copy of
     // an effect across worn gear contributes nothing.
     const bool worn = IsWornXList(a_xList);
-    const std::unordered_set<InstKey> active = worn ? WornActiveEffectKeys()
-                                                    : std::unordered_set<InstKey>{};
+    // m38e: the 2-of-a-kind cap is a PLAYER stat-stacking limit. Applying it to a
+    // follower/NPC-worn item would STRIP the enchant — WornActiveEffectKeys scans
+    // the player's inventory only, so a non-player key is never "active" and every
+    // gem caps out. Cap only player-worn items; nullptr owner = legacy player/
+    // non-worn callers, unchanged.
+    const bool applyCap = worn && (!a_owner || a_owner->IsPlayerRef());
+    const std::unordered_set<InstKey> active = applyCap ? WornActiveEffectKeys()
+                                                        : std::unordered_set<InstKey>{};
     std::vector<Filled> filled;
     // m36: a support gem (Echo/Conduit/Focus) has no effect of its own. When
     // exactly ONE support shares the item with exactly ONE normal gem it is
@@ -1134,7 +1141,7 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         if (!rg->mgef) {
             continue;  // disabled normal gem (missing master)
         }
-        if (worn && !active.contains(key)) {
+        if (applyCap && !active.contains(key)) {
             continue;  // m35c: capped 3rd+ same-effect copy — inert
         }
         filled.push_back({ rg, std::clamp<int>(it->second.level, 1, 5) - 1 });
@@ -1975,7 +1982,7 @@ bool GrantGemXP(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataLis
     // a_rec is the live g_sockets slot entry; bump its level (xp stays cumulative)
     // and rebuild the instance's combined enchant from all slots.
     a_rec.level = static_cast<std::uint8_t>(newLevel);
-    RebuildInstanceEnchant(a_base, a_xList);
+    RebuildInstanceEnchant(a_base, a_xList, a_owner);  // m38e: owner gates the cap
     if (IsWornXList(a_xList)) {  // non-worn (fed at a station) re-applies on equip
         // m35c: a level-up shifts cap ranking; redistribute across worn gear
         // only when the effect actually has >2 worn copies (player only).
@@ -5092,7 +5099,16 @@ void DispelStaleGemEffects() {
     // deferred re-equip then deduped against stale bookkeeping (§8 rule),
     // the effect stayed MISSING. An orphan is an enchant attached to
     // NOTHING, not one attached to something momentarily unequipped.
-    std::unordered_set<RE::FormID> valid;
+    // m38e: allowance per (enchant form, MGEF) = how many worn ActiveEffects that
+    // pair may legitimately produce = (inventory items carrying the enchant) ×
+    // (that MGEF's occurrences in the enchant's effects). Counted inventory-wide
+    // (worn or not) so the m26e equip-cycle race stays closed. Replaces the old
+    // orphan-set + first-wins `seen` dedup, which silently killed the 2-of-a-kind
+    // cap's legitimate 2nd copy: the engine dedupes identical created enchants to
+    // ONE FF form (ENGINE_NOTES), so two worn pieces of the same family+level
+    // share (form, MGEF) and the 2nd looked like a duplicate. Allowance permits
+    // exactly as many copies as items+effects vouch for.
+    std::unordered_map<std::uint64_t, int> allowance;
     for (auto* entry : *changes->entryList) {
         if (!entry || !entry->object || !entry->extraLists) {
             continue;
@@ -5101,8 +5117,16 @@ void DispelStaleGemEffects() {
             if (!xl) {
                 continue;
             }
-            if (auto* xe = xl->GetByType<RE::ExtraEnchantment>(); xe && xe->enchantment) {
-                valid.insert(xe->enchantment->GetFormID());
+            auto* xe = xl->GetByType<RE::ExtraEnchantment>();
+            if (!xe || !xe->enchantment) {
+                continue;
+            }
+            const auto encFid = xe->enchantment->GetFormID();
+            for (auto* ef : xe->enchantment->effects) {
+                if (ef && ef->baseEffect) {
+                    ++allowance[(static_cast<std::uint64_t>(encFid) << 32) |
+                                ef->baseEffect->GetFormID()];
+                }
             }
         }
     }
@@ -5127,12 +5151,14 @@ void DispelStaleGemEffects() {
         return;
     }
     std::vector<RE::ActiveEffect*> stale;
-    // m32e (marth's deck finding): the valid-guard shielded SAME-FORM
-    // duplicates — every extra registration of a still-worn enchant shares
-    // that worn form, so orphan logic never touched them while refresh
-    // passes could stack them. Track (ench form, effect) pairs among OUR
-    // effects and dispel every copy after the first, vouched or not.
-    std::unordered_set<std::uint64_t> seen;
+    // Walk OUR active effects (FF-form enchant + kCostOverride + gem MGEF) and
+    // dispel any copy of a (enchant, MGEF) pair BEYOND its allowance. This is
+    // both the orphan check (allowance 0 → attached to nothing) and the dedup
+    // (m32e same-form stacking) in one, and — unlike the old first-wins rule —
+    // it keeps the stacking cap's legitimate 2nd copy (m38c: signature no longer
+    // needs costOverride==0; armor gems carry value there. gem-MGEF membership is
+    // the real discriminator — players can't enchant with gem MGEFs).
+    std::unordered_map<std::uint64_t, int> consumed;
     for (auto* ae : *list) {
         if (!ae || !ae->spell) {
             continue;
@@ -5142,28 +5168,21 @@ void DispelStaleGemEffects() {
             continue;  // not an engine-created enchantment
         }
         if (!en->data.flags.any(RE::EnchantmentItem::EnchantmentFlag::kCostOverride)) {
-            continue;  // not MEO's signature (FF-form + kCostOverride + gem MGEF)
+            continue;  // not MEO's signature
         }
-        // m38c: dropped the old costOverride==0 clause — armor gems now carry
-        // their gold value in costOverride (weapons carry it in charge). The
-        // gem-MGEF membership below is the real discriminator (players can't
-        // enchant with gem MGEFs), so identity is unchanged.
         const auto* mgef = ae->GetBaseObject();
         if (!mgef || !gemFx.contains(mgef)) {
             continue;
         }
-        const std::uint64_t pair =
+        const std::uint64_t key =
             (static_cast<std::uint64_t>(en->GetFormID()) << 32) | mgef->GetFormID();
-        if (!seen.insert(pair).second) {
-            spdlog::info("[avfix] duplicate '{}' from ench {:08X} — dispelling the extra",
-                         mgef->GetName(), en->GetFormID());
+        auto it = allowance.find(key);
+        const int allow = it != allowance.end() ? it->second : 0;
+        if (++consumed[key] > allow) {
+            spdlog::info("[avfix] surplus gem effect '{}' ench {:08X} (copy {} > {} vouched) — dispelling",
+                         mgef->GetName(), en->GetFormID(), consumed[key], allow);
             stale.push_back(ae);
-            continue;
         }
-        if (valid.contains(en->GetFormID())) {
-            continue;  // a worn socketed item vouches for (one copy of) it
-        }
-        stale.push_back(ae);
     }
     for (auto* ae : stale) {
         const auto* mgef = ae->GetBaseObject();

@@ -5,6 +5,14 @@ standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
 ## v1.0.2 — vendor restock defeated the conversion sweep (m38, 2026-07-13)
+- **Dedup no longer breaks the stacking cap or strips follower gear** (m38e,
+  from a pre-release review): the save-cleanup pass counted a "first copy wins"
+  and dispelled the rest, but the engine gives two same-family-same-level worn
+  pieces one shared enchant form — so the 2-of-a-kind cap's legitimate second
+  copy was silently removed on every pass. Cleanup now allows exactly as many
+  copies as worn items × effects vouch for. Separately, a follower's gem gaining
+  XP ran the player-only stacking cap against the follower's gear and stripped
+  its enchant; the cap now applies only to player-worn items.
 - **Dedup is silent + logging is toggleable** (m38d): the save-cleanup pass that
   dispels stale/duplicate gem effects no longer shows a corner notification (or
   its sound) — it's internal housekeeping that fires on load/replace and
