@@ -1,0 +1,7 @@
+marth's Enchanting Overhaul 1.0.5 — Synthesis-only install (no exe)
+built from native run 29317667235; patcher = MEO.Synthesis (added via Synthesis from GitHub)
+
+- No bundled installer exe. MEO adapts to your load order through the Synthesis
+  patcher (github.com/marthofdoom/MEO, installer/MEO.Synthesis). Output is
+  byte-identical to the old installer (shared code). Requires Synthesis.
+- No gameplay/DLL logic change from 1.0.4.
