@@ -4,6 +4,16 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.4 — slim installer (framework-dependent) + MCM name fix (2026-07-14)
+- **Installer no longer bundles the .NET runtime.** The self-contained build was
+  a 44 MB single-file exe (the packed runtime is what tripped anti-virus / mod-
+  host screening). It's now a framework-dependent build and **requires the .NET 9
+  Runtime (x64)** — a free Microsoft download, needed only to run the installer
+  once, never in-game. Same behavior, verified byte-identical calibration output.
+- MCM title now reads **"marth Enchanting Overhaul"**; the new "Enchanting XP from
+  gem kills" slider ships its INI default so it no longer reads -1 on the MCM.
+- No gameplay/DLL logic changes from v1.0.3 (version bumped for the release).
+
 ## v1.0.3 — enchanting-XP-from-kills nerf + slider (m39, 2026-07-13)
 - The per-kill Enchanting skill-XP trickle (from Gem XP your socketed gems earn)
   was leveling Enchanting far too fast; cut the default 5× (0.05 → 0.01) and
