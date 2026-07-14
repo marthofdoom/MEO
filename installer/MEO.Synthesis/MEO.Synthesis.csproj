@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Product>marth's Enchanting Overhaul Synthesis Patcher</Product>
+    <Company>marth</Company>
+    <Description>Synthesis patcher: adapts the enchanting perk tree to your load order + writes MEO calibration. Reuses the standalone installer's record-analysis code (MEO.Installer/Commands.cs) for byte-identical output.</Description>
+    <InformationalVersion>0.29.0</InformationalVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Synthesis 0.36.5 pins Mutagen.Bethesda.Core/Json 0.54.2, matching the
+         installer's Mutagen.Bethesda.Skyrim 0.54.2 — same record model, so the
+         shared Commands.cs compiles and behaves identically under both. -->
+    <PackageReference Include="Mutagen.Bethesda.Synthesis" Version="0.36.5" />
+    <!-- Synthesis brings Mutagen Core/Json but not the Skyrim game model; match
+         the installer's exact version so the shared Commands.cs compiles. -->
+    <PackageReference Include="Mutagen.Bethesda.Skyrim" Version="0.54.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reuse the EXACT standalone-installer analysis code (no copy, no fork). -->
+    <Compile Include="..\MEO.Installer\Commands.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The gem catalog ships next to the patcher assembly and is resolved from
+         there at runtime (rider recipes / conversion table are derived from it).
+         Linked from the single source (data/) — no duplicate to drift. -->
+    <None Include="..\..\data\gem_catalog.json" Link="gem_catalog.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
