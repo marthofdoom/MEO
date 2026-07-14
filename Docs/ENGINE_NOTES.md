@@ -284,6 +284,22 @@ installed in `SKSEPluginLoad` — before the renderer exists):
   spawn→stamp→pickup recipe MUST first
   `ref->extraList.SetOwner(player->GetActorBase())`. Applied to the
   gem-return path (GiveGemInstance) and the plain-stack drop/pickup mint.
+- **Vendor barter stock lives in a non-actor CONTAINER, not the vendor actor
+  (found by Fable audit 2026-07-13, fixed v1.0.1-m37).** `StockVendorGems`
+  resolves the sell inventory as `vendorData.merchantContainer` — a chest REFR,
+  not the merchant Actor. `ConvertInventory` used to early-return on any
+  non-actor holder (`if (!actor) return 0`), so that sweep was a SILENT no-op
+  since m23: vendor stock (where a low-level player meets generic enchanted
+  armor like "of Major Wielding") NEVER converted, and logged nothing because
+  every miss line was gated behind the actor/player branch. Fix: `ConvertInventory`
+  sweeps container holders too. Non-actor holders can't `PickUpObject`
+  (actor-only) — instead use the engine flow `holder->PlaceObjectAtMe(base,false)`
+  → `StampInstance` → `holder->AddObjectToContainer(base, &xl, 1, fromRefr=tempRef)`,
+  where a non-null `fromRefr` MOVES the stamped instance in and the engine
+  consumes the temp world ref (same path as Papyrus `AddItem(ObjectReference)`).
+  Guard the actor-only steps (`worn` equip, player ownership/theft-guard,
+  player convert-miss diag) behind `if (actor…)`. Log container sweeps with a
+  count so this failure class self-diagnoses.
 - `io.IniFilename = nullptr` — never write imgui.ini into the game dir.
 - vcpkg: `imgui` features `dx11-binding`, `win32-binding`; link
   `imgui::imgui d3d11`.
