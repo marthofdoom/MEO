@@ -21,12 +21,16 @@ SETUP
 
 2. Adapt MEO to YOUR load order with Synthesis (this replaces the old
    standalone installer — there is no exe):
-     a. Open Synthesis.
-     b. Add a new patcher -> Git Repository, and point it at:
-          https://github.com/marthofdoom/MEO
-        Project:  installer/MEO.Synthesis/MEO.Synthesis.csproj
-        (Synthesis downloads and builds it for you.)
-     c. Run your Synthesis pipeline.
+     EASIEST: download the MEO.synth file, then in Synthesis select a group and
+       double-click it — it adds the patcher for you (right project preselected).
+     OR MANUALLY:
+       a. Open Synthesis, add a new patcher -> Git Repository, point it at:
+            https://github.com/marthofdoom/MEO
+          Project:  installer/MEO.Synthesis/MEO.Synthesis.csproj
+       b. Run your Synthesis pipeline. (Synthesis builds it for you.)
+
+   PURE VANILLA + AE + CREATION CLUB (no mods that add enchanted gear)? Use the
+   "Vanilla+AE+CC pre-calibrated" optional file instead and skip Synthesis.
    Synthesis reads your load order and:
      * derives every gem's magnitude curve, elemental recipe, and rank ladder
        from the enchantments your list actually ships, and

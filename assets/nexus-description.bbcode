@@ -37,11 +37,18 @@ Developed and tested on Skyrim SE 1.6.1170 against a Requiem-based list (LoreRim
 
 [b]1.[/b] Install the package with your mod manager near the end of the load order, and enable [b]MEO.esp[/b].
 
-[b]2.[/b] Adapt MEO to your load order with [b]Synthesis[/b] — this replaces the old standalone installer, so there's no exe to run. In Synthesis, add MEO as a Git Repository patcher pointing to [url=https://github.com/marthofdoom/MEO]github.com/marthofdoom/MEO[/url] (project [i]installer/MEO.Synthesis/MEO.Synthesis.csproj[/i]), then run your Synthesis pipeline. It reads YOUR load order and derives the gem magnitudes and rebuilds the enchanting perk tree, writing everything into the Synthesis output — no separate patch esp to manage by hand.
+[b]2.[/b] Adapt MEO to your load order with [b]Synthesis[/b] (this replaces the old standalone installer — no exe to run):
+[list]
+[*][b]Easiest:[/b] download the [b]MEO.synth[/b] file (in Optional Files), then in Synthesis select a group and double-click it — it adds the MEO patcher for you, with the correct project already selected.[/*]
+[*][b]Or manually:[/b] add a Git Repository patcher pointing to [url=https://github.com/marthofdoom/MEO]github.com/marthofdoom/MEO[/url], and select the project [i]installer/MEO.Synthesis/MEO.Synthesis.csproj[/i].[/*]
+[/list]
+Run your Synthesis pipeline. It reads YOUR load order, derives the gem magnitudes, and rebuilds the enchanting perk tree — all into the Synthesis output, no separate patch esp to manage by hand.
 
-[b]3.[/b] Enable the Synthesis output in your load order (Synthesis normally does this for you) and play.
+[b]3.[/b] Enable the Synthesis output in your load order (Synthesis normally does this for you) and play. Re-run Synthesis after any load-order change.
 
-Re-run Synthesis after any load-order change. No FOMOD — the options are runtime MCM toggles. Upgrades are save-safe within a major line: the socket data lives in the co-save and migrates itself on load.
+[b]Pure vanilla + Anniversary Edition + Creation Club?[/b] Grab the [b]Vanilla+AE+CC pre-calibrated[/b] optional file instead — a ready-made calibration and perk patch, so you skip Synthesis entirely. (Only for load orders with nothing that adds enchanted gear — anything with Requiem, armor mods, big overhaul lists, etc. needs Synthesis.)
+
+No FOMOD — the options are runtime MCM toggles. Upgrades are save-safe within a major line: the socket data lives in the co-save and migrates itself on load.
 
 [size=5][b]FAQ[/b][/size]
 

@@ -1,0 +1,6 @@
+{
+  "AddGitPatcher": {
+    "Url": "https://github.com/marthofdoom/MEO",
+    "SelectedProject": "installer\\MEO.Synthesis\\MEO.Synthesis.csproj"
+  }
+}
