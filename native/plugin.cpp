@@ -5813,12 +5813,55 @@ namespace sndhook {
     using BuildSoundFn = bool(RE::BSAudioManager*, RE::BSSoundHandle*,
                               RE::BSISoundDescriptor*, std::uint32_t);
     static inline REL::Relocation<BuildSoundFn> g_buildSound;
-    static std::atomic<int>                     g_muted{ 0 };  // count for the log
-    static std::atomic<int>                     g_diag{ 0 };   // DIAG v14: unconditional call log
+    static std::atomic<int>                     g_muted{ 0 };  // suppressed count (log)
+    static std::atomic<int>                     g_diag{ 0 };   // census count (log)
 
     // ShaderReferenceEffect::soundHandle offset (RE/S/ShaderReferenceEffect.h: "0C0").
     // Hardcoded rather than offsetof() — the type is polymorphic (non-standard-layout).
     static constexpr std::uintptr_t kSoundHandleOffset = 0xC0;
+
+    // ── The enchant "unsheathe" ambient SNDRs (Skyrim.esm, index 00) ──
+    // Every MEO-socketed weapon/armor's enchant glow (vanilla Ench*FXShader /
+    // EnchArmor*FXS) plays one of these four as its ambient sound. Confirmed on
+    // deck: the load-time racket is these SNDRs and only these. We touch nothing
+    // else that flows through this site (candlelight/cloak/spell shader ambients
+    // pass straight through untouched).
+    static constexpr RE::FormID kEnchHumSndr[] = {
+        0x001037D6,  // MAGEnchantedUnsheatheFire
+        0x001037D7,  // MAGEnchantedUnsheatheFrost
+        0x001037D8,  // MAGEnchantedUnsheatheOther (non-elemental)
+        0x001037D9,  // MAGEnchantedUnsheatheShock
+    };
+    static inline bool IsEnchHumSndr(RE::FormID a_id) {
+        for (auto id : kEnchHumSndr) {
+            if (id == a_id) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // ── Target-based gate (v15) ────────────────────────────────────────
+    // The deck data reframed the problem: the racket is NOT a rate issue and NOT
+    // MEO's own re-equip alone. On cell-load / barter-open, EVERY already-enchanted
+    // actor in the area attaches its gear's 3D in the same frame → a burst of
+    // enchant-glow ShaderReferenceEffect::Init calls. In the 59-init load burst,
+    // 58 were NON-PLAYER (NPC gear) and exactly 1 was the player. So the gate is by
+    // WHO the glow is on:
+    //   • NON-PLAYER target  → suppress ALWAYS. Deterministic full silence of the
+    //     NPC-gear racket (load AND vendor-area NPCs). Cost: NPC enchanted-weapon
+    //     draw hums go silent in combat too — accepted noise reduction.
+    //   • PLAYER target      → suppress ONLY while the player is inside a MEO
+    //     re-equip window (IsRefMuted — MarkReequippedRef stamps the player on
+    //     EquipCycleWorn). That kills the player's own bulk re-equip burst but
+    //     leaves a DELIBERATE draw (player target, no active re-equip window)
+    //     humming — marth's hard requirement. The player's lone load-time glow
+    //     fires ~5s before the window opens, so it hums once = fine (isolated,
+    //     indistinguishable from a normal draw).
+    // The old wornObject!=null filter is GONE — it is null for worn enchant glows
+    // (the v13 bug). Player identity is resolved by comparing the resolved target
+    // ref against PlayerCharacter::GetSingleton() (pointer compare — no reliance on
+    // hardcoded/ per-save handle bits).
 
     static bool BuildSoundThunk(RE::BSAudioManager* a_self, RE::BSSoundHandle* a_handle,
                                 RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags) {
@@ -5826,41 +5869,50 @@ namespace sndhook {
         auto* fx = reinterpret_cast<RE::ShaderReferenceEffect*>(
             reinterpret_cast<std::uintptr_t>(a_handle) - kSoundHandleOffset);
 
-        // ── DIAG v14: log EVERY call to this exact site, unconditionally. ──
-        // This is the discriminator: if the enchanted-weapon hum passes through
-        // ShaderReferenceEffect::Init+0x113 we WILL see its ambient SNDR / EFSH
-        // FormID here (path B — a gate bug); if the hum plays and NOTHING with an
-        // enchant SNDR ever appears in this log, the hum uses a different emitter
-        // (path A — widen next build). We log the descriptor's owning SNDR form
-        // (the engine passed r8 = &BGSSoundDescriptorForm::BSISoundDescriptor, i.e.
-        // form+0x20, so form = a_desc - 0x20), the effect's EFSH FormID, the worn
-        // base object, the target handle, and whether the gate would fire.
-        const std::uint32_t tgtHandle = fx ? fx->target.native_handle() : 0;
-        const bool          muted     = fx && fx->wornObject && IsRefMuted(tgtHandle);
-        {
-            const int n = g_diag.fetch_add(1, std::memory_order_relaxed) + 1;
-            if (n <= 60) {  // bounded
-                RE::FormID sndrID = 0;
-                if (a_desc) {
-                    auto* form = reinterpret_cast<RE::BGSSoundDescriptorForm*>(
-                        reinterpret_cast<std::uintptr_t>(a_desc) - 0x20);
-                    sndrID = form->GetFormID();
-                }
-                const RE::FormID efshID = (fx && fx->effectData) ? fx->effectData->GetFormID() : 0;
-                const RE::FormID wornID = (fx && fx->wornObject) ? fx->wornObject->GetFormID() : 0;
-                spdlog::info(
-                    "[diag-init #{}] fx={} SNDR={:08X} EFSH={:08X} worn={:08X} "
-                    "target={:08X} refMuted={}",
-                    n, static_cast<void*>(fx), sndrID, efshID, wornID, tgtHandle,
-                    muted ? 1 : 0);
-            }
+        // The engine passes r8 = &BGSSoundDescriptorForm::BSISoundDescriptor
+        // (form+0x20 at this call site), so form = a_desc - 0x20.
+        RE::FormID sndrID = 0;
+        if (a_desc) {
+            auto* form = reinterpret_cast<RE::BGSSoundDescriptorForm*>(
+                reinterpret_cast<std::uintptr_t>(a_desc) - 0x20);
+            sndrID = form->GetFormID();
         }
 
-        if (muted) {
-            const int n = g_muted.fetch_add(1, std::memory_order_relaxed) + 1;
-            if (n <= 24) {  // bounded confirmation log
-                spdlog::info("[snd] enchant-shader hum muted (ref#{:08X}) — MEO re-equip",
-                             tgtHandle);
+        // Only the enchant-unsheathe ambients are candidates; everything else
+        // (spell/cloak/candlelight shader ambients) is never touched.
+        if (!IsEnchHumSndr(sndrID)) {
+            return g_buildSound(a_self, a_handle, a_desc, a_flags);
+        }
+
+        // Resolve the glow's target ref and decide by identity.
+        RE::TESObjectREFR* tgtRef = fx ? fx->target.get().get() : nullptr;
+        const bool         isPlayer =
+            tgtRef && tgtRef == RE::PlayerCharacter::GetSingleton();
+        const std::uint32_t tgtHandle = fx ? fx->target.native_handle() : 0;
+
+        bool suppress;
+        const char* why;
+        if (!isPlayer) {
+            suppress = true;   why = "npc";                 // NPC gear — always
+        } else if (IsRefMuted(tgtHandle)) {
+            suppress = true;   why = "player-reequip";      // MEO bulk re-equip
+        } else {
+            suppress = false;  why = "player-draw";         // deliberate draw — hum
+        }
+
+        // ── DIAG v15: bounded census so we can verify on the deck. ──
+        const int n = g_diag.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (n <= 200) {
+            const RE::FormID efshID = (fx && fx->effectData) ? fx->effectData->GetFormID() : 0;
+            spdlog::info("[diag-init #{}] SNDR={:08X} EFSH={:08X} target={:08X} {} -> {}",
+                         n, sndrID, efshID, tgtHandle, why, suppress ? "MUTE" : "PLAY");
+        }
+
+        if (suppress) {
+            const int m = g_muted.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (m <= 60) {  // bounded confirmation log
+                spdlog::info("[snd] enchant hum muted ({}, SNDR={:08X}, target={:08X})",
+                             why, sndrID, tgtHandle);
             }
             return false;  // engine's own no-ambient-sound path; glow still attaches
         }
@@ -5890,7 +5942,7 @@ namespace sndhook {
             return;
         }
         g_buildSound = SKSE::GetTrampoline().write_call<5>(site, BuildSoundThunk);
-        spdlog::info("[snd] DIAG v14 enchant-shader hum probe installed (ShaderReferenceEffect::Init->BuildSound) — unconditional [diag-init] logging");
+        spdlog::info("[snd] v15 enchant-hum gate installed (ShaderReferenceEffect::Init->BuildSound) — target-based: mute NPC + player-in-reequip, keep deliberate player draws");
     }
 }  // namespace sndhook
 
