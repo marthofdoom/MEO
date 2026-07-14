@@ -1,12 +1,15 @@
 // MEO.Synthesis — the marth's Enchanting Overhaul patcher as a Synthesis patch.
 //
-// Does exactly what the standalone installer does, into Synthesis's own output
-// mod: (a) rewrites the enchanting perk tree (AVEnchanting) to MEO's gem perks,
-// and (b) derives + writes meo_calibration.json for this load order. Both steps
-// call the SHARED Commands.* code (MEO.Installer/Commands.cs), so the output is
-// byte-identical to the standalone installer for the same load order.
+// Does what the standalone installer does, calling the SHARED Commands.* code
+// (MEO.Installer/Commands.cs):
+//   (a) rewrites the enchanting perk tree (AVEnchanting) to MEO's gem perks,
+//       into Synthesis's own output mod, and
+//   (b) derives + writes meo_calibration.json for this load order.
 
 using Mutagen.Bethesda;
+using Mutagen.Bethesda.Plugins;
+using Mutagen.Bethesda.Plugins.Cache;
+using Mutagen.Bethesda.Plugins.Order;
 using Mutagen.Bethesda.Skyrim;
 using Mutagen.Bethesda.Synthesis;
 
@@ -21,25 +24,69 @@ static void RunPatch(IPatcherState<ISkyrimMod, ISkyrimModGetter> state)
     // override plugin, so it costs no load-order slot.
     state.PatchMod.IsSmallMaster = true;
 
-    // (a) Perk-tree edit into Synthesis's output mod. Non-interactive KEEP-ALL
-    // (no choicesPath) — the standalone tool's curated foreign-perk file has no
-    // meaning here; Synthesis users curate via their own load order.
+    // (a) Perk-tree edit into Synthesis's output mod. Non-interactive KEEP-ALL —
+    // Synthesis users curate foreign perks via their own load order. Uses
+    // Synthesis's load order (Creation Club adds no enchanting perks).
     var rc = Commands.ApplyPatch(state.LoadOrder, state.LinkCache, state.PatchMod);
     if (rc != 0)
         throw new Exception($"MEO ApplyPatch failed (rc={rc}) — see log above");
 
-    // (b) Calibration. The catalog ships next to this assembly.
-    var asmDir = Path.GetDirectoryName(
-        System.Reflection.Assembly.GetExecutingAssembly().Location)
-        ?? AppContext.BaseDirectory;
-    var catalogPath = Path.Combine(asmDir, "gem_catalog.json");
-
-    // Write into the game data tree; under MO2 this lands in the overwrite folder.
+    // (b) Calibration. Build the load order OURSELVES so it includes Creation
+    // Club content (Skyrim.ccc). Synthesis's load order omits CC plugins that
+    // aren't in plugins.txt — and on an Anniversary Edition install that is ALL
+    // of them (CC loads via Skyrim.ccc, not plugins.txt). Relying on Synthesis's
+    // load order dropped ~24% of conversions and an entire family (chaos) on a
+    // real deck test. The standalone installer reads Skyrim.ccc for exactly this
+    // reason; we mirror its ordering (base masters -> CC -> plugins) and resolve
+    // every plugin from the data folder, so it matches for vanilla and MO2 alike.
+    var catalogPath = Path.Combine(AppContext.BaseDirectory, "gem_catalog.json");
     var meoDir = Path.Combine(state.DataFolderPath, "SKSE", "Plugins", "MEO");
     Directory.CreateDirectory(meoDir);
     var calOutPath = Path.Combine(meoDir, "meo_calibration.json");
 
-    var crc = Commands.WriteCalibration(state.LoadOrder, state.LinkCache, catalogPath, calOutPath);
+    var (calLo, calCache) = BuildCalibrationLoadOrder(state);
+    var crc = Commands.WriteCalibration(calLo, calCache, catalogPath, calOutPath);
     if (crc != 0)
         throw new Exception($"MEO WriteCalibration failed (rc={crc}) — see log above");
+}
+
+// A load order that includes Creation Club (Skyrim.ccc), mirroring the standalone
+// installer's ResolveGame ordering, so calibration coverage matches it.
+static (LoadOrder<IModListingGetter<ISkyrimModGetter>>, ILinkCache) BuildCalibrationLoadOrder(
+    IPatcherState<ISkyrimMod, ISkyrimModGetter> state)
+{
+    string dataDir = state.DataFolderPath;
+    string gameRoot = Directory.GetParent(dataDir)?.FullName ?? dataDir;
+    string[] baseMasters = { "Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm" };
+
+    var cccPath = Path.Combine(gameRoot, "Skyrim.ccc");
+    var ccc = File.Exists(cccPath)
+        ? File.ReadLines(cccPath).Select(l => l.Trim())
+              .Where(l => l.Length > 0 && !l.StartsWith('#')).ToList()
+        : new List<string>();
+
+    var pluginsTxt = (string)state.LoadOrderFilePath;
+    var active = File.Exists(pluginsTxt)
+        ? File.ReadLines(pluginsTxt).Where(l => l.StartsWith('*'))
+              .Select(l => l[1..].Trim()).ToList()
+        : new List<string>();
+
+    var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    foreach (var f in Directory.EnumerateFiles(dataDir))
+        files.TryAdd(Path.GetFileName(f), f);
+
+    var listings = new List<IModListingGetter<ISkyrimModGetter>>();
+    foreach (var name in baseMasters.Concat(ccc).Concat(active)
+                 .Distinct(StringComparer.OrdinalIgnoreCase))
+    {
+        if (name.Equals("MEO - Patch.esp", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("MEO - Strip.esp", StringComparison.OrdinalIgnoreCase))
+            continue;  // never read our own output
+        if (!files.TryGetValue(name, out var full)) continue;
+        var mod = SkyrimMod.CreateFromBinaryOverlay(
+            new ModPath(ModKey.FromNameAndExtension(name), full), SkyrimRelease.SkyrimSE);
+        listings.Add(new ModListing<ISkyrimModGetter>(mod, enabled: true));
+    }
+    var lo = new LoadOrder<IModListingGetter<ISkyrimModGetter>>(listings);
+    return (lo, lo.ToImmutableLinkCache());
 }
