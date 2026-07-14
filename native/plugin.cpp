@@ -184,6 +184,29 @@ std::vector<int> g_npcPool[4][2];       // [arch][isArmor] -> weighted gem indic
 RE::BGSKeyword*  g_kwNPC = nullptr;     // ActorTypeNPC (humanoids only)
 RE::BGSKeyword*  g_kwUndead = nullptr;  // ActorTypeUndead
 float g_magnitudeMult = 1.0f;  // [XP] fMagnitudeMult master power scale; used by StampInstance below, set by ReadConfig (MCM)
+bool  g_fullGemNames = false;  // [UI] bFullGemNames — full effect names in socketed-item titles (default OFF = shorthand); ShortGemName/RebuildInstanceEnchant use it (declared up top) (m40)
+
+// Option A shorthand (m40, marth): trim the boilerplate from gem names in
+// socketed-item titles so multi-gem names stay readable — strip a trailing
+// " Damage" and a leading "Fortify ", abbreviate "Resist " -> "Res ".
+// bFullGemNames restores the full effect names.
+inline std::string ShortGemName(const char* a_full) {
+    std::string s = a_full ? a_full : "";
+    if (g_fullGemNames || s.empty()) {
+        return s;
+    }
+    if (s.rfind("Fortify ", 0) == 0) {
+        s.erase(0, 8);
+    } else if (s.rfind("Resist ", 0) == 0) {
+        s.replace(0, 7, "Res ");
+    }
+    const std::string dmg = " Damage";
+    if (s.size() > dmg.size() &&
+        s.compare(s.size() - dmg.size(), dmg.size(), dmg) == 0) {
+        s.erase(s.size() - dmg.size());
+    }
+    return s;
+}
 float g_socketValueMult = 1.0f; // [Balance] fSocketValueMult — scale on per-tier socketed-item gold; RebuildInstanceEnchant uses it (declared up top like g_magnitudeMult) (m38c)
 
 // ── M3d forms (all IDs extracted from the real Lorerim masters) ───────
@@ -1270,7 +1293,7 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         if (!namePart.empty()) {
             namePart += " + ";
         }
-        namePart += std::format("{} {}", GemName(*eg), meo::kRoman[lvIdx]);
+        namePart += std::format("{} {}", ShortGemName(GemName(*eg)), meo::kRoman[lvIdx]);
     }
     auto* com = RE::BGSCreatedObjectManager::GetSingleton();
     auto* ench = isArmor ? com->AddArmorEnchantment(effects) : com->AddWeaponEnchantment(effects);
@@ -1317,7 +1340,7 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     // m36: a linked support prefixes the name so the pairing is legible on the
     // item itself, e.g. "Focus III · Fire II Sword".
     if (support) {
-        namePart = std::format("{} {} \xC2\xB7 {}", GemName(*support),
+        namePart = std::format("{} {} \xC2\xB7 {}", ShortGemName(GemName(*support)),
                                meo::kRoman[supportTier - 1], namePart);
     }
     // Forced name + engine reconcile (M2d/M2h; no brackets M2i).
@@ -1584,6 +1607,7 @@ static void ApplyIniFile(const char* a_path) {
         else if (key == "fBossXPMult")        g_bossXPMult = val;
         else if (key == "fMagnitudeMult")     g_magnitudeMult = val;
         else if (key == "bXPNotify")          g_xpNotify = val != 0.0f;
+        else if (key == "bFullGemNames")     g_fullGemNames = val != 0.0f;
         else if (key == "bEnableLogging")     g_enableLogging = val != 0.0f;
         else if (key == "bStationTakeover")   g_stationTakeover = val != 0.0f;
         else if (key == "iMenuStyle")         g_menuStyle = std::clamp(static_cast<int>(val), 0, 3);
@@ -5594,7 +5618,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         StartEchoHeartbeat();  // m36: Echo armor follower-share
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v1.0.5 loaded");
+            console->Print("MEO native v1.0.6 loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -5662,7 +5686,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v1.0.5 loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v1.0.6 loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }

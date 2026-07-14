@@ -4,6 +4,14 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.6 — shorter socketed-item names (m40, 2026-07-14)
+- Socketed-item titles are now shorthand so multi-gem names stay readable: drops
+  "Fortify", trims a trailing " Damage" (Fire II, not Fire Damage II), and
+  abbreviates "Resist" to "Res". The gem-joining "+" and support "·" are
+  unchanged; loose gems in the pouch keep their full names. New MCM toggle
+  `bFullGemNames` (XP & Balance page, default off) restores the full effect
+  names. Worn gear updates on the next rebuild (reload / re-equip).
+
 ## v1.0.5 — Synthesis-only install (no exe) (2026-07-14)
 - **The install-time patcher is now a Synthesis patcher, not a bundled exe.**
   The old `MEO.Installer.exe` (and its unsigned bundled DLLs) tripped Nexus and
