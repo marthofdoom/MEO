@@ -75,7 +75,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <intrin.h>  // _ReturnAddress() — identify which sound call site fired
 #include <functional>
 #include <mutex>
 #include <thread>
@@ -225,20 +224,71 @@ thread_local bool g_inEnchCreate = false;
 // deck), so the sync flag alone can't gate it. Global (not thread_local): the
 // async sound may play on the audio/main thread, not the builder's thread.
 std::atomic<std::uint64_t> g_enchWinUntilMs{0};
-// [EQSND] The real racket = the "enchanted weapon" hum (MAGEnchantedUnsheathe,
-// positional/left-slot) the engine replays on EVERY MEO re-equip (load + NPC
-// convert sweep), regardless of sheathe state. It's a side effect of the equip
-// refresh, NOT an equip foley (playSounds is already false). We can't skip the
-// equip cycle (idempotent, m35d) nor mute the SNDR (kills normal draws), so gate
-// it: raise g_inEquipCycle across MEO's own equip calls and drop the sound only
-// then. g_equipWinUntilMs is an async tail so the diag also catches a deferred
-// play. thread_local: MEO's equips run on the main thread.
-thread_local bool g_inEquipCycle = false;
-std::atomic<std::uint64_t> g_equipWinUntilMs{0};
 static inline std::uint64_t NowMs() {
     return static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+// [snd] The "enchanted weapon" hum (MAGEnchantedUnsheathe / any list's equivalent)
+// is NOT an equip foley — it's the enchant EFSH's AMBIENT sound, played once from
+// ShaderReferenceEffect::Init (a DIRECT BuildSound call, addrlib 34912+0x113) on a
+// LATER frame when the item's 3D attaches. That deferral is why every equip-window
+// gate missed it (Fable, cross-verified in the binary + Skyrim.esm data chain
+// SNDR→EFSH→MGEF-enchantShader). Fix: hook that one call site and, if the effect's
+// target is an actor MEO just re-equipped, skip the sound — the handle stays
+// invalid and the engine's follow/play/stop all bail on it, so the enchant GLOW
+// still attaches, only the hum drops. Per-instance: normal draws elsewhere hum.
+// The ref-set stamps each re-equipped actor with a short deadline; MEO re-equips
+// only after 3D is live, so Init fires within a few frames. Lock-free (main-thread
+// stamp + main-thread Init, but atomics keep it safe with zero teardown-hang risk).
+constexpr int           kMutedRefCap  = 64;
+constexpr std::uint64_t kMuteWindowMs = 5000;
+struct MutedRef {
+    std::atomic<std::uint32_t> handle{ 0 };
+    std::atomic<std::uint64_t> until{ 0 };
+};
+static MutedRef g_mutedRefs[kMutedRefCap];
+
+static void MarkReequippedRef(RE::Actor* a_actor) {
+    if (!a_actor) {
+        return;
+    }
+    const std::uint32_t h = a_actor->GetHandle().native_handle();
+    if (h == 0) {
+        return;
+    }
+    const std::uint64_t now   = NowMs();
+    const std::uint64_t until = now + kMuteWindowMs;
+    MutedRef*           slot  = nullptr;
+    for (auto& e : g_mutedRefs) {
+        const std::uint32_t eh = e.handle.load(std::memory_order_relaxed);
+        if (eh == h) {  // already tracked — refresh its deadline
+            e.until.store(until, std::memory_order_relaxed);
+            return;
+        }
+        if (!slot && (eh == 0 || e.until.load(std::memory_order_relaxed) < now)) {
+            slot = &e;  // first free/expired slot
+        }
+    }
+    if (!slot) {  // all slots live: round-robin overwrite (a big sweep just churns)
+        static std::atomic<int> rr{ 0 };
+        slot = &g_mutedRefs[rr.fetch_add(1, std::memory_order_relaxed) % kMutedRefCap];
+    }
+    slot->handle.store(h, std::memory_order_relaxed);
+    slot->until.store(until, std::memory_order_relaxed);
+}
+static bool IsRefMuted(std::uint32_t a_handle) {
+    if (a_handle == 0) {
+        return false;
+    }
+    const std::uint64_t now = NowMs();
+    for (auto& e : g_mutedRefs) {
+        if (e.handle.load(std::memory_order_relaxed) == a_handle &&
+            e.until.load(std::memory_order_relaxed) >= now) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // ── M3d forms (all IDs extracted from the real Lorerim masters) ───────
@@ -1553,11 +1603,9 @@ void EquipCycleWorn(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDat
                     : RE::DEFAULT_OBJECT::kRightHandEquip);
         }
     }
-    g_inEquipCycle = true;  // [EQSND] gate the enchanted-weapon hum this equip replays
     em->UnequipObject(a_owner, a_base, a_xList, 1, slot, false, false, false, true);
     em->EquipObject(a_owner, a_base, a_xList, 1, slot, false, false, false, true);
-    g_inEquipCycle = false;
-    g_equipWinUntilMs.store(NowMs() + 120, std::memory_order_relaxed);  // 120ms suppress tail (marth)
+    MarkReequippedRef(a_owner);  // [snd] mute this actor's enchant-shader hum until its 3D re-inits
 }
 
 // ── M4b: every unique gem owns its own Gem XP pool (DESIGN §3) ────────
@@ -3760,7 +3808,7 @@ namespace menuhook {
     }
 
     void Install() {
-        SKSE::AllocTrampoline(2048);  // menuhook (3 call-hooks) + sndhook (up to 40 BuildSound call-hooks)
+        SKSE::AllocTrampoline(512);  // menuhook (3 call-hooks) + sndhook (1 call-hook)
         write_thunk_call<D3DInitHook>();
         write_thunk_call<DXGIPresentHook>();
         write_thunk_call<InputDispatchHook>();
@@ -4188,11 +4236,9 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
         // The list picked this enemy to fight with an enchanted weapon; the
         // converted gem stays worn and ACTIVE (marth's ruling).
         if (actor && hit.worn) {
-            g_inEquipCycle = true;  // [EQSND] gate the hum this NPC re-equip replays
             RE::ActorEquipManager::GetSingleton()->EquipObject(
                 actor, hit.tgt->base, nullptr, 1, nullptr, false, false, false, true);
-            g_inEquipCycle = false;
-            g_equipWinUntilMs.store(NowMs() + 120, std::memory_order_relaxed);
+            MarkReequippedRef(actor);  // [snd] mute this NPC's enchant-shader hum this sweep
             if (auto* wxl = FindWornXListFor(actor, hit.tgt->base)) {
                 ApplyWornAbility(actor, hit.tgt->base, wxl, hit.left);
             }
@@ -5728,89 +5774,81 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
     }
 }
 
-// ── [EQSND] Re-equip hum suppression ──────────────────────────────────
-// GOAL: kill the "enchanted weapon" hum (MAGEnchantedUnsheathe, positional) the
-// engine replays on EVERY MEO re-equip — a racket on load and at a vendor — while
-// leaving the SAME sound intact for the player's normal weapon draws.
-// ─────────────────────────────────────────────────────────────────────────
-// Why gating, not muting: the hum fires as a side effect of MEO's equip refresh
-// (not the equip foley — playSounds is already false), on both the player load
-// path and the NPC-convert sweep, regardless of sheathe state (marth). We can't
-// skip the equip cycle (idempotent, m35d duplication lesson) nor mute the SNDR
-// (kills legit draws). So g_inEquipCycle is raised across MEO's own equip calls,
-// and we drop the sound only in that tiny synchronous window — nothing else plays
-// in it. Whether the hum is SYNCHRONOUS to the call is the open question this build
-// answers: if it is, gating on g_inEquipCycle silences it and normal draws are
-// untouched; g_equipWinUntilMs (500ms tail) + the [EQSND] log reveal an async play
-// if it isn't.
+// ── [snd] Enchant-shader "unsheathe" hum suppression ──────────────────
+// GOAL: kill the enchanted-weapon hum MEO's bulk re-equips replay (a racket on
+// load and at a vendor) while leaving that same sound intact for normal draws.
 //
-// MECHANISM: CALL-SITE hooks (write_call) only — ENTRY-detours crash (prologues
-// capture rsp). We hook all three known BuildSound call sites so we see the funnel
-// the hum takes: both positional Play overloads at +0x49 (67663/67665) and global
-// PlaySound at +0x42 (52939). Lock-free, no form scan on the audio path (that
-// crashed on save) — so it can't freeze on exit or crash on save.
+// MECHANISM (Fable, verified in binary + Skyrim.esm): the hum is the enchant
+// EFSH's AMBIENT SOUND. Equipping an enchanted weapon attaches the enchant-glow
+// shader, and its ShaderReferenceEffect::Init plays the shader's ambient sound —
+// via a DIRECT BuildSoundDataFromDescriptor call at addrlib 34912+0x113 — on a
+// LATER frame when the item 3D attaches (not the generic Play/PlaySound wrappers,
+// which is why 11 builds of funnel-hooking + equip-window gating never caught it:
+// wrong clock, not wrong funnel). Init null-checks the ambient sound first, so a
+// skipped build is a state the engine already handles: the sound handle stays
+// invalid and its later SetObjectToFollow/Play/Stop all bail on it — the glow
+// visual still attaches, only the hum is dropped.
+//
+// FIX: write_call at that ONE site. The thunk recovers the effect (rdx is always
+// &this->soundHandle, member 0xC0) and, if the effect's target is an actor MEO
+// just re-equipped (the ref-set) AND it's a worn-item shader (wornObject set),
+// returns false — no sound. Per-instance and per-ref, so nothing global is muted:
+// a normal draw on any actor MEO didn't just touch hums exactly as before. Mod-
+// proof — gated by WHICH ref, not which sound, so a list's custom enchant EFSH/
+// SNDR is covered too. E8-guarded + target-verified so a bad offset can't patch
+// the wrong bytes.
 namespace sndhook {
-    static std::atomic<int> g_eqLog{0};  // cap the diagnostic log volume
+    // Matches the call at ShaderReferenceEffect::Init+0x113: rcx=BSAudioManager,
+    // rdx=&effect->soundHandle, r8=BSISoundDescriptor, r9=flags. Return bool.
+    using BuildSoundFn = bool(RE::BSAudioManager*, RE::BSSoundHandle*,
+                              RE::BSISoundDescriptor*, std::uint32_t);
+    static inline REL::Relocation<BuildSoundFn> g_buildSound;
+    static std::atomic<int>                     g_muted{ 0 };  // count for the log
 
-    static bool BuildSoundThunk(RE::BSAudioManager* a_self, RE::BSSoundHandle& a_handle,
-                                RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags);
-    static inline REL::Relocation<decltype(BuildSoundThunk)> g_buildSound;
-    static bool BuildSoundThunk(RE::BSAudioManager* a_self, RE::BSSoundHandle& a_handle,
+    // ShaderReferenceEffect::soundHandle offset (RE/S/ShaderReferenceEffect.h: "0C0").
+    // Hardcoded rather than offsetof() — the type is polymorphic (non-standard-layout).
+    static constexpr std::uintptr_t kSoundHandleOffset = 0xC0;
+
+    static bool BuildSoundThunk(RE::BSAudioManager* a_self, RE::BSSoundHandle* a_handle,
                                 RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags) {
-        const bool inCycle = g_inEquipCycle;  // synchronous span of MEO's own equip call
-        const bool inWin   = NowMs() < g_equipWinUntilMs.load(std::memory_order_relaxed);
-        if (inCycle || inWin) {
-            const int c = g_eqLog.load(std::memory_order_relaxed);
-            if (c < 64) {  // bounded log so we can read the funnel that carries the hum
-                g_eqLog.store(c + 1, std::memory_order_relaxed);
-                const auto rva = reinterpret_cast<std::uintptr_t>(_ReturnAddress()) -
-                                 REL::Module::get().base();
-                spdlog::warn("[EQSND] caller=+0x{:X} desc={} flags=0x{:X} when={}",
-                             rva, static_cast<void*>(a_desc), a_flags,
-                             inCycle ? "CYCLE(sync)" : "win(async)");
+        // rdx points at effect->soundHandle (member 0xC0); recover the effect.
+        auto* fx = reinterpret_cast<RE::ShaderReferenceEffect*>(
+            reinterpret_cast<std::uintptr_t>(a_handle) - kSoundHandleOffset);
+        if (fx && fx->wornObject && IsRefMuted(fx->target.native_handle())) {
+            const int n = g_muted.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (n <= 24) {  // bounded confirmation log
+                spdlog::info("[snd] enchant-shader hum muted (ref#{:08X}) — MEO re-equip",
+                             fx->target.native_handle());
             }
-            return false;  // mute — during MEO's equip OR its 120ms tail
+            return false;  // engine's own no-ambient-sound path; glow still attaches
         }
         return g_buildSound(a_self, a_handle, a_desc, a_flags);
     }
 
     void Install() {
-        // Address-library ids + call offsets are 1.6.1170-specific; on any other
-        // runtime, skip rather than risk patching the wrong code.
+        // Address-library id + call offset are 1.6.1170-specific; skip otherwise.
         if (REL::Module::get().version() != REL::Version(1, 6, 1170, 0)) {
-            spdlog::warn("[EQSND] re-equip hum gate skipped — runtime is not 1.6.1170");
+            spdlog::warn("[snd] enchant-shader hum gate skipped — runtime is not 1.6.1170");
             return;
         }
-        auto& tr = SKSE::GetTrampoline();
-        // ALL BuildSoundDataFromDescriptor(67666) direct call sites (from the
-        // decrypted 1.6.1170 .text): whatever funnel the hum takes, it builds its
-        // sound through one of these. Guarded — only patch a site that is actually
-        // an E8 call, so a mis-attributed offset can't corrupt code.
-        static constexpr struct { std::uint64_t id; std::uint32_t off; } kSites[] = {
-            {15010,0x3F0},{15768,0x422},{17922,0x491},{18102,0x11CE},{19828,0x35A},
-            {32058,0x1C3},{32061,0x80},{33040,0x5A},{33041,0x54},{34438,0x79},
-            {34912,0x113},{35128,0x194},{35128,0x3CD},{35128,0x5A9},{35130,0xBF},
-            {35139,0x11E},{36208,0x153},{36239,0x49},{37196,0x14A},{37348,0x403},
-            {37348,0x966},{37744,0x4A},{37968,0xD1},{37997,0x13C},{38818,0x245},
-            {39402,0x7F},{39846,0x240},{40595,0x50},{40749,0x18A},{43855,0x94},
-            {43869,0x4C7},{43976,0x62},{44166,0x6E7},{44272,0x30},{51948,0x3D9},
-            {52939,0x42},{52940,0x3E},{53093,0x548},{67663,0x49},{67665,0x49},
-        };
-        int hooked = 0, skipped = 0;
-        for (const auto& s : kSites) {
-            const auto addr = REL::ID(s.id).address() + s.off;
-            if (*reinterpret_cast<const std::uint8_t*>(addr) != 0xE8) {
-                ++skipped;
-                continue;  // not a direct call here — never patch the wrong bytes
-            }
-            const auto orig = tr.write_call<5>(addr, BuildSoundThunk);
-            if (!g_buildSound.address()) {
-                g_buildSound = orig;  // all sites call the same BuildSound
-            }
-            ++hooked;
+        const auto site   = REL::ID(34912).address() + 0x113;  // ShaderReferenceEffect::Init+0x113
+        const auto target = REL::ID(67666).address();          // BuildSoundDataFromDescriptor
+        // Verify it's a direct E8 call whose displacement lands on BuildSound —
+        // never patch the wrong bytes if the layout ever shifts.
+        const auto* p = reinterpret_cast<const std::uint8_t*>(site);
+        if (*p != 0xE8) {
+            spdlog::error("[snd] hum gate: site 34912+0x113 is not a call (0x{:02X}) — skipping", *p);
+            return;
         }
-        spdlog::info("[EQSND] re-equip hum gate installed at {} BuildSound call sites ({} skipped, 120ms window)",
-                     hooked, skipped);
+        const auto rel      = *reinterpret_cast<const std::int32_t*>(site + 1);
+        const auto resolved = site + 5 + static_cast<std::intptr_t>(rel);
+        if (resolved != target) {
+            spdlog::error("[snd] hum gate: site resolves to 0x{:X}, not BuildSound 0x{:X} — skipping",
+                          resolved, target);
+            return;
+        }
+        g_buildSound = SKSE::GetTrampoline().write_call<5>(site, BuildSoundThunk);
+        spdlog::info("[snd] enchant-shader hum gate installed (ShaderReferenceEffect::Init->BuildSound)");
     }
 }  // namespace sndhook
 
