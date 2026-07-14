@@ -38,6 +38,8 @@ THEMES = ['FIRE', 'FROST', 'SHOCK', 'ARCANE', 'DRAIN', 'MARTIAL', 'ROGUISH',
           'HOLY', 'UTILITY']
 THEME = {
     'firedamage': 'FIRE',     'resistfire': 'FIRE',
+    'weaknessfire': 'FIRE',   'weaknessfrost': 'FROST',
+    'weaknessshock': 'SHOCK', 'weaknesspoison': 'ROGUISH',  # poison -> Roguish, as resistpoison
     'frost': 'FROST',         'resistfrost': 'FROST',
     'shockdamage': 'SHOCK',   'resistshockt': 'SHOCK',
     'chaos': 'ARCANE',        'banish': 'ARCANE',

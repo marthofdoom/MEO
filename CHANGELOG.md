@@ -4,7 +4,14 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
-## v1.0.6 — shorter socketed-item names (m40, 2026-07-14)
+## v1.0.6 — shorter socketed-item names + Summermyst weakness gems (m40, 2026-07-14)
+- Added 4 gem families for **Summermyst - Enchantments of Skyrim**'s weakness-to-
+  fire/frost/shock/poison WEAPON enchantments. On a load order with Summermyst,
+  those weapons now convert to a socketed weakness gem (magnitudes calibrated to
+  the list); on any list without Summermyst the families auto-disable (the MGEF's
+  plugin is absent), so nothing changes. New gem MISC forms are pure additions —
+  no existing FormID moved. (First hand-authored families toward general
+  auto-minting of unknown enchantment mods.)
 - Socketed-item titles are now shorthand so multi-gem names stay readable: drops
   "Fortify", trims a trailing " Damage" (Fire II, not Fire Damage II), and
   abbreviates "Resist" to "Res". The gem-joining "+" and support "·" are
