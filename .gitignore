@@ -2,6 +2,9 @@ out/
 __pycache__/
 *.pyc
 
+# Third-party mod downloads for local inspection only — NEVER commit/redistribute
+assets/mods/
+
 # MEO installer publish outputs (build artifacts)
 installer/**/publish*/
 installer/**/bin/
