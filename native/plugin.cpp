@@ -75,6 +75,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <intrin.h>  // _ReturnAddress() — identify which sound call site fired
 #include <functional>
 #include <mutex>
 #include <thread>
@@ -224,11 +225,16 @@ thread_local bool g_inEnchCreate = false;
 // deck), so the sync flag alone can't gate it. Global (not thread_local): the
 // async sound may play on the audio/main thread, not the builder's thread.
 std::atomic<std::uint64_t> g_enchWinUntilMs{0};
-// [SNDID diag] Runtime suppression was abandoned — the enchant SFX is async and
-// its timing vs any window/cluster is too unreliable to gate on (v6 caught 2/36,
-// v7 caught 0/24). Pivot (marth): IDENTIFY the sound form, then dummy it
-// statically (MEO.esp override or per-list installer null). This build just logs
-// the SNDR FormID + editorID of in-window sounds so we learn what to silence.
+// [EQSND] The real racket = the "enchanted weapon" hum (MAGEnchantedUnsheathe,
+// positional/left-slot) the engine replays on EVERY MEO re-equip (load + NPC
+// convert sweep), regardless of sheathe state. It's a side effect of the equip
+// refresh, NOT an equip foley (playSounds is already false). We can't skip the
+// equip cycle (idempotent, m35d) nor mute the SNDR (kills normal draws), so gate
+// it: raise g_inEquipCycle across MEO's own equip calls and drop the sound only
+// then. g_equipWinUntilMs is an async tail so the diag also catches a deferred
+// play. thread_local: MEO's equips run on the main thread.
+thread_local bool g_inEquipCycle = false;
+std::atomic<std::uint64_t> g_equipWinUntilMs{0};
 static inline std::uint64_t NowMs() {
     return static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1547,8 +1553,11 @@ void EquipCycleWorn(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDat
                     : RE::DEFAULT_OBJECT::kRightHandEquip);
         }
     }
+    g_inEquipCycle = true;  // [EQSND] gate the enchanted-weapon hum this equip replays
     em->UnequipObject(a_owner, a_base, a_xList, 1, slot, false, false, false, true);
     em->EquipObject(a_owner, a_base, a_xList, 1, slot, false, false, false, true);
+    g_inEquipCycle = false;
+    g_equipWinUntilMs.store(NowMs() + 500, std::memory_order_relaxed);  // async tail for the diag
 }
 
 // ── M4b: every unique gem owns its own Gem XP pool (DESIGN §3) ────────
@@ -3751,7 +3760,7 @@ namespace menuhook {
     }
 
     void Install() {
-        SKSE::AllocTrampoline(512);  // menuhook (3 call-hooks) + sndhook (1 call-hook)
+        SKSE::AllocTrampoline(512);  // menuhook (3 call-hooks) + sndhook (3 call-hooks)
         write_thunk_call<D3DInitHook>();
         write_thunk_call<DXGIPresentHook>();
         write_thunk_call<InputDispatchHook>();
@@ -4179,8 +4188,11 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
         // The list picked this enemy to fight with an enchanted weapon; the
         // converted gem stays worn and ACTIVE (marth's ruling).
         if (actor && hit.worn) {
+            g_inEquipCycle = true;  // [EQSND] gate the hum this NPC re-equip replays
             RE::ActorEquipManager::GetSingleton()->EquipObject(
                 actor, hit.tgt->base, nullptr, 1, nullptr, false, false, false, true);
+            g_inEquipCycle = false;
+            g_equipWinUntilMs.store(NowMs() + 500, std::memory_order_relaxed);
             if (auto* wxl = FindWornXListFor(actor, hit.tgt->base)) {
                 ApplyWornAbility(actor, hit.tgt->base, wxl, hit.left);
             }
@@ -5716,106 +5728,67 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
     }
 }
 
-// ── [snd] Enchant-SFX suppression ─────────────────────────────────────
-// GOAL: kill the enchant/disenchant SFX that MEO's constant runtime enchant
-// builds (load reapply, loot conversion, re-equip) fire in bursts — a racket
-// at a vendor — while leaving every other sound (ambience/music/dialogue/UI)
-// untouched.
+// ── [EQSND] Re-equip hum suppression ──────────────────────────────────
+// GOAL: kill the "enchanted weapon" hum (MAGEnchantedUnsheathe, positional) the
+// engine replays on EVERY MEO re-equip — a racket on load and at a vendor — while
+// leaving the SAME sound intact for the player's normal weapon draws.
 // ─────────────────────────────────────────────────────────────────────────
-// How it was found (see [[meo-enchant-sound-fix]]): the enchant SFX is dispatched
-// through the global PlaySound (52939) -> BuildSoundDataFromDescriptor (67666)
-// path, ASYNCHRONOUSLY (fires after g_inEnchCreate clears — caught in a post-build
-// window on deck: caller PlaySound+0x42, one stable descriptor, flags 0x10). The
-// decrypted .text explains why: Add*Enchantment -> worker 36184 -> {..,68163} has
-// NO direct sound call (68163 dispatches indirectly), so no synchronous gate could
-// ever catch it — v2's sync-only suppress fired 0x.
+// Why gating, not muting: the hum fires as a side effect of MEO's equip refresh
+// (not the equip foley — playSounds is already false), on both the player load
+// path and the NPC-convert sweep, regardless of sheathe state (marth). We can't
+// skip the equip cycle (idempotent, m35d duplication lesson) nor mute the SNDR
+// (kills legit draws). So g_inEquipCycle is raised across MEO's own equip calls,
+// and we drop the sound only in that tiny synchronous window — nothing else plays
+// in it. Whether the hum is SYNCHRONOUS to the call is the open question this build
+// answers: if it is, gating on g_inEquipCycle silences it and normal draws are
+// untouched; g_equipWinUntilMs (500ms tail) + the [EQSND] log reveal an async play
+// if it isn't.
 //
-// MECHANISM (learned across 3 CTDs): ENTRY-detours (write_branch) on these audio
-// funnels CRASH — their prologues capture rsp (BuildSound `mov r11,rsp` then frame-
-// bases off r11), so relocating the stolen bytes into a trampoline reached by a
-// nested call shifts rsp and the function reads args from the wrong slot. Only
-// CALL-SITE hooks (write_call) are safe; they leave the prologue untouched.
-//
-// IDENTIFY (marth's dummy-replace path): one write_call at PlaySound+0x42. For a
-// sound built inside a wide (3s) post-enchant window, resolve its BSISoundDescriptor
-// back to the owning SNDR form (scan TESDataHandler's SNDR array once per distinct
-// descriptor, capped) and log FormID + editorID. Pure logging — no return false, no
-// mutex — so it cannot crash or freeze. The enchant SFX shows up as the SNDR that
-// recurs across enchant bursts; that FormID/editorID is what MEO then silences
-// statically (MEO.esp SNDR override, or the installer nulls it per-list).
+// MECHANISM: CALL-SITE hooks (write_call) only — ENTRY-detours crash (prologues
+// capture rsp). We hook all three known BuildSound call sites so we see the funnel
+// the hum takes: both positional Play overloads at +0x49 (67663/67665) and global
+// PlaySound at +0x42 (52939). Lock-free, no form scan on the audio path (that
+// crashed on save) — so it can't freeze on exit or crash on save.
 namespace sndhook {
-    static std::atomic<int>   g_idCount{0};        // distinct in-window descriptors logged (cap)
-    static std::atomic<void*> g_idSeen[12] = {};   // dedup by descriptor
-    static bool AlreadySeen(void* d) {
-        const int n = g_idCount.load(std::memory_order_acquire);
-        for (int i = 0; i < n && i < 12; ++i) {
-            if (g_idSeen[i].load(std::memory_order_relaxed) == d) return true;
-        }
-        return false;
-    }
+    static std::atomic<int> g_eqLog{0};  // cap the diagnostic log volume
 
     static bool BuildSoundThunk(RE::BSAudioManager* a_self, RE::BSSoundHandle& a_handle,
                                 RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags);
     static inline REL::Relocation<decltype(BuildSoundThunk)> g_buildSound;
     static bool BuildSoundThunk(RE::BSAudioManager* a_self, RE::BSSoundHandle& a_handle,
                                 RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags) {
-        const bool inWin = g_inEnchCreate ||
-                           NowMs() < g_enchWinUntilMs.load(std::memory_order_relaxed);
-        if (inWin && a_desc && !AlreadySeen(a_desc)) {
-            const int idx = g_idCount.load(std::memory_order_relaxed);
-            if (idx < 12) {
-                g_idSeen[idx].store(a_desc, std::memory_order_relaxed);
-                g_idCount.store(idx + 1, std::memory_order_release);
-                // Resolve descriptor -> SNDR form (bounded: only runs for a new descriptor,
-                // at most 12 times total, never at shutdown since it's in-window only).
-                // Match either the form pointer itself OR its inner soundDescriptor —
-                // PlaySound may hand us either.
-                // BGSSoundDescriptorForm multiply-inherits BSISoundDescriptor at +0x28, and
-                // its inner BGSSoundDescriptor also IS-A BSISoundDescriptor (at offset 0). The
-                // game may hand BuildSound EITHER subobject, so compare with proper typed casts
-                // (the compiler applies the base-offset adjustment) — a void* compare misses the
-                // form-subobject case, which is what left v8/v9 at SNDR 00000000.
-                std::uint32_t fid  = 0;
-                const char*   edid = "";
-                void*         dp   = static_cast<void*>(a_desc);
-                if (auto* dh = RE::TESDataHandler::GetSingleton()) {
-                    for (auto* snd : dh->GetFormArray<RE::BGSSoundDescriptorForm>()) {
-                        if (!snd) continue;
-                        const bool hitForm  = static_cast<RE::BSISoundDescriptor*>(snd) == a_desc;
-                        const bool hitInner = snd->soundDescriptor &&
-                                              static_cast<RE::BSISoundDescriptor*>(snd->soundDescriptor) == a_desc;
-                        if (hitForm || hitInner) {
-                            fid  = snd->GetFormID();
-                            edid = snd->GetFormEditorID();
-                            break;
-                        }
-                    }
-                }
-                // If unresolved, dump the descriptor's vtable RVA so its concrete class can
-                // be identified offline against the 1.6.1170 address library.
-                std::uintptr_t vtblRva = 0;
-                if (fid == 0) {
-                    const auto* vtbl = *reinterpret_cast<void* const*>(a_desc);
-                    vtblRva = reinterpret_cast<std::uintptr_t>(vtbl) - REL::Module::get().base();
-                }
-                spdlog::warn("[SNDID] in-window sound desc={} flags=0x{:X} -> SNDR {:08X} '{}' vtbl=+0x{:X}",
-                             dp, a_flags, fid, edid ? edid : "", vtblRva);
+        const bool inCycle = g_inEquipCycle;  // synchronous span of MEO's own equip call
+        const bool inWin   = NowMs() < g_equipWinUntilMs.load(std::memory_order_relaxed);
+        if (inCycle || inWin) {
+            const int c = g_eqLog.load(std::memory_order_relaxed);
+            if (c < 48) {  // bounded log so we can read the funnel + timing
+                g_eqLog.store(c + 1, std::memory_order_relaxed);
+                const auto rva = reinterpret_cast<std::uintptr_t>(_ReturnAddress()) -
+                                 REL::Module::get().base();
+                spdlog::warn("[EQSND] caller=+0x{:X} desc={} flags=0x{:X} when={}",
+                             rva, static_cast<void*>(a_desc), a_flags,
+                             inCycle ? "CYCLE(sync)" : "win(async)");
+            }
+            if (inCycle) {
+                return false;  // mute the hum synchronously — only during MEO's equip
             }
         }
-        return g_buildSound(a_self, a_handle, a_desc, a_flags);  // pure pass-through
+        return g_buildSound(a_self, a_handle, a_desc, a_flags);
     }
 
     void Install() {
-        // Address-library id + call offset are 1.6.1170-specific; on any other
+        // Address-library ids + call offsets are 1.6.1170-specific; on any other
         // runtime, skip rather than risk patching the wrong code.
         if (REL::Module::get().version() != REL::Version(1, 6, 1170, 0)) {
-            spdlog::warn("[SNDID] identifier skipped — runtime is not 1.6.1170");
+            spdlog::warn("[EQSND] re-equip hum gate skipped — runtime is not 1.6.1170");
             return;
         }
         auto& tr = SKSE::GetTrampoline();
-        // CALL-SITE hook (safe): redirect PlaySound's `call BuildSound` to our thunk.
-        g_buildSound = tr.write_call<5>(REL::ID(52939).address() + 0x42, BuildSoundThunk);
-        spdlog::info("[SNDID] sound identifier installed (PlaySound path, log-only)");
+        // CALL-SITE hooks (safe): all three sound-start paths that call BuildSound.
+        g_buildSound = tr.write_call<5>(REL::ID(67663).address() + 0x49, BuildSoundThunk);  // Play A (positional)
+        tr.write_call<5>(REL::ID(67665).address() + 0x49, BuildSoundThunk);                  // Play B (positional)
+        tr.write_call<5>(REL::ID(52939).address() + 0x42, BuildSoundThunk);                  // global PlaySound
+        spdlog::info("[EQSND] re-equip hum gate installed (Play663/Play665/PlaySound, sync-suppress + async log)");
     }
 }  // namespace sndhook
 
