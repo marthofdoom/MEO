@@ -214,6 +214,7 @@ inline std::string ShortGemName(const char* a_full) {
     return s.empty() ? std::string(a_full) : s;  // never strip a name to nothing
 }
 float g_socketValueMult = 1.0f; // [Balance] fSocketValueMult — scale on per-tier socketed-item gold; RebuildInstanceEnchant uses it (declared up top like g_magnitudeMult) (m38c)
+std::atomic<int> g_sndProbe{0}; // [DEBUG snd-probe] temporary: correlate the vendor "enchant sound" with enchant-build vs world-place. Remove before release.
 
 // ── M3d forms (all IDs extracted from the real Lorerim masters) ───────
 constexpr RE::FormID kPouchContID = 0x8FE;        // MEO.esp CONT (frozen) — M5 Gem Pouch menu
@@ -1302,6 +1303,8 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         namePart += std::format("{} {}", ShortGemName(GemName(*eg)), meo::kRoman[lvIdx]);
     }
     auto* com = RE::BGSCreatedObjectManager::GetSingleton();
+    spdlog::warn("[SNDPROBE #{}] ADD-ENCH (BGSCreatedObjectManager::Add{}Enchantment) base={:08X}",
+                 ++g_sndProbe, isArmor ? "Armor" : "Weapon", a_base->GetFormID());
     auto* ench = isArmor ? com->AddArmorEnchantment(effects) : com->AddWeaponEnchantment(effects);
     if (!ench) {
         spdlog::error("[rebuild] Add{}Enchantment null on {:08X}/{}",
@@ -4034,6 +4037,9 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
     if (!a_holder || g_convert.empty()) {
         return 0;
     }
+    spdlog::warn("[SNDPROBE] --- ConvertInventory sweep START holder={:08X} '{}' isPlayer={} ---",
+                 a_holder->GetFormID(), a_holder->GetName(),
+                 actor && actor->IsPlayerRef());
     struct Hit {
         RE::TESBoundObject* old;
         const ConvTarget*   tgt;
@@ -4113,6 +4119,8 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
         a_holder->RemoveItem(hit.old, hit.count, RE::ITEM_REMOVE_REASON::kRemove,
                              nullptr, nullptr);
         for (std::int32_t i = 0; i < hit.count; ++i) {
+            spdlog::warn("[SNDPROBE #{}] PLACE (PlaceObjectAtMe) base={:08X} worn={}",
+                         ++g_sndProbe, hit.tgt->base->GetFormID(), hit.worn);
             auto ref = a_holder->PlaceObjectAtMe(hit.tgt->base, false);
             if (!ref) {
                 spdlog::error("[convert] PlaceObjectAtMe failed for '{}' — plain base given",
@@ -5288,6 +5296,8 @@ void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag = false) {
     if (!changes || !changes->entryList) {
         return;
     }
+    spdlog::warn("[SNDPROBE] === ReapplyWornSockets START rebuild={} reequip={} (no PlaceObjectAtMe here) ===",
+                 a_rebuild, a_reequip);
     struct Target { RE::TESBoundObject* base; RE::ExtraDataList* xl; bool isArmor; bool left; };
     std::vector<Target> targets;
     for (auto* entry : *changes->entryList) {
