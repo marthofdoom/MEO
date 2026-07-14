@@ -4,6 +4,16 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.0 — first stable release (2026-07-13)
+The full system, feature-complete: socketable leveling gems (I–V, birthing),
+the hidden Gem Pouch, loot conversion, per-load-order calibration, the rebuilt
+enchanting perk tree (elemental affinities as parallel choices; Gem Cutter →
+Soul Feeder; Twinned → Jeweler), the support-gem pillar (Focus/Conduit/Echo,
+boss-loot + hand-placed acquisition), the 2-of-a-kind stacking cap, gems are
+non-sellable, circlets socketable, one-click swap, follower slotted-gear support,
+4 menu skins + full controller. Lowercase 'marth' branding throughout.
+(Visual-effect coverage beyond the base compatibility is a planned optional add-on.)
+
 ## v0.49.x — support gems complete (m36f–m36i, 2026-07-13) — 1.0 candidate
 - Support gems as rare level-15+ boss/dragon loot (`fSupportDropChance`,
   `iSupportMinLevel`).
