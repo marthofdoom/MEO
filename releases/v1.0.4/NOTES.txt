@@ -1,0 +1,7 @@
+marth's Enchanting Overhaul 1.0.4 — slim (framework-dependent) installer
+built from native run 29314644536; installer framework-dependent (requires .NET 9 Runtime x64)
+
+- Installer no longer bundles the .NET runtime: 44MB -> 31MB, requires the free
+  .NET 9 Runtime (x64) to run once. Verified byte-identical calibration output.
+- MCM title "marth Enchanting Overhaul"; new gem-kills XP slider ships its INI default.
+- No gameplay/DLL logic change from 1.0.3.
