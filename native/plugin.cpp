@@ -1770,9 +1770,29 @@ public:
                         static REL::Relocation<void(RE::TESObjectREFR*,
                                                     const RE::TESBoundObject*)>
                             sendInvUpdate{ RELOCATION_ID(51911, 52849) };
+                        // v1.0.2 refreshed only the merchant CHEST — but the barter
+                        // UI is bound to a different ref (usually the vendor actor,
+                        // with the chest redirected behind GetMerchantContainer), so
+                        // a chest-targeted update was ignored and the first open
+                        // stayed stale (reopen worked because the chest was already
+                        // converted by then). Refresh the ref the menu is actually
+                        // bound to, plus the vendor and chest as belt-and-suspenders.
+                        RE::TESObjectREFR* bound = nullptr;
+                        if (auto p = RE::TESObjectREFR::LookupByHandle(
+                                RE::BarterMenu::GetTargetRefHandle())) {
+                            bound = p.get();
+                        }
                         sendInvUpdate(target, nullptr);
-                        spdlog::info("[vendor] barter restock sweep: {} converted, "
-                                     "list refreshed", n);
+                        if (bound && bound != target) {
+                            sendInvUpdate(bound, nullptr);
+                        }
+                        if (vendor != target && vendor != bound) {
+                            sendInvUpdate(vendor, nullptr);
+                        }
+                        spdlog::info("[vendor] barter sweep: {} converted; refreshed "
+                                     "chest {:08X} vendor {:08X} bound {:08X}",
+                                     n, target->GetFormID(), vendor->GetFormID(),
+                                     bound ? bound->GetFormID() : 0u);
                     }
                 });
             });
