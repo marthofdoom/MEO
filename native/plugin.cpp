@@ -5917,9 +5917,25 @@ namespace sndhook {
         }
 
         if (suppress) {
+            // v18: the SUPPRESSION (return false) is UNCAPPED — it always fires for
+            // every OwnedController armor glow. Only the LOG is throttled. The v17
+            // "muted=40" was this log's old cap (40), NOT a suppression limit. We now
+            // print the running index so the MAX # printed = the true total muted
+            // this session: >40 proves the mute is uncapped (and if the racket then
+            // persists, the residual sound bypasses Init+0x113); ==40 would mean only
+            // 40 armor glows ever Init'd this run.
             const int m = g_muted.fetch_add(1, std::memory_order_relaxed) + 1;
-            if (m <= 40) {  // bounded confirmation log
-                spdlog::info("[snd] armor enchant hum muted (OwnedController, SNDR={:08X})", sndrID);
+            if (m <= 20 || m % 10 == 0) {  // first 20, then every 10th (uncapped view)
+                spdlog::info("[snd] armor enchant hum muted #{} (OwnedController, SNDR={:08X})",
+                             m, sndrID);
+            }
+            // Belt-and-suspenders: force the handle invalid so the engine's own
+            // SetObjectToFollow/Play (both bail on soundID==kInvalidID) DEFINITELY
+            // skip — independent of the handle's pre-state on a save-restored effect
+            // (a fresh vendor effect is already invalid here; a load-restored one may
+            // not be, which would explain "vendor silent but load still hums").
+            if (a_handle) {
+                a_handle->soundID = RE::BSSoundHandle::kInvalidID;
             }
             return false;  // engine's own no-ambient-sound path; glow still attaches
         }
@@ -5955,8 +5971,8 @@ namespace sndhook {
         g_weapCtrlVtable  = REL::ID(206025).address();  // VTABLE_WeaponEnchantmentController
 
         g_buildSound = SKSE::GetTrampoline().write_call<5>(site, BuildSoundThunk);
-        spdlog::info("[snd] v17 enchant-hum gate installed (ShaderReferenceEffect::Init->BuildSound) — "
-                     "OwnedController(armor)=mute, weapon/other=keep; ownedVt=0x{:X} weapVt=0x{:X}",
+        spdlog::info("[snd] v18 enchant-hum gate installed (ShaderReferenceEffect::Init->BuildSound) — "
+                     "OwnedController(armor)=mute UNCAPPED, weapon/other=keep; ownedVt=0x{:X} weapVt=0x{:X}",
                      g_ownedCtrlVtable, g_weapCtrlVtable);
     }
 }  // namespace sndhook
