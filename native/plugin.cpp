@@ -1687,6 +1687,7 @@ void OpenGemMenu(bool a_station = false);  // defined with the render hooks belo
 void ApplyTemperPerk();                    // m33b — defined before EnsurePlayerSetup
 void DispelStaleGemEffects();              // m24b/c — defined with the load-refresh code
 void StockVendorGems();                    // m19b — defined with the loot rolls below
+int  ConvertInventory(RE::TESObjectREFR* a_holder);  // m38 — defined with conversion below
 void CloseGemMenu();
 extern std::atomic<bool> g_pendingReapply;  // m19e — defined with the load reapply below
 void RunDeferredReapply(int a_delayMs);
@@ -1760,10 +1761,16 @@ public:
                     }
                     const int n = ConvertInventory(target);
                     if (n > 0) {
-                        // engine's own refresh: rebuild the open barter list from
-                        // the now-converted stock (call the engine's function, as
-                        // SKSE does — never hand-repaint the UI).
-                        RE::SendUIMessage::SendInventoryUpdateMessage(target, nullptr);
+                        // Rebuild the open barter list from the now-converted stock
+                        // by calling the game's OWN inventory-update routine — the
+                        // same one a buy/sell fires (call the engine's function, as
+                        // SKSE does — never hand-repaint the UI). CommonLibSSE-NG
+                        // 3.7.0 predates RE::SendUIMessage::SendInventoryUpdateMessage,
+                        // so bind the relocation it uses (SE 51911 / AE 52849).
+                        static REL::Relocation<void(RE::TESObjectREFR*,
+                                                    const RE::TESBoundObject*)>
+                            sendInvUpdate{ RELOCATION_ID(51911, 52849) };
+                        sendInvUpdate(target, nullptr);
                         spdlog::info("[vendor] barter restock sweep: {} converted, "
                                      "list refreshed", n);
                     }

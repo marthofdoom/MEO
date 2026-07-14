@@ -315,9 +315,14 @@ installed in `SKSEPluginLoad` — before the renderer exists):
   event, so the ContainerSink fallback never catches it either. **Fix:** add a
   BarterMenu-open sweep, deferred TWO frames (`AddTask` inside `AddTask`) so the
   barter list is fully built before we touch the chest (mid-build mutation is the
-  m19e breakage), then rebuild the open list via the engine's own signal
-  `RE::SendUIMessage::SendInventoryUpdateMessage(target, nullptr)` — the same
-  inventory-update the engine emits on a buy/sell. Keep the dialogue-open sweep
+  m19e breakage), then rebuild the open list via the game's own inventory-update
+  routine — the same one a buy/sell fires. NOTE: our pinned CommonLibSSE-NG is
+  **3.7.0** (vcpkg colorglass registry, commit c4ab853d), which PREDATES
+  `RE::SendUIMessage::SendInventoryUpdateMessage` (that header 404s at this
+  commit) — bind the relocation it uses in newer CommonLib directly:
+  `REL::Relocation<void(RE::TESObjectREFR*, const RE::TESBoundObject*)>{
+  RELOCATION_ID(51911, 52849) }` and call `(target, nullptr)`. Keep the
+  dialogue-open sweep
   for vendors not due to restock. Do NOT pre-empt the reset by hand (calling
   reset early + writing `vendorData.lastDayReset` is hand-writing engine
   bookkeeping and risks desyncing vendor gold) — let the engine restock, then
