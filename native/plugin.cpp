@@ -257,6 +257,16 @@ static void MarkReequippedRef(RE::Actor* a_actor) {
     if (h == 0) {
         return;
     }
+    // DIAG v14: dump the stamped handle so we can compare it against the
+    // fx->target handle the Init+0x113 thunk sees (age-bit / wrong-ref mismatch?).
+    {
+        static std::atomic<int> dm{ 0 };
+        const int n = dm.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (n <= 40) {
+            spdlog::info("[diag-mark #{}] actor={:08X} handle={:08X}",
+                         n, a_actor->GetFormID(), h);
+        }
+    }
     const std::uint64_t now   = NowMs();
     const std::uint64_t until = now + kMuteWindowMs;
     MutedRef*           slot  = nullptr;
@@ -5804,6 +5814,7 @@ namespace sndhook {
                               RE::BSISoundDescriptor*, std::uint32_t);
     static inline REL::Relocation<BuildSoundFn> g_buildSound;
     static std::atomic<int>                     g_muted{ 0 };  // count for the log
+    static std::atomic<int>                     g_diag{ 0 };   // DIAG v14: unconditional call log
 
     // ShaderReferenceEffect::soundHandle offset (RE/S/ShaderReferenceEffect.h: "0C0").
     // Hardcoded rather than offsetof() — the type is polymorphic (non-standard-layout).
@@ -5814,11 +5825,42 @@ namespace sndhook {
         // rdx points at effect->soundHandle (member 0xC0); recover the effect.
         auto* fx = reinterpret_cast<RE::ShaderReferenceEffect*>(
             reinterpret_cast<std::uintptr_t>(a_handle) - kSoundHandleOffset);
-        if (fx && fx->wornObject && IsRefMuted(fx->target.native_handle())) {
+
+        // ── DIAG v14: log EVERY call to this exact site, unconditionally. ──
+        // This is the discriminator: if the enchanted-weapon hum passes through
+        // ShaderReferenceEffect::Init+0x113 we WILL see its ambient SNDR / EFSH
+        // FormID here (path B — a gate bug); if the hum plays and NOTHING with an
+        // enchant SNDR ever appears in this log, the hum uses a different emitter
+        // (path A — widen next build). We log the descriptor's owning SNDR form
+        // (the engine passed r8 = &BGSSoundDescriptorForm::BSISoundDescriptor, i.e.
+        // form+0x20, so form = a_desc - 0x20), the effect's EFSH FormID, the worn
+        // base object, the target handle, and whether the gate would fire.
+        const std::uint32_t tgtHandle = fx ? fx->target.native_handle() : 0;
+        const bool          muted     = fx && fx->wornObject && IsRefMuted(tgtHandle);
+        {
+            const int n = g_diag.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (n <= 60) {  // bounded
+                RE::FormID sndrID = 0;
+                if (a_desc) {
+                    auto* form = reinterpret_cast<RE::BGSSoundDescriptorForm*>(
+                        reinterpret_cast<std::uintptr_t>(a_desc) - 0x20);
+                    sndrID = form->GetFormID();
+                }
+                const RE::FormID efshID = (fx && fx->effectData) ? fx->effectData->GetFormID() : 0;
+                const RE::FormID wornID = (fx && fx->wornObject) ? fx->wornObject->GetFormID() : 0;
+                spdlog::info(
+                    "[diag-init #{}] fx={} SNDR={:08X} EFSH={:08X} worn={:08X} "
+                    "target={:08X} refMuted={}",
+                    n, static_cast<void*>(fx), sndrID, efshID, wornID, tgtHandle,
+                    muted ? 1 : 0);
+            }
+        }
+
+        if (muted) {
             const int n = g_muted.fetch_add(1, std::memory_order_relaxed) + 1;
             if (n <= 24) {  // bounded confirmation log
                 spdlog::info("[snd] enchant-shader hum muted (ref#{:08X}) — MEO re-equip",
-                             fx->target.native_handle());
+                             tgtHandle);
             }
             return false;  // engine's own no-ambient-sound path; glow still attaches
         }
@@ -5848,7 +5890,7 @@ namespace sndhook {
             return;
         }
         g_buildSound = SKSE::GetTrampoline().write_call<5>(site, BuildSoundThunk);
-        spdlog::info("[snd] enchant-shader hum gate installed (ShaderReferenceEffect::Init->BuildSound)");
+        spdlog::info("[snd] DIAG v14 enchant-shader hum probe installed (ShaderReferenceEffect::Init->BuildSound) — unconditional [diag-init] logging");
     }
 }  // namespace sndhook
 
