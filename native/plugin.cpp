@@ -108,6 +108,10 @@ struct SocketRecord {
 // one item instance (base,uid) can hold up to kMaxSockets gems, one per slot.
 // Loose gem records always use slot 0. See save-safety rule 3.
 constexpr int kMaxSockets = 2;
+// Gold a socketed gem adds to its item, by tier I..V (m38c, marth: "scale with
+// gem tier"). The engine turns this into the item's price via the enchant value
+// formula — see RebuildInstanceEnchant. Scaled by fSocketValueMult (INI).
+constexpr int kSocketTierValue[5] = { 40, 75, 120, 190, 300 };
 using InstKey = std::uint64_t;
 constexpr InstKey MakeKey(RE::FormID a_base, std::uint16_t a_uid, std::uint8_t a_slot = 0) {
     return (static_cast<InstKey>(a_base) << 24) | (static_cast<InstKey>(a_uid) << 8) | a_slot;
@@ -1217,11 +1221,13 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     effects.resize(nEff);
     std::string namePart;
     std::size_t e = 0;
+    int         premiumGold = 0;  // m38c: gold this socket adds, summed by tier
     for (std::size_t i = 0; i < filled.size(); ++i) {
         // m36: Conduit substitutes the item-domain sibling gem for effect
         // purposes; the normal gem's LEVEL still drives the tier.
         const ResolvedGem* eg = conduitTarget ? conduitTarget : filled[i].rg;
         const int          lvIdx = filled[i].lvIdx;
+        premiumGold += kSocketTierValue[std::clamp(lvIdx, 0, 4)];
         // Master power scale (MCM) × Gem Attunement (+8%/rank) × affinity/
         // Facet Insight (+25% each, DESIGN §6); × Focus boost or Conduit ratio.
         const float baseMag =
@@ -1265,14 +1271,40 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
                       isArmor ? "Armor" : "Weapon", a_base->GetFormID(), uid);
         return;
     }
-    ench->data.costOverride = 0;  // gems never drain (ENGINE_NOTES §3/§8)
+    // Gold value scales with gem tier (m38c, marth). The engine prices an
+    // enchanted item as base + fEnchantmentPointsMult*MaxCharge (WEAPONS) or
+    // base + fEnchantmentEffectPointsMult*EnchantmentCost (ARMOR). The gem stays
+    // free in play, so we route the premium through the field the engine ISN'T
+    // spending: weapons keep costOverride 0 (never drain) and carry value in the
+    // charge; constant-effect armor never spends charge, so it carries value in
+    // costOverride. (The old flat charge=0xFFFF is what ballooned weapons to 20k+
+    // — 0.x*65535. It was never part of MEO's item signature; see DispelStale-
+    // GemEffects, which keys on FF-form + kCostOverride + gem-MGEF, not the cost.)
+    const float premium = static_cast<float>(premiumGold) * g_socketValueMult;
+    auto*       gmst = RE::GameSettingCollection::GetSingleton();
+    auto        gmstF = [&](const char* n, float dflt) {
+        auto* s = gmst ? gmst->GetSetting(n) : nullptr;
+        return s ? s->GetFloat() : dflt;
+    };
+    std::uint16_t charge = 0;
     ench->data.flags.set(RE::EnchantmentItem::EnchantmentFlag::kCostOverride);
+    if (isArmor) {
+        const float mult = gmstF("fEnchantmentEffectPointsMult", 0.5f);
+        ench->data.costOverride =
+            mult > 0.0f ? static_cast<std::int32_t>(premium / mult + 0.5f) : 0;
+        charge = 0;  // constant-effect armor never spends charge
+    } else {
+        const float mult = gmstF("fEnchantmentPointsMult", 0.6f);
+        ench->data.costOverride = 0;  // weapons must never drain
+        const float c = mult > 0.0f ? premium / mult : 0.0f;
+        charge = static_cast<std::uint16_t>(std::clamp(c, 0.0f, 65535.0f));
+    }
     if (auto* xEnch = a_xList->GetByType<RE::ExtraEnchantment>()) {
         xEnch->enchantment = ench;
-        xEnch->charge = 0xFFFF;
+        xEnch->charge = charge;
         xEnch->removeOnUnequip = false;
     } else {
-        a_xList->Add(new RE::ExtraEnchantment(ench, 0xFFFF, false));
+        a_xList->Add(new RE::ExtraEnchantment(ench, charge, false));
     }
     // m36: a linked support prefixes the name so the pairing is legible on the
     // item itself, e.g. "Focus III · Fire II Sword".
@@ -1394,8 +1426,10 @@ bool IsSocketableWeaponBase(const RE::TESObjectWEAP* a_weap) {
 }
 
 // Armor-base eligibility (M8b armor gems). Socketable slots per DESIGN §4:
-// head, body, hands, amulet, ring — boots (kFeet) get no socket. Same
-// engine verdicts as weapons (playable, not base-enchanted, table allows it).
+// head, body, hands, amulet, ring, feet — same engine verdicts as weapons
+// (playable, not base-enchanted, table allows it). Boots (kFeet) get ONE
+// socket (m38c, marth: they get converted, so they need a slot — but just one;
+// SocketCapacity falls kFeet through to return 1).
 bool IsSocketableArmorBase(const RE::TESObjectARMO* a_armo) {
     if (!a_armo || a_armo->formEnchanting || !a_armo->GetPlayable() ||
         a_armo->HasKeywordString("MagicDisallowEnchanting")) {
@@ -1414,7 +1448,7 @@ bool IsSocketableArmorBase(const RE::TESObjectARMO* a_armo) {
     return a_armo->HasPartOf(S::kHead) || a_armo->HasPartOf(S::kHair) ||
            a_armo->HasPartOf(S::kBody) || a_armo->HasPartOf(S::kHands) ||
            a_armo->HasPartOf(S::kAmulet) || a_armo->HasPartOf(S::kRing) ||
-           a_armo->HasPartOf(S::kCirclet);
+           a_armo->HasPartOf(S::kCirclet) || a_armo->HasPartOf(S::kFeet);
 }
 
 // Re-apply a socketed instance's ability to an already-worn item after a
@@ -1501,6 +1535,7 @@ float g_destroySkillXP  = 20.0f;  // [XP] fDestroySkillXP — Enchanting SKILL x
 float g_levelSkillXP    = 12.0f;  // [XP] fLevelSkillXP — Enchanting SKILL xp per gem level gained (× new level) (m37)
 float g_gemXpSkillXP    = 0.05f;  // [XP] fGemXpSkillXP — Enchanting SKILL xp per point of Gem XP a gem earns from a kill (tiny trickle, m37)
 // NB: socketing grants NO skill xp on purpose — socket/unsocket would be a farm loop (marth).
+float g_socketValueMult = 1.0f;   // [Balance] fSocketValueMult — global scale on the per-tier gold a socketed gem adds (m38c)
 bool  g_debugAllPerks = false;    // [Debug] bDebugAllPerks — force every MEO perk ON for testing (m36)
 bool  g_purgeSupportGems = false; // [Debug] bPurgeSupportGems — one-shot: strip all support gems from inv+pouch (m36l cleanup)
 // g_magnitudeMult [XP] fMagnitudeMult is declared up top (StampInstance uses it)
@@ -1548,6 +1583,7 @@ static void ApplyIniFile(const char* a_path) {
         else if (key == "fDestroySkillXP")    g_destroySkillXP = val;
         else if (key == "fLevelSkillXP")      g_levelSkillXP = val;
         else if (key == "fGemXpSkillXP")      g_gemXpSkillXP = val;
+        else if (key == "fSocketValueMult")   g_socketValueMult = val;
         else if (key == "bDebugAllPerks")     g_debugAllPerks = val != 0.0f;
         else if (key == "bPurgeSupportGems")  g_purgeSupportGems = val != 0.0f;
     }
@@ -5012,7 +5048,8 @@ void EnsurePlayerSetup() {
 // runtime magic delivery does not.)
 //
 // MECHANISM (m16): the m15 [load-diag] settled it — on load the enchant is
-// FULLY intact (kCostOverride=true, costOverride=0, charge=0xFFFF all survive).
+// FULLY intact (kCostOverride, costOverride, charge all survive — values are the
+// m38c tier-scaled ones now, no longer the flat costOverride=0/charge=0xFFFF).
 // So the regression was never the enchant data. The dead thing is the actor's
 // equipped-weapon delivery cache, which the engine rebuilds from the item's
 // BASE-form enchantment (none for us — ours is an instance ExtraEnchantment),
@@ -5097,10 +5134,13 @@ void DispelStaleGemEffects() {
         if (!en || en->GetFormID() < 0xFF000000u) {
             continue;  // not an engine-created enchantment
         }
-        if (!en->data.flags.any(RE::EnchantmentItem::EnchantmentFlag::kCostOverride) ||
-            en->data.costOverride != 0) {
-            continue;  // not MEO's free-enchant signature
+        if (!en->data.flags.any(RE::EnchantmentItem::EnchantmentFlag::kCostOverride)) {
+            continue;  // not MEO's signature (FF-form + kCostOverride + gem MGEF)
         }
+        // m38c: dropped the old costOverride==0 clause — armor gems now carry
+        // their gold value in costOverride (weapons carry it in charge). The
+        // gem-MGEF membership below is the real discriminator (players can't
+        // enchant with gem MGEFs), so identity is unchanged.
         const auto* mgef = ae->GetBaseObject();
         if (!mgef || !gemFx.contains(mgef)) {
             continue;

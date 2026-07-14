@@ -5,6 +5,18 @@ standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
 ## v1.0.2 — vendor restock defeated the conversion sweep (m38, 2026-07-13)
+- **Socketed-item gold value scales with gem tier** (m38c): a socketed gem used
+  to inflate its item's price to 20k+ — the instance enchant carried a flat
+  `charge = 0xFFFF`, and the engine prices weapon enchants as
+  `fEnchantmentPointsMult × MaxCharge`. Now the premium tracks the gem's tier
+  (I–V), routed through the field the engine isn't spending (charge for weapons,
+  `costOverride` for constant-effect armor) so gems still never drain. Same price
+  whether a vendor's stock was converted or the player socketed it. Global
+  `fSocketValueMult` INI knob.
+- **Boots are socketable** (m38c): they get converted, so they now take one
+  socket (kFeet), like other single-slot gear.
+
+
 - **Vendor barter stock now actually converts.** v1.0.1 revived the merchant-
   container sweep, but it runs at dialogue-open — and the engine re-rolls the
   vendor's leveled-list stock a beat later, as the *barter* menu opens, dropping
