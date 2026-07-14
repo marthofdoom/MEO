@@ -4,3 +4,5 @@ __pycache__/
 
 # MEO installer publish outputs (build artifacts)
 installer/**/publish*/
+installer/**/bin/
+installer/**/obj/
