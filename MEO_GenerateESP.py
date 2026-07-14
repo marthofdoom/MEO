@@ -389,7 +389,7 @@ def write_mcm_files(out_dir):
             ctrl={"id":f"{key}:{section}","text":label,"type":"toggle","help":help_,
                   "valueOptions":{"sourceType":"ModSettingBool","defaultValue":bool(dflt)}}
         pages[page].append(ctrl)
-    config={"modName":"MEO","displayName":"marth's Enchanting Overhaul",
+    config={"modName":"MEO","displayName":"marth Enchanting Overhaul",
             "minMcmVersion":9,"cursorFillMode":"topToBottom",
             "pages":[{"pageDisplayName":p,"cursorFillMode":"topToBottom",
                       "content":[{"text":p,"type":"header"}]+ctrls}
