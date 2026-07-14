@@ -300,6 +300,28 @@ installed in `SKSEPluginLoad` — before the renderer exists):
   Guard the actor-only steps (`worn` equip, player ownership/theft-guard,
   player convert-miss diag) behind `if (actor…)`. Log container sweeps with a
   count so this failure class self-diagnoses.
+- **Vendor stock RESTOCKS from leveled lists as the BARTER menu opens — after
+  DialogueMenu-open — and that re-roll fires no `TESContainerChangedEvent`
+  (found by Fable + deck-log proof 2026-07-13, fixed v1.0.2-m38).** The m37
+  container sweep was hung on DialogueMenu-open (per the m19e lesson: mutating the
+  chest while the barter list builds broke Belethor). But the engine re-generates
+  the vendor's LVLI stock when the player picks the *trade* line / the BarterMenu
+  opens — one beat AFTER the dialogue sweep — so freshly re-rolled enchanted
+  generics ("of Burning", "Minor Archery") arrive unconverted on top of the
+  already-converted stock. Deck log 2026-07-13 nailed it: `[convert] container …
+  7 item(s) converted` at dialogue time, yet barter still displayed re-rolled
+  enchanted names, and none of those names were in the converted-7 list → they
+  were created by the post-sweep restock. LVLI regeneration emits NO container
+  event, so the ContainerSink fallback never catches it either. **Fix:** add a
+  BarterMenu-open sweep, deferred TWO frames (`AddTask` inside `AddTask`) so the
+  barter list is fully built before we touch the chest (mid-build mutation is the
+  m19e breakage), then rebuild the open list via the engine's own signal
+  `RE::SendUIMessage::SendInventoryUpdateMessage(target, nullptr)` — the same
+  inventory-update the engine emits on a buy/sell. Keep the dialogue-open sweep
+  for vendors not due to restock. Do NOT pre-empt the reset by hand (calling
+  reset early + writing `vendorData.lastDayReset` is hand-writing engine
+  bookkeeping and risks desyncing vendor gold) — let the engine restock, then
+  convert, then ask it to refresh.
 - `io.IniFilename = nullptr` — never write imgui.ini into the game dir.
 - vcpkg: `imgui` features `dx11-binding`, `win32-binding`; link
   `imgui::imgui d3d11`.

@@ -1729,6 +1729,46 @@ public:
             // its item list and broke it (Belethor, 2026-07-09). By the time
             // the player picks the trade line, stock is settled.
             SKSE::GetTaskInterface()->AddTask([]() { StockVendorGems(); });
+        } else if (a_event->opening && a_event->menuName == RE::BarterMenu::MENU_NAME) {
+            // m38: the engine restocks the vendor from its leveled lists as the
+            // BARTER menu opens — i.e. AFTER the m19e dialogue-open sweep — so the
+            // freshly re-rolled enchanted generics land unconverted (deck test
+            // 2026-07-13: the chest converted fine at dialogue time, then restock
+            // dropped "of Burning"/"Minor Archery"/"Minor Alteration"/... back on
+            // top). Sweep again here. Defer two frames so the barter list is fully
+            // built before we mutate the chest (mutating mid-build is exactly the
+            // m19e breakage), then let the engine rebuild the list via its own
+            // inventory-update signal — the same one a buy/sell emits.
+            SKSE::GetTaskInterface()->AddTask([]() {
+                SKSE::GetTaskInterface()->AddTask([]() {
+                    auto* mtm = RE::MenuTopicManager::GetSingleton();
+                    auto  speaker = mtm ? mtm->speaker.get()
+                                        : RE::NiPointer<RE::TESObjectREFR>{};
+                    auto* vendor = speaker ? speaker->As<RE::Actor>() : nullptr;
+                    if (!vendor) {
+                        return;
+                    }
+                    RE::TESObjectREFR* target = vendor;  // fallback: sells own inventory
+                    if (auto* base = vendor->GetActorBase()) {
+                        for (auto& fr : base->factions) {
+                            if (fr.faction && fr.faction->IsVendor() &&
+                                fr.faction->vendorData.merchantContainer) {
+                                target = fr.faction->vendorData.merchantContainer;
+                                break;
+                            }
+                        }
+                    }
+                    const int n = ConvertInventory(target);
+                    if (n > 0) {
+                        // engine's own refresh: rebuild the open barter list from
+                        // the now-converted stock (call the engine's function, as
+                        // SKSE does — never hand-repaint the UI).
+                        RE::SendUIMessage::SendInventoryUpdateMessage(target, nullptr);
+                        spdlog::info("[vendor] barter restock sweep: {} converted, "
+                                     "list refreshed", n);
+                    }
+                });
+            });
         } else if (!a_event->opening && a_event->menuName == RE::CraftingMenu::MENU_NAME) {
             // Overlay mode only: leaving the vanilla enchanting UI takes the gem
             // menu with it. In takeover mode (m18) the crafting menu closing IS
@@ -5459,7 +5499,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         StartEchoHeartbeat();  // m36: Echo armor follower-share
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v1.0.1 loaded");
+            console->Print("MEO native v1.0.2 loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -5527,7 +5567,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v1.0.1 loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v1.0.2 loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }

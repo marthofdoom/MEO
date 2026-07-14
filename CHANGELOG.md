@@ -4,6 +4,19 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.2 — vendor restock defeated the conversion sweep (m38, 2026-07-13)
+- **Vendor barter stock now actually converts.** v1.0.1 revived the merchant-
+  container sweep, but it runs at dialogue-open — and the engine re-rolls the
+  vendor's leveled-list stock a beat later, as the *barter* menu opens, dropping
+  fresh unconverted generics ("of Burning", "Minor Archery", "Minor Alteration",
+  …) on top of the just-converted stock. Deck log confirmed it: the chest
+  converted 7 items at dialogue time, yet barter still showed re-rolled enchanted
+  names. Added a barter-open sweep that fires *after* the restock (deferred two
+  frames so it never mutates the list mid-build — the m19e Belethor breakage),
+  then rebuilds the open list through the engine's own inventory-update signal
+  (`SendInventoryUpdateMessage`), the same one a buy/sell emits. The dialogue-open
+  sweep stays as belt-and-suspenders for vendors whose stock isn't due to restock.
+
 ## v1.0.1 — conversion blocker + enchanting XP from gameplay (m37, 2026-07-13)
 - **Vendor-stock conversion fixed** (the "Major Wielding / Minor Alteration /
   Major Knight don't convert" blocker): `ConvertInventory` used to bail on any
