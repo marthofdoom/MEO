@@ -5841,30 +5841,29 @@ namespace sndhook {
         return false;
     }
 
-    // ── Armor-vs-weapon gate (v16) — mod-proof, via the enchant type ────
-    // Requirement refinement (marth): keep WEAPON enchant hums (the combat draw
-    // cue, player AND NPC), kill only the ARMOR racket. You never "draw" armor —
-    // its ambient only ever fires as noise when the worn 3D streams in on load /
-    // area-enter; a weapon's fires on an actual unsheathe. So the true, mod-proof
-    // distinguisher is the ENCHANTMENT'S CASTING TYPE, not FormIDs and not who
-    // wears it:
-    //   • Armor enchantments are CONSTANT-EFFECT  → a persistent ActiveEffect
-    //     drives the worn shimmer. Its ShaderReferenceEffect::controller is the
-    //     ActiveEffect's embedded ActiveEffectReferenceEffectController (a member
-    //     at ActiveEffect+0x08), and ActiveEffect::spell (the EnchantmentItem) has
-    //     GetCastingType() == kConstantEffect. → SUPPRESS.
-    //   • Weapon enchantments are FIRE-AND-FORGET (applied on hit) → no persistent
-    //     shimmer ActiveEffect, so the controller is NOT an ActiveEffect one (or
-    //     the enchantment is not constant-effect). → KEEP (the draw cue).
-    // This drops player-vs-NPC and the ref-set entirely. wornObject is null at this
-    // point (the v13 bug) and the sound follows the actor root, so neither the item
-    // nor its node is available here — the enchantment reached through the
-    // controller is the reliable signal. Everything is guarded: the ActiveEffect
-    // is only dereferenced when the controller's vtable exactly matches
-    // ActiveEffectReferenceEffectController, so a non-ActiveEffect controller can
-    // never be misread. A rich census line is logged per init so the deck run
-    // verifies the split (player weapon glow -> PLAY, NPC armor glows -> MUTE).
-    static std::uintptr_t g_aeCtrlVtable = 0;  // set in Install (1.6.1170 only)
+    // ── Armor-vs-weapon gate (v17) — by controller CLASS (deck-verified) ─
+    // The v16 census resolved the real split by the effect's controller RTTI:
+    //   • ARMOR worn-enchant shimmer → RE::OwnedController (vtable AE id 190287).
+    //     92/92 NPC armor glows on load used this; it is the generic "owned"
+    //     persistent-effect controller the worn constant-effect enchant shimmer
+    //     runs on. You never DRAW armor, so its ambient is pure load/area noise.
+    //     → MUTE.
+    //   • WEAPON enchant shimmer → RE::WeaponEnchantmentController (vtable AE id
+    //     206025), or (sheathed/first-frame) a null controller. This is the combat
+    //     draw cue marth requires kept for player AND NPCs. → PLAY.
+    // So: MUTE iff controller is OwnedController; otherwise PLAY. Mod-proof — the
+    // discriminator is an ENGINE RTTI class resolved by addrlib id (portable within
+    // 1.6.1170, which MEO is pinned to), never a form/EFSH/SNDR FormID. Guarded: we
+    // only compare the controller's vtable pointer, never blind-deref it.
+    //
+    // The load burst is ALL armor; a drawn weapon is rare in a census. To make sure
+    // weapon-draw samples are never starved by the armor flood, the census logs the
+    // armor (OwnedController) path only briefly but logs every NON-armor init with a
+    // generous budget.
+    static std::uintptr_t g_ownedCtrlVtable = 0;  // RE::OwnedController (armor shimmer)
+    static std::uintptr_t g_weapCtrlVtable  = 0;  // RE::WeaponEnchantmentController
+    static std::atomic<int> g_armorLog{ 0 };
+    static std::atomic<int> g_otherLog{ 0 };
 
     static bool BuildSoundThunk(RE::BSAudioManager* a_self, RE::BSSoundHandle* a_handle,
                                 RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags) {
@@ -5887,53 +5886,40 @@ namespace sndhook {
             return g_buildSound(a_self, a_handle, a_desc, a_flags);
         }
 
-        // Resolve the controller and, if it is an ActiveEffect one, the driving
-        // enchantment's casting type. All reads guarded by the vtable match.
-        std::uintptr_t ctrlVt      = 0;
-        bool           isAECtrl    = false;
-        int            castingType = -1;   // -1 = unknown; 0 = const-effect (armor)
-        RE::FormID     spellID     = 0;
-        auto*          ctrl        = fx ? fx->controller : nullptr;
-        if (ctrl) {
+        // Resolve the controller vtable (never deref it — just identify the class).
+        std::uintptr_t ctrlVt = 0;
+        if (auto* ctrl = fx ? fx->controller : nullptr) {
             ctrlVt = *reinterpret_cast<std::uintptr_t*>(ctrl);
-            if (g_aeCtrlVtable && ctrlVt == g_aeCtrlVtable) {
-                isAECtrl = true;
-                // controller is ActiveEffect::hitEffectController (member at +0x08).
-                auto* ae = reinterpret_cast<RE::ActiveEffect*>(
-                    reinterpret_cast<std::uintptr_t>(ctrl) - 0x08);
-                if (auto* spell = ae->spell) {
-                    spellID     = spell->GetFormID();
-                    castingType = static_cast<int>(spell->GetCastingType());
-                }
-            }
         }
+        const bool isArmor  = g_ownedCtrlVtable && ctrlVt == g_ownedCtrlVtable;
+        const bool isWeapon = g_weapCtrlVtable && ctrlVt == g_weapCtrlVtable;
+        const bool suppress = isArmor;   // armor shimmer = load/area noise
 
-        // Armor = constant-effect enchant (a persistent ActiveEffect shimmer).
-        const bool isArmorEnchant =
-            isAECtrl &&
-            castingType == static_cast<int>(RE::MagicSystem::CastingType::kConstantEffect);
-        const bool suppress = isArmorEnchant;
-
-        // ── DIAG v16: rich census so the deck run verifies (and, if the signal
-        // is imperfect, tells us exactly what to adjust). ──
-        const int n = g_diag.fetch_add(1, std::memory_order_relaxed) + 1;
-        if (n <= 200) {
+        // ── DIAG v17: split-budget census. Armor path (the flood) logs first 10;
+        // every non-armor init logs up to 300 so weapon draws are always captured.
+        const bool doLog = isArmor ? (g_armorLog.fetch_add(1, std::memory_order_relaxed) < 10)
+                                   : (g_otherLog.fetch_add(1, std::memory_order_relaxed) < 300);
+        if (doLog) {
+            const int           n         = g_diag.fetch_add(1, std::memory_order_relaxed) + 1;
             const RE::FormID    efshID    = (fx && fx->effectData) ? fx->effectData->GetFormID() : 0;
             const std::uint32_t tgtHandle = fx ? fx->target.native_handle() : 0;
             RE::TESObjectREFR*  tgtRef    = fx ? fx->target.get().get() : nullptr;
             const bool          isPlayer  = tgtRef && tgtRef == RE::PlayerCharacter::GetSingleton();
             const std::uintptr_t vtOff    = ctrlVt ? (ctrlVt - REL::Module::get().base()) : 0;
+            const char* cls = isArmor ? "OwnedController(armor)"
+                            : isWeapon ? "WeaponEnchantmentController"
+                            : ctrlVt   ? "other"
+                                       : "null";
             spdlog::info("[diag-init #{}] SNDR={:08X} EFSH={:08X} target={:08X} plr={} "
-                         "ctrlVt=+0x{:X} aeCtrl={} cast={} spell={:08X} -> {}",
-                         n, sndrID, efshID, tgtHandle, isPlayer ? 1 : 0, vtOff,
-                         isAECtrl ? 1 : 0, castingType, spellID, suppress ? "MUTE" : "PLAY");
+                         "ctrl={} ctrlVt=+0x{:X} -> {}",
+                         n, sndrID, efshID, tgtHandle, isPlayer ? 1 : 0, cls, vtOff,
+                         suppress ? "MUTE" : "PLAY");
         }
 
         if (suppress) {
             const int m = g_muted.fetch_add(1, std::memory_order_relaxed) + 1;
-            if (m <= 60) {  // bounded confirmation log
-                spdlog::info("[snd] armor enchant hum muted (const-effect, SNDR={:08X}, spell={:08X})",
-                             sndrID, spellID);
+            if (m <= 40) {  // bounded confirmation log
+                spdlog::info("[snd] armor enchant hum muted (OwnedController, SNDR={:08X})", sndrID);
             }
             return false;  // engine's own no-ambient-sound path; glow still attaches
         }
@@ -5962,13 +5948,16 @@ namespace sndhook {
                           resolved, target);
             return;
         }
-        // Cache the ActiveEffectReferenceEffectController vtable — the gate reads
-        // the enchantment behind an effect's controller ONLY when this matches, so
-        // a non-ActiveEffect controller is never misread.
-        g_aeCtrlVtable = REL::ID(205809).address();  // VTABLE_ActiveEffectReferenceEffectController (AE)
+        // Cache the controller-class vtables that identify armor vs weapon enchant
+        // shimmers. We only COMPARE an effect's controller vtable pointer to these;
+        // we never deref the controller, so a mismatch is always safe.
+        g_ownedCtrlVtable = REL::ID(190287).address();  // VTABLE_OwnedController (armor shimmer)
+        g_weapCtrlVtable  = REL::ID(206025).address();  // VTABLE_WeaponEnchantmentController
 
         g_buildSound = SKSE::GetTrampoline().write_call<5>(site, BuildSoundThunk);
-        spdlog::info("[snd] v16 enchant-hum gate installed (ShaderReferenceEffect::Init->BuildSound) — armor(const-effect)=mute, weapon=keep; aeCtrlVt=0x{:X}", g_aeCtrlVtable);
+        spdlog::info("[snd] v17 enchant-hum gate installed (ShaderReferenceEffect::Init->BuildSound) — "
+                     "OwnedController(armor)=mute, weapon/other=keep; ownedVt=0x{:X} weapVt=0x{:X}",
+                     g_ownedCtrlVtable, g_weapCtrlVtable);
     }
 }  // namespace sndhook
 
