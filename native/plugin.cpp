@@ -184,6 +184,7 @@ std::vector<int> g_npcPool[4][2];       // [arch][isArmor] -> weighted gem indic
 RE::BGSKeyword*  g_kwNPC = nullptr;     // ActorTypeNPC (humanoids only)
 RE::BGSKeyword*  g_kwUndead = nullptr;  // ActorTypeUndead
 float g_magnitudeMult = 1.0f;  // [XP] fMagnitudeMult master power scale; used by StampInstance below, set by ReadConfig (MCM)
+float g_socketValueMult = 1.0f; // [Balance] fSocketValueMult — scale on per-tier socketed-item gold; RebuildInstanceEnchant uses it (declared up top like g_magnitudeMult) (m38c)
 
 // ── M3d forms (all IDs extracted from the real Lorerim masters) ───────
 constexpr RE::FormID kPouchContID = 0x8FE;        // MEO.esp CONT (frozen) — M5 Gem Pouch menu
@@ -1535,7 +1536,7 @@ float g_destroySkillXP  = 20.0f;  // [XP] fDestroySkillXP — Enchanting SKILL x
 float g_levelSkillXP    = 12.0f;  // [XP] fLevelSkillXP — Enchanting SKILL xp per gem level gained (× new level) (m37)
 float g_gemXpSkillXP    = 0.05f;  // [XP] fGemXpSkillXP — Enchanting SKILL xp per point of Gem XP a gem earns from a kill (tiny trickle, m37)
 // NB: socketing grants NO skill xp on purpose — socket/unsocket would be a farm loop (marth).
-float g_socketValueMult = 1.0f;   // [Balance] fSocketValueMult — global scale on the per-tier gold a socketed gem adds (m38c)
+// g_socketValueMult [Balance] fSocketValueMult is declared up top (RebuildInstanceEnchant uses it)
 bool  g_debugAllPerks = false;    // [Debug] bDebugAllPerks — force every MEO perk ON for testing (m36)
 bool  g_purgeSupportGems = false; // [Debug] bPurgeSupportGems — one-shot: strip all support gems from inv+pouch (m36l cleanup)
 // g_magnitudeMult [XP] fMagnitudeMult is declared up top (StampInstance uses it)
