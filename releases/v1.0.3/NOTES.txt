@@ -1,0 +1,7 @@
+marth's Enchanting Overhaul 1.0.3 — enchanting-XP-from-kills nerf + MCM slider
+built from native run 29311296127; installer unchanged from 1.0.2 (v1.0.1 turn-undead census)
+
+- Per-kill Enchanting skill-XP trickle cut 5x (0.05 -> 0.01), now an MCM slider
+  ("Enchanting XP from gem kills", fGemXpSkillXP, 0-0.05, down to off).
+
+Known issue: a UI sound can still play when dedup/conversion runs.
