@@ -3747,7 +3747,7 @@ namespace menuhook {
     }
 
     void Install() {
-        SKSE::AllocTrampoline(512);  // menuhook (3 call-hooks) + sndhook diag (4 entry branch-hooks, each relocates its prologue)
+        SKSE::AllocTrampoline(512);  // menuhook (3 call-hooks) + sndhook diag (1 entry branch-hook, relocates its prologue)
         write_thunk_call<D3DInitHook>();
         write_thunk_call<DXGIPresentHook>();
         write_thunk_call<InputDispatchHook>();
@@ -5719,64 +5719,49 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
 // untouched. window-gating on g_inEnchCreate, NOT descriptor filtering (a
 // modded enchant sound would slip a descriptor filter).
 // ─────────────────────────────────────────────────────────────────────────
-// [SNDLOG diag] LOG-ONLY audio-funnel diagnostic (do NOT ship). The v2 call-
-// site suppress at Play+0x49 fired 0× during the enchant, and the decrypted
-// 1.6.1170 .text shows Add*Enchantment -> worker 36184 -> {11004,109689,68163}
-// with NO direct call to any sound funnel (68163 dispatches indirectly). So
-// the enchant SFX is almost certainly played ASYNCHRONOUSLY, by a system
-// reacting to the created enchantment, after g_inEnchCreate has cleared.
+// [SNDLOG diag] LOG-ONLY funnel diagnostic (do NOT ship). The v2 call-site
+// suppress at Play+0x49 fired 0× — but it only checked the SYNCHRONOUS gate
+// (g_inEnchCreate). The decrypted 1.6.1170 .text shows Add*Enchantment ->
+// worker 36184 -> {11004,109689,68163} with NO direct call to any sound funnel
+// (68163 dispatches indirectly), so the enchant SFX is played ASYNCHRONOUSLY,
+// after g_inEnchCreate clears — which the sync-only gate could never catch.
 //
-// This build ENTRY-hooks all four funnels (Play 67663/67665, PlaySound 52939,
-// BuildSoundDataFromDescriptor 67666) with pure PASS-THROUGH detours — they
-// NEVER drop a sound, they only log — gated to a ~700ms window opened after
-// each enchant build. Each log records the caller return address (RVA) so we
-// can identify the real trigger, plus whether g_inEnchCreate was still set
-// (sync) or already cleared (async). All four prologues steal cleanly at a
-// 5-byte boundary (verified against the dump), so write_branch<5> is safe.
-// Once the funnel + caller are known, this reverts to a surgical fix.
+// v3 (entry-hook all four funnels with generic integer thunks) CRASHED on load:
+// Play/PlaySound pass positioned-sound floats in xmm, which the integer thunks
+// clobbered. v4 narrows to the ONE funnel with a known FLOAT-FREE signature,
+// BuildSoundDataFromDescriptor (67666) — also the UNIVERSAL descriptor funnel
+// (PlaySound+0x42 and both Play overloads +0x49 all call it) — so one correctly-
+// typed entry detour covers every path safely. Pass-through only; logs caller
+// RVA + descriptor ptr + SYNC/ASYNC inside a 700ms post-enchant window. Once the
+// descriptor identity + timing are known, this becomes the surgical fix.
 namespace sndhook {
-    // Generic pass-through detour: forwards up to 6 integer/pointer args + an
-    // integer/pointer return, which covers every funnel here (handle/descriptor
-    // pointer args, bool/void* returns — none take a float in the first slots).
-    using GenFn = std::uintptr_t (*)(std::uintptr_t, std::uintptr_t, std::uintptr_t,
-                                     std::uintptr_t, std::uintptr_t, std::uintptr_t);
-
-    static inline REL::Relocation<GenFn> g_play663;
-    static inline REL::Relocation<GenFn> g_play665;
-    static inline REL::Relocation<GenFn> g_playSound;
-    static inline REL::Relocation<GenFn> g_buildSound;
-
-    static inline void LogHit(const char* funnel, void* ret) {
+    // v3 crashed: generic integer thunks on Play663/Play665/PlaySound clobbered
+    // the xmm registers that positioned in-world sounds pass floats in. This v4
+    // narrows to the ONE funnel with a known, FLOAT-FREE signature —
+    // BuildSoundDataFromDescriptor(BSAudioManager*, BSSoundHandle&,
+    // BSISoundDescriptor*, uint32_t) — which is also the UNIVERSAL descriptor
+    // funnel: the dump shows PlaySound(52939)+0x42 AND both Play overloads
+    // (67663/67665)+0x49 all call into it. So a single correctly-typed entry
+    // detour catches every descriptor-built sound on every path, with no xmm
+    // hazard (v2 already wrapped this exact signature without crashing).
+    static bool BuildSoundThunk(RE::BSAudioManager* a_self, RE::BSSoundHandle& a_handle,
+                                RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags);
+    static inline REL::Relocation<decltype(BuildSoundThunk)> g_buildSound;
+    static bool BuildSoundThunk(RE::BSAudioManager* a_self, RE::BSSoundHandle& a_handle,
+                                RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags) {
         const bool inEnch = g_inEnchCreate;
         const bool inWin  = NowMs() < g_enchWinUntilMs.load(std::memory_order_relaxed);
-        if (!inEnch && !inWin) {
-            return;  // not near an enchant build — this is ambience/music/UI/etc., ignore
+        if (inEnch || inWin) {
+            // Log the caller (which higher funnel dispatched this: Play663/Play665/
+            // PlaySound/other) + the descriptor identity (stable per sound) + whether
+            // it fired inside the synchronous enchant span or the async tail.
+            const auto base = REL::Module::get().base();
+            const auto rva  = reinterpret_cast<std::uintptr_t>(_ReturnAddress()) - base;
+            spdlog::warn("[SNDLOG] BuildSound caller=+0x{:X} desc={} flags=0x{:X} when={}",
+                         rva, static_cast<void*>(a_desc), a_flags,
+                         inEnch ? "SYNC(inEnch)" : "ASYNC(inWin)");
         }
-        const auto base = REL::Module::get().base();
-        const auto rva  = reinterpret_cast<std::uintptr_t>(ret) - base;
-        spdlog::warn("[SNDLOG] funnel={} caller=+0x{:X} sync={} (inEnch={} inWin={})",
-                     funnel, rva, inEnch ? "SYNC" : "ASYNC", inEnch, inWin);
-    }
-
-    static std::uintptr_t Play663Thunk(std::uintptr_t a, std::uintptr_t b, std::uintptr_t c,
-                                        std::uintptr_t d, std::uintptr_t e, std::uintptr_t f) {
-        LogHit("Play663", _ReturnAddress());
-        return g_play663(a, b, c, d, e, f);
-    }
-    static std::uintptr_t Play665Thunk(std::uintptr_t a, std::uintptr_t b, std::uintptr_t c,
-                                        std::uintptr_t d, std::uintptr_t e, std::uintptr_t f) {
-        LogHit("Play665", _ReturnAddress());
-        return g_play665(a, b, c, d, e, f);
-    }
-    static std::uintptr_t PlaySoundThunk(std::uintptr_t a, std::uintptr_t b, std::uintptr_t c,
-                                         std::uintptr_t d, std::uintptr_t e, std::uintptr_t f) {
-        LogHit("PlaySound", _ReturnAddress());
-        return g_playSound(a, b, c, d, e, f);
-    }
-    static std::uintptr_t BuildSoundThunk(std::uintptr_t a, std::uintptr_t b, std::uintptr_t c,
-                                          std::uintptr_t d, std::uintptr_t e, std::uintptr_t f) {
-        LogHit("BuildSound", _ReturnAddress());
-        return g_buildSound(a, b, c, d, e, f);
+        return g_buildSound(a_self, a_handle, a_desc, a_flags);  // LOG-ONLY: always pass through
     }
 
     void Install() {
@@ -5787,13 +5772,10 @@ namespace sndhook {
             return;
         }
         auto& tr = SKSE::GetTrampoline();
-        // Pure pass-through ENTRY detours (write_branch): catch the sound no
-        // matter which caller/thread/vtable dispatches it.
-        g_play663    = tr.write_branch<5>(REL::ID(67663).address(), Play663Thunk);
-        g_play665    = tr.write_branch<5>(REL::ID(67665).address(), Play665Thunk);
-        g_playSound  = tr.write_branch<5>(REL::ID(52939).address(), PlaySoundThunk);
+        // Single ENTRY detour on the universal descriptor funnel (clean 5-byte
+        // prologue steal: mov r11,rsp / push rbp / push rsi). Pass-through only.
         g_buildSound = tr.write_branch<5>(REL::ID(67666).address(), BuildSoundThunk);
-        spdlog::info("[SNDLOG] audio-funnel diagnostic installed (Play663/Play665/PlaySound/BuildSound, log-only)");
+        spdlog::info("[SNDLOG] BuildSound entry diagnostic installed (67666, log-only, async window)");
     }
 }  // namespace sndhook
 
