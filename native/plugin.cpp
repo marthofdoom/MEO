@@ -1323,7 +1323,7 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     g_inEnchCreate = true;  // [snd] mute ONLY the engine's incidental enchant SFX during this call
     auto* ench = isArmor ? com->AddArmorEnchantment(effects) : com->AddWeaponEnchantment(effects);
     g_inEnchCreate = false;
-    g_enchWinUntilMs.store(NowMs() + 700, std::memory_order_relaxed);  // [SNDLOG diag] catch async SFX
+    g_enchWinUntilMs.store(NowMs() + 1500, std::memory_order_relaxed);  // [SNDLOG diag] catch async SFX
     if (!ench) {
         spdlog::error("[rebuild] Add{}Enchantment null on {:08X}/{}",
                       isArmor ? "Armor" : "Weapon", a_base->GetFormID(), uid);
@@ -5726,24 +5726,22 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
 // (68163 dispatches indirectly), so the enchant SFX is played ASYNCHRONOUSLY,
 // after g_inEnchCreate clears — which the sync-only gate could never catch.
 //
-// v3 (entry-hook all four funnels with generic integer thunks) CRASHED on load:
-// Play/PlaySound pass positioned-sound floats in xmm, which the integer thunks
-// clobbered. v4 narrows to the ONE funnel with a known FLOAT-FREE signature,
-// BuildSoundDataFromDescriptor (67666) — also the UNIVERSAL descriptor funnel
-// (PlaySound+0x42 and both Play overloads +0x49 all call it) — so one correctly-
-// typed entry detour covers every path safely. Pass-through only; logs caller
-// RVA + descriptor ptr + SYNC/ASYNC inside a 700ms post-enchant window. Once the
-// descriptor identity + timing are known, this becomes the surgical fix.
+// MECHANISM LESSON (confirmed the hard way, v1/v3/v4 all CTD'd on load):
+// ENTRY-detours (write_branch) on these audio funnels CRASH — their prologues
+// capture rsp (BuildSound starts `mov r11,rsp` and frame-bases off r11; Play
+// starts `mov [rsp+0x10],rbx`), and relocating that stolen instruction into a
+// trampoline reached by a nested call shifts rsp, so the function reads its
+// args from the wrong place. Only CALL-SITE hooks (write_call) are safe here —
+// they leave the function prologue untouched. v2 proved write_call never CTDs.
+//
+// So v5 = call-site LOG hooks (write_call, MEO's proven method) on the three
+// sound-START call sites that all `call BuildSound`: both BSAudioManager::Play
+// overloads at +0x49 (67663/67665) and the global PlaySound at +0x42 (52939).
+// Same BuildSound signature at all three, so one thunk. Pass-through only; logs
+// caller RVA + descriptor ptr, gated to a 1500ms post-enchant window so it
+// finally catches the async enchant SFX. If none fire, escalate to BuildSound's
+// other 37 call sites. Descriptor ptr is the identity the eventual fix targets.
 namespace sndhook {
-    // v3 crashed: generic integer thunks on Play663/Play665/PlaySound clobbered
-    // the xmm registers that positioned in-world sounds pass floats in. This v4
-    // narrows to the ONE funnel with a known, FLOAT-FREE signature —
-    // BuildSoundDataFromDescriptor(BSAudioManager*, BSSoundHandle&,
-    // BSISoundDescriptor*, uint32_t) — which is also the UNIVERSAL descriptor
-    // funnel: the dump shows PlaySound(52939)+0x42 AND both Play overloads
-    // (67663/67665)+0x49 all call into it. So a single correctly-typed entry
-    // detour catches every descriptor-built sound on every path, with no xmm
-    // hazard (v2 already wrapped this exact signature without crashing).
     static bool BuildSoundThunk(RE::BSAudioManager* a_self, RE::BSSoundHandle& a_handle,
                                 RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags);
     static inline REL::Relocation<decltype(BuildSoundThunk)> g_buildSound;
@@ -5752,9 +5750,6 @@ namespace sndhook {
         const bool inEnch = g_inEnchCreate;
         const bool inWin  = NowMs() < g_enchWinUntilMs.load(std::memory_order_relaxed);
         if (inEnch || inWin) {
-            // Log the caller (which higher funnel dispatched this: Play663/Play665/
-            // PlaySound/other) + the descriptor identity (stable per sound) + whether
-            // it fired inside the synchronous enchant span or the async tail.
             const auto base = REL::Module::get().base();
             const auto rva  = reinterpret_cast<std::uintptr_t>(_ReturnAddress()) - base;
             spdlog::warn("[SNDLOG] BuildSound caller=+0x{:X} desc={} flags=0x{:X} when={}",
@@ -5765,17 +5760,20 @@ namespace sndhook {
     }
 
     void Install() {
-        // Address-library ids are 1.6.1170-specific; on any other runtime, skip
-        // rather than risk patching the wrong code.
+        // Address-library ids + call offsets are 1.6.1170-specific; on any other
+        // runtime, skip rather than risk patching the wrong code.
         if (REL::Module::get().version() != REL::Version(1, 6, 1170, 0)) {
             spdlog::warn("[SNDLOG] diag skipped — runtime is not 1.6.1170");
             return;
         }
         auto& tr = SKSE::GetTrampoline();
-        // Single ENTRY detour on the universal descriptor funnel (clean 5-byte
-        // prologue steal: mov r11,rsp / push rbp / push rsi). Pass-through only.
-        g_buildSound = tr.write_branch<5>(REL::ID(67666).address(), BuildSoundThunk);
-        spdlog::info("[SNDLOG] BuildSound entry diagnostic installed (67666, log-only, async window)");
+        // CALL-SITE hooks (safe): redirect each `call BuildSound` to our thunk.
+        // All three targets are the same function (67666), so g_buildSound (the
+        // original BuildSound address) is identical from each write_call.
+        g_buildSound = tr.write_call<5>(REL::ID(67663).address() + 0x49, BuildSoundThunk);  // Play overload A
+        tr.write_call<5>(REL::ID(67665).address() + 0x49, BuildSoundThunk);                  // Play overload B
+        tr.write_call<5>(REL::ID(52939).address() + 0x42, BuildSoundThunk);                  // global PlaySound
+        spdlog::info("[SNDLOG] call-site diagnostic installed (Play663/Play665/PlaySound -> BuildSound, log-only, 1500ms window)");
     }
 }  // namespace sndhook
 
