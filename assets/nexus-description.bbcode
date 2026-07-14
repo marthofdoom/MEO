@@ -1,4 +1,4 @@
-[center][b][size=4]This is a 1.0 candidate in active testing — if you play it, PLEASE send feedback or bug reports, and include the MEO.log from that session[/size][/b]
+[center][b][size=4]This is a 1.0 candidate in active testing, and much more complex than my previous mod, if you play it, PLEASE send feedback or bug reports, and include the MEO.log from that session[/size][/b]
 [i](Documents\My Games\Skyrim Special Edition\SKSE\MEO.log)[/i][/center]
 [line]
 
@@ -29,13 +29,19 @@ Built entirely on Linux with no Creation Kit and no xEdit: the plugin is generat
 [*]Address Library for SKSE Plugins[/*]
 [*]SkyUI[/*]
 [*]MCM Helper[/*]
-[*][url=https://dotnet.microsoft.com/download/dotnet/9.0].NET 9 Runtime (x64)[/url] — only for running MEO.Installer.exe once; a free Microsoft download. The plain "Run console apps" .NET Runtime is enough (the Desktop Runtime also works). Not needed in-game.[/*]
+[*][url=https://www.nexusmods.com/skyrimspecialedition/mods/76580]Synthesis[/url] — MEO ships a Synthesis patcher that adapts it to your load order (see Install). Synthesis carries its own .NET requirement, so there's nothing extra to install for MEO.[/*]
 [/list]
 Developed and tested on Skyrim SE 1.6.1170 against a Requiem-based list (LoreRim) and a pure-vanilla Steam Deck install. The bundled MEO.dll is part of the mod and required.
 
 [size=5][b]Install[/b][/size]
 
-Install the package with your mod manager near the end of the load order, then run [b]MEO.Installer.exe[/b] once from the mod's folder — it adapts MEO to YOUR load order (gem magnitudes and the perk tree). Re-run it after any load-order change. No FOMOD — the options are runtime MCM toggles. Upgrades are save-safe within a major line: the socket data lives in the co-save and migrates itself on load.
+[b]1.[/b] Install the package with your mod manager near the end of the load order, and enable [b]MEO.esp[/b].
+
+[b]2.[/b] Adapt MEO to your load order with [b]Synthesis[/b] — this replaces the old standalone installer, so there's no exe to run. In Synthesis, add MEO as a Git Repository patcher pointing to [url=https://github.com/marthofdoom/MEO]github.com/marthofdoom/MEO[/url] (project [i]installer/MEO.Synthesis/MEO.Synthesis.csproj[/i]), then run your Synthesis pipeline. It reads YOUR load order and derives the gem magnitudes and rebuilds the enchanting perk tree, writing everything into the Synthesis output — no separate patch esp to manage by hand.
+
+[b]3.[/b] Enable the Synthesis output in your load order (Synthesis normally does this for you) and play.
+
+Re-run Synthesis after any load-order change. No FOMOD — the options are runtime MCM toggles. Upgrades are save-safe within a major line: the socket data lives in the co-save and migrates itself on load.
 
 [size=5][b]FAQ[/b][/size]
 
@@ -60,3 +66,20 @@ Generic enchanted loot converts to a base item plus its gem as you encounter it;
 [b]More support behaviors[/b] — additional linked-gem support types (Reprisal, Siphon, Final Stand) once the current three are field-proven.
 
 [b]Broader hand-placed acquisition[/b] — more curated locations for the rare support gems.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

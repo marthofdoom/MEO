@@ -8,49 +8,46 @@ REQUIREMENTS
   * Address Library for SKSE Plugins
   * SkyUI
   * MCM Helper
-  * .NET 9 Runtime (x64) — ONLY to run MEO.Installer.exe once (not needed in
-    game). Free from Microsoft: https://dotnet.microsoft.com/download/dotnet/9.0
-    The "Run console apps" .NET Runtime is enough; the .NET Desktop Runtime also
-    works. If the installer says it can't find a runtime, install this and retry.
+  * Synthesis  (https://www.nexusmods.com/skyrimspecialedition/mods/76580)
+      MEO adapts itself to your load order through a Synthesis patcher (see
+      SETUP). Synthesis brings its own .NET dependency, so there is nothing
+      extra to install for MEO, and no program to run by hand.
   * No DLC required (Dawnguard/Dragonborn only add a few extra gems if present).
 
-RUNNING THE INSTALLER (required once, and again after any load-order change)
------------------------------------------------------------------------------
-MEO.Installer.exe adapts MEO to YOUR load order — nothing is hardcoded. It:
-  * replaces the enchanting perk tree's crafting perks with MEO's gem perks
-    (asking you, perk by perk, about anything unusual it finds; answers are
-    saved in "MEO - Patch.choices.json" — edit/delete it to change your mind),
-  * derives the gem calibration for your list and writes it to
-    SKSE/Plugins/MEO/meo_calibration.json — WITHOUT THIS FILE, LOOT
-    CONVERSION DOES NOTHING IN GAME.
+SETUP
+-----
+1. Install this mod with your mod manager, near the END of your load order,
+   and enable MEO.esp.
 
-IMPORTANT: the exe writes its output NEXT TO ITSELF. Always run it from the
-folder it was installed to — never from Downloads or a temp folder.
+2. Adapt MEO to YOUR load order with Synthesis (this replaces the old
+   standalone installer — there is no exe):
+     a. Open Synthesis.
+     b. Add a new patcher -> Git Repository, and point it at:
+          https://github.com/marthofdoom/MEO
+        Project:  installer/MEO.Synthesis/MEO.Synthesis.csproj
+        (Synthesis downloads and builds it for you.)
+     c. Run your Synthesis pipeline.
+   Synthesis reads your load order and:
+     * derives every gem's magnitude curve, elemental recipe, and rank ladder
+       from the enchantments your list actually ships, and
+     * rewrites the enchanting perk tree to MEO's gem perks,
+   writing all of it into the Synthesis output (a patch plugin + the file
+   SKSE/Plugins/MEO/meo_calibration.json). WITHOUT THE CALIBRATION FILE, LOOT
+   CONVERSION DOES NOTHING IN GAME — so always run Synthesis after installing
+   MEO, and again after any load-order change.
 
-WITH MO2 (modlists):
-  1. Install this mod and enable it (left pane) + MEO.esp (right pane).
-  2. Right-click the mod -> Open in Explorer -> run MEO.Installer.exe.
-     It finds the MO2 instance above it automatically.
-  3. Enable the generated "MEO - Patch.esp" (right pane, near the end).
+3. Enable the Synthesis output in your load order (Synthesis normally does this
+   for you) and play.
 
-WITHOUT A MOD MANAGER (vanilla / manual / Steam Deck):
-  1. Unzip this whole archive into the game's Data folder.
-  2. Run Data/MEO.Installer.exe (on Linux/Deck: with the same Proton/Wine
-     the game uses, from a terminal if possible so you can read the output).
-     It detects the game folder above it and uses the game's own plugins.txt.
-  3. Enable "MEO - Patch.esp" in the in-game CREATIONS/MODS menu.
+DID IT WORK?
+------------
+In game, the SKSE log (Documents/My Games/Skyrim Special Edition/SKSE/MEO.log)
+should say "calibration: N family recipe(s), M conversion(s) loaded" — not
+"no calibration file". Enchanting stations open the gem menu; pre-enchanted
+loot you pick up converts to a base item plus its gem.
 
-DID IT WORK? Check that these files now exist next to the exe:
-  MEO - Patch.esp
-  MEO - Patch.choices.json
-  SKSE/Plugins/MEO/meo_calibration.json      <- the important one
-If meo_calibration.json is missing, the run failed partway: run the exe from
-a terminal and read the "CALIBRATION FAILED" message it prints.
-In game, the SKSE log (Documents/My Games/.../SKSE/MEO.log) should say
-"calibration: N family recipe(s), M conversion(s) loaded" — not
-"no calibration file".
-
-The installer never launches or touches the game — it only reads your load
-order and writes the files above. If Windows SmartScreen warns about an
-unrecognized app: the exe is built by public GitHub CI from the sources at
-https://github.com/marthofdoom/MEO (Details -> Run anyway).
+NOTES
+-----
+No FOMOD — all options are runtime MCM toggles (MCM -> marth Enchanting
+Overhaul). Upgrades are save-safe within a major line: socket data lives in the
+co-save and migrates itself on load. Gems are earned, never bought or sold.
