@@ -224,17 +224,11 @@ thread_local bool g_inEnchCreate = false;
 // deck), so the sync flag alone can't gate it. Global (not thread_local): the
 // async sound may play on the audio/main thread, not the builder's thread.
 std::atomic<std::uint64_t> g_enchWinUntilMs{0};
-// [snd] Learned enchant-SFX descriptor(s). A sound object that machine-guns —
-// fires 2+ times in ~1s INSIDE an enchant window — is the enchant SFX (nothing
-// else in the game double-taps like that; marth's cluster insight). Learned, not
-// hardcoded, so it adapts to any list/mod's enchant sound. Once learned it is
-// muted ALWAYS, not window-gated: the SFX is async and often lands AFTER the
-// window closes (deck-confirmed "still not muted"), so a suppress-window leaks.
-// Lock-free (no mutex): this sits on the hot path of EVERY 2D sound, and a lock
-// held there during teardown hangs the game on exit. Heap ptrs, per session.
-constexpr int      kMaxLearnedSnd = 8;
-std::atomic<void*> g_learnedSnd[kMaxLearnedSnd] = {};
-std::atomic<int>   g_learnedSndN{0};
+// [SNDID diag] Runtime suppression was abandoned — the enchant SFX is async and
+// its timing vs any window/cluster is too unreliable to gate on (v6 caught 2/36,
+// v7 caught 0/24). Pivot (marth): IDENTIFY the sound form, then dummy it
+// statically (MEO.esp override or per-list installer null). This build just logs
+// the SNDR FormID + editorID of in-window sounds so we learn what to silence.
 static inline std::uint64_t NowMs() {
     return static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1333,7 +1327,7 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     g_inEnchCreate = true;  // [snd] mute ONLY the engine's incidental enchant SFX during this call
     auto* ench = isArmor ? com->AddArmorEnchantment(effects) : com->AddWeaponEnchantment(effects);
     g_inEnchCreate = false;
-    g_enchWinUntilMs.store(NowMs() + 1500, std::memory_order_relaxed);  // [snd] open the async-SFX suppress window
+    g_enchWinUntilMs.store(NowMs() + 3000, std::memory_order_relaxed);  // [SNDID diag] wide window to catch the async SFX for identification
     if (!ench) {
         spdlog::error("[rebuild] Add{}Enchantment null on {:08X}/{}",
                       isArmor ? "Armor" : "Weapon", a_base->GetFormID(), uid);
@@ -5742,81 +5736,67 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
 // nested call shifts rsp and the function reads args from the wrong slot. Only
 // CALL-SITE hooks (write_call) are safe; they leave the prologue untouched.
 //
-// FIX: one write_call at PlaySound+0x42 (the descriptor funnel for that path).
-// LEARN by cluster fingerprint (marth): a descriptor that machine-guns — fires
-// >=2x within ~1s INSIDE an enchant window — is the enchant SFX; nothing else in
-// the game double-taps like that, and only the PlaySound (2D) path is watched so
-// 3D ambience can't pollute it. Once learned, mute that descriptor ALWAYS (not
-// window-gated): the SFX is async and routinely lands after the window closes, so
-// a suppress-window leaks the racket (deck-confirmed). Trade-off marth accepted:
-// a manual table enchant of the same sound also goes silent. Everything is lock-
-// free — a mutex on this hot path hangs the game on exit.
+// IDENTIFY (marth's dummy-replace path): one write_call at PlaySound+0x42. For a
+// sound built inside a wide (3s) post-enchant window, resolve its BSISoundDescriptor
+// back to the owning SNDR form (scan TESDataHandler's SNDR array once per distinct
+// descriptor, capped) and log FormID + editorID. Pure logging — no return false, no
+// mutex — so it cannot crash or freeze. The enchant SFX shows up as the SNDR that
+// recurs across enchant bursts; that FormID/editorID is what MEO then silences
+// statically (MEO.esp SNDR override, or the installer nulls it per-list).
 namespace sndhook {
-    // Lock-free single-candidate cluster tracker (learning phase only). No mutex:
-    // this runs on the hot audio path and any lock here risks a teardown hang.
-    static std::atomic<void*>         g_candDesc{nullptr};
-    static std::atomic<std::uint64_t> g_candLast{0};
-    static std::atomic<int>           g_candRun{0};
-    static constexpr std::uint64_t    kClusterGapMs = 1000;  // "rapid" = same desc within 1s
-    static constexpr int              kClusterMin   = 2;     // 2 rapid plays = the enchant machine-gun
+    static std::atomic<int>   g_idCount{0};        // distinct in-window descriptors logged (cap)
+    static std::atomic<void*> g_idSeen[12] = {};   // dedup by descriptor
+    static bool AlreadySeen(void* d) {
+        const int n = g_idCount.load(std::memory_order_acquire);
+        for (int i = 0; i < n && i < 12; ++i) {
+            if (g_idSeen[i].load(std::memory_order_relaxed) == d) return true;
+        }
+        return false;
+    }
 
     static bool BuildSoundThunk(RE::BSAudioManager* a_self, RE::BSSoundHandle& a_handle,
                                 RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags);
     static inline REL::Relocation<decltype(BuildSoundThunk)> g_buildSound;
     static bool BuildSoundThunk(RE::BSAudioManager* a_self, RE::BSSoundHandle& a_handle,
                                 RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags) {
-        if (a_desc) {
-            // (1) Already learned? Mute ALWAYS (not window-gated — async SFX leaks a window).
-            const int n = g_learnedSndN.load(std::memory_order_acquire);
-            for (int i = 0; i < n; ++i) {
-                if (g_learnedSnd[i].load(std::memory_order_relaxed) == a_desc) {
-                    return false;  // enchant SFX — a "sound failed to build" the game handles as silence
-                }
-            }
-            // (2) Learn: a descriptor that machine-guns (>=kClusterMin plays within
-            //     kClusterGapMs of each other) INSIDE an enchant window is the SFX.
-            const bool inWin = g_inEnchCreate ||
-                               NowMs() < g_enchWinUntilMs.load(std::memory_order_relaxed);
-            if (inWin) {
-                const auto now = NowMs();
-                if (g_candDesc.load(std::memory_order_relaxed) == a_desc &&
-                    now - g_candLast.load(std::memory_order_relaxed) <= kClusterGapMs) {
-                    const int run = g_candRun.fetch_add(1, std::memory_order_relaxed) + 1;
-                    g_candLast.store(now, std::memory_order_relaxed);
-                    if (run >= kClusterMin) {
-                        const int idx = g_learnedSndN.load(std::memory_order_relaxed);
-                        if (idx < kMaxLearnedSnd) {
-                            g_learnedSnd[idx].store(a_desc, std::memory_order_relaxed);
-                            g_learnedSndN.store(idx + 1, std::memory_order_release);
-                            spdlog::info("[snd] learned enchant SFX descriptor {} (cluster of {}) — muting henceforth",
-                                         static_cast<void*>(a_desc), run);
+        const bool inWin = g_inEnchCreate ||
+                           NowMs() < g_enchWinUntilMs.load(std::memory_order_relaxed);
+        if (inWin && a_desc && !AlreadySeen(a_desc)) {
+            const int idx = g_idCount.load(std::memory_order_relaxed);
+            if (idx < 12) {
+                g_idSeen[idx].store(a_desc, std::memory_order_relaxed);
+                g_idCount.store(idx + 1, std::memory_order_release);
+                // Resolve descriptor -> SNDR form (bounded: only runs for a new descriptor,
+                // at most 12 times total, never at shutdown since it's in-window only).
+                std::uint32_t fid  = 0;
+                const char*   edid = "";
+                if (auto* dh = RE::TESDataHandler::GetSingleton()) {
+                    for (auto* snd : dh->GetFormArray<RE::BGSSoundDescriptorForm>()) {
+                        if (snd && snd->soundDescriptor == a_desc) {
+                            fid  = snd->GetFormID();
+                            edid = snd->GetFormEditorID();
+                            break;
                         }
-                        g_candDesc.store(nullptr, std::memory_order_relaxed);
-                        g_candRun.store(0, std::memory_order_relaxed);
-                        return false;  // mute the lock-in play too
                     }
-                } else {
-                    // new candidate (different desc, or too long since last play)
-                    g_candDesc.store(a_desc, std::memory_order_relaxed);
-                    g_candLast.store(now, std::memory_order_relaxed);
-                    g_candRun.store(1, std::memory_order_relaxed);
                 }
+                spdlog::warn("[SNDID] in-window sound desc={} flags=0x{:X} -> SNDR {:08X} '{}'",
+                             static_cast<void*>(a_desc), a_flags, fid, edid ? edid : "");
             }
         }
-        return g_buildSound(a_self, a_handle, a_desc, a_flags);
+        return g_buildSound(a_self, a_handle, a_desc, a_flags);  // pure pass-through
     }
 
     void Install() {
         // Address-library id + call offset are 1.6.1170-specific; on any other
         // runtime, skip rather than risk patching the wrong code.
         if (REL::Module::get().version() != REL::Version(1, 6, 1170, 0)) {
-            spdlog::warn("[snd] enchant-SFX suppressor skipped — runtime is not 1.6.1170");
+            spdlog::warn("[SNDID] identifier skipped — runtime is not 1.6.1170");
             return;
         }
         auto& tr = SKSE::GetTrampoline();
         // CALL-SITE hook (safe): redirect PlaySound's `call BuildSound` to our thunk.
         g_buildSound = tr.write_call<5>(REL::ID(52939).address() + 0x42, BuildSoundThunk);
-        spdlog::info("[snd] enchant-SFX suppressor installed (PlaySound path, descriptor-learning)");
+        spdlog::info("[SNDID] sound identifier installed (PlaySound path, log-only)");
     }
 }  // namespace sndhook
 
