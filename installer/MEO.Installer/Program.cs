@@ -1267,6 +1267,18 @@ static class Commands
             name.Length > baseName.Length &&
             name.StartsWith(baseName, StringComparison.OrdinalIgnoreCase);
 
+        // Prefix-enchanted generics (marth's blocker follow-up, 2026-07-13):
+        // the turn-undead line ("Blessed / Sanctified / Hallowed / Holy Iron
+        // Sword") puts the enchant word BEFORE the item, so its name ENDS WITH
+        // the template root's name instead of starting with it — every rung
+        // above is suffix-of-name shaped and misses all 249. Root name + shared
+        // ENCH + a template root is the same corroboration discipline as the
+        // renamed-base rung, just mirrored.
+        static bool RootSuffixNamed(string? name, string? baseName) =>
+            name is { Length: > 0 } && baseName is { Length: > 0 } &&
+            name.Length > baseName.Length &&
+            name.EndsWith(baseName, StringComparison.OrdinalIgnoreCase);
+
         // Fallback for lists that rebuild loot without template links (Requiem
         // replaces vanilla enchanted variants with untemplated REQ_ records):
         // "<unenchanted item's name> of <suffix>" is the loot generator's
@@ -1339,6 +1351,7 @@ static class Commands
         static bool OfShaped(string? name) =>
             name is { Length: > 4 } && name.Contains(" of ", StringComparison.Ordinal);
         int renamedBase = 0;
+        int prefixNamed = 0;
         foreach (var r in data.Raw)
         {
             FormKey? baseKey = null;
@@ -1357,6 +1370,15 @@ static class Commands
                     baseKey = r.Root;
                     renamedBase++;
                 }
+                // Prefix-enchanted generics (turn-undead line): name ends with
+                // the root's name. Same gate (shared ENCH + template root); the
+                // root is the unenchanted conversion base.
+                else if (baseKey is null && r.Root is not null &&
+                         RootSuffixNamed(r.Name, r.BaseName))
+                {
+                    baseKey = r.Root;
+                    prefixNamed++;
+                }
             }
             var cls = Classify(r.Ench, baseKey is not null);
             // m25: partial generics (family + companions we don't cover) are
@@ -1368,6 +1390,8 @@ static class Commands
         }
         if (renamedBase > 0)
             Console.WriteLine($"census: {renamedBase} renamed-base generic(s) reclassified via template root");
+        if (prefixNamed > 0)
+            Console.WriteLine($"census: {prefixNamed} prefix-enchanted generic(s) (turn-undead line) reclassified via root suffix");
         // Untemplated twins: NPC-hand records (Dremora fire blades etc.) share
         // a stripped generic's display name but not its template shape. They
         // reach players as kill loot, so surface them for a ruling instead of

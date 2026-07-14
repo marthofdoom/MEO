@@ -4,6 +4,25 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.1 — conversion blocker + enchanting XP from gameplay (m37, 2026-07-13)
+- **Vendor-stock conversion fixed** (the "Major Wielding / Minor Alteration /
+  Major Knight don't convert" blocker): `ConvertInventory` used to bail on any
+  non-actor holder, so the vendor merchant-container sweep had been a silent
+  no-op since m23 — which is exactly where a low-level player meets those
+  fortify-skill armors. Container holders now convert too, via the engine's own
+  flow (`PlaceObjectAtMe` → stamp → `AddObjectToContainer` with fromRefr).
+  Container sweeps log a count so this failure class self-diagnoses.
+- **Enchanting XP from regular gameplay** (soul gems are no longer the only
+  source): skill XP now also comes from discovering a new gem family (one-time
+  each), destroying a gem (× level), each gem level-up (× new level), and a
+  tiny per-kill trickle scaled by Gem XP earned. Socketing grants none (it was
+  abusable). All knobs INI-tunable (`fDiscover/Destroy/Level/GemXpSkillXP`).
+  Co-save bumped to v11; older saves seed already-held families silently.
+- **Installer census: turn-undead line recovered** (249 items): the
+  "Blessed / Sanctified / Hallowed / Holy …" weapons are prefix-enchanted, so
+  their names *end* with the base name and every suffix-shaped rung missed them.
+  Added a root-suffix rung with the same shared-ENCH + template-root gate.
+
 ## v1.0.0 — first stable release (2026-07-13)
 The full system, feature-complete: socketable leveling gems (I–V, birthing),
 the hidden Gem Pouch, loot conversion, per-load-order calibration, the rebuilt
