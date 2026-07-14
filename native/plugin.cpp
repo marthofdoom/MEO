@@ -287,7 +287,7 @@ static void MarkReequippedRef(RE::Actor* a_actor) {
     slot->handle.store(h, std::memory_order_relaxed);
     slot->until.store(until, std::memory_order_relaxed);
 }
-static bool IsRefMuted(std::uint32_t a_handle) {
+[[maybe_unused]] static bool IsRefMuted(std::uint32_t a_handle) {
     if (a_handle == 0) {
         return false;
     }
@@ -5841,27 +5841,30 @@ namespace sndhook {
         return false;
     }
 
-    // ── Target-based gate (v15) ────────────────────────────────────────
-    // The deck data reframed the problem: the racket is NOT a rate issue and NOT
-    // MEO's own re-equip alone. On cell-load / barter-open, EVERY already-enchanted
-    // actor in the area attaches its gear's 3D in the same frame → a burst of
-    // enchant-glow ShaderReferenceEffect::Init calls. In the 59-init load burst,
-    // 58 were NON-PLAYER (NPC gear) and exactly 1 was the player. So the gate is by
-    // WHO the glow is on:
-    //   • NON-PLAYER target  → suppress ALWAYS. Deterministic full silence of the
-    //     NPC-gear racket (load AND vendor-area NPCs). Cost: NPC enchanted-weapon
-    //     draw hums go silent in combat too — accepted noise reduction.
-    //   • PLAYER target      → suppress ONLY while the player is inside a MEO
-    //     re-equip window (IsRefMuted — MarkReequippedRef stamps the player on
-    //     EquipCycleWorn). That kills the player's own bulk re-equip burst but
-    //     leaves a DELIBERATE draw (player target, no active re-equip window)
-    //     humming — marth's hard requirement. The player's lone load-time glow
-    //     fires ~5s before the window opens, so it hums once = fine (isolated,
-    //     indistinguishable from a normal draw).
-    // The old wornObject!=null filter is GONE — it is null for worn enchant glows
-    // (the v13 bug). Player identity is resolved by comparing the resolved target
-    // ref against PlayerCharacter::GetSingleton() (pointer compare — no reliance on
-    // hardcoded/ per-save handle bits).
+    // ── Armor-vs-weapon gate (v16) — mod-proof, via the enchant type ────
+    // Requirement refinement (marth): keep WEAPON enchant hums (the combat draw
+    // cue, player AND NPC), kill only the ARMOR racket. You never "draw" armor —
+    // its ambient only ever fires as noise when the worn 3D streams in on load /
+    // area-enter; a weapon's fires on an actual unsheathe. So the true, mod-proof
+    // distinguisher is the ENCHANTMENT'S CASTING TYPE, not FormIDs and not who
+    // wears it:
+    //   • Armor enchantments are CONSTANT-EFFECT  → a persistent ActiveEffect
+    //     drives the worn shimmer. Its ShaderReferenceEffect::controller is the
+    //     ActiveEffect's embedded ActiveEffectReferenceEffectController (a member
+    //     at ActiveEffect+0x08), and ActiveEffect::spell (the EnchantmentItem) has
+    //     GetCastingType() == kConstantEffect. → SUPPRESS.
+    //   • Weapon enchantments are FIRE-AND-FORGET (applied on hit) → no persistent
+    //     shimmer ActiveEffect, so the controller is NOT an ActiveEffect one (or
+    //     the enchantment is not constant-effect). → KEEP (the draw cue).
+    // This drops player-vs-NPC and the ref-set entirely. wornObject is null at this
+    // point (the v13 bug) and the sound follows the actor root, so neither the item
+    // nor its node is available here — the enchantment reached through the
+    // controller is the reliable signal. Everything is guarded: the ActiveEffect
+    // is only dereferenced when the controller's vtable exactly matches
+    // ActiveEffectReferenceEffectController, so a non-ActiveEffect controller can
+    // never be misread. A rich census line is logged per init so the deck run
+    // verifies the split (player weapon glow -> PLAY, NPC armor glows -> MUTE).
+    static std::uintptr_t g_aeCtrlVtable = 0;  // set in Install (1.6.1170 only)
 
     static bool BuildSoundThunk(RE::BSAudioManager* a_self, RE::BSSoundHandle* a_handle,
                                 RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags) {
@@ -5884,35 +5887,53 @@ namespace sndhook {
             return g_buildSound(a_self, a_handle, a_desc, a_flags);
         }
 
-        // Resolve the glow's target ref and decide by identity.
-        RE::TESObjectREFR* tgtRef = fx ? fx->target.get().get() : nullptr;
-        const bool         isPlayer =
-            tgtRef && tgtRef == RE::PlayerCharacter::GetSingleton();
-        const std::uint32_t tgtHandle = fx ? fx->target.native_handle() : 0;
-
-        bool suppress;
-        const char* why;
-        if (!isPlayer) {
-            suppress = true;   why = "npc";                 // NPC gear — always
-        } else if (IsRefMuted(tgtHandle)) {
-            suppress = true;   why = "player-reequip";      // MEO bulk re-equip
-        } else {
-            suppress = false;  why = "player-draw";         // deliberate draw — hum
+        // Resolve the controller and, if it is an ActiveEffect one, the driving
+        // enchantment's casting type. All reads guarded by the vtable match.
+        std::uintptr_t ctrlVt      = 0;
+        bool           isAECtrl    = false;
+        int            castingType = -1;   // -1 = unknown; 0 = const-effect (armor)
+        RE::FormID     spellID     = 0;
+        auto*          ctrl        = fx ? fx->controller : nullptr;
+        if (ctrl) {
+            ctrlVt = *reinterpret_cast<std::uintptr_t*>(ctrl);
+            if (g_aeCtrlVtable && ctrlVt == g_aeCtrlVtable) {
+                isAECtrl = true;
+                // controller is ActiveEffect::hitEffectController (member at +0x08).
+                auto* ae = reinterpret_cast<RE::ActiveEffect*>(
+                    reinterpret_cast<std::uintptr_t>(ctrl) - 0x08);
+                if (auto* spell = ae->spell) {
+                    spellID     = spell->GetFormID();
+                    castingType = static_cast<int>(spell->GetCastingType());
+                }
+            }
         }
 
-        // ── DIAG v15: bounded census so we can verify on the deck. ──
+        // Armor = constant-effect enchant (a persistent ActiveEffect shimmer).
+        const bool isArmorEnchant =
+            isAECtrl &&
+            castingType == static_cast<int>(RE::MagicSystem::CastingType::kConstantEffect);
+        const bool suppress = isArmorEnchant;
+
+        // ── DIAG v16: rich census so the deck run verifies (and, if the signal
+        // is imperfect, tells us exactly what to adjust). ──
         const int n = g_diag.fetch_add(1, std::memory_order_relaxed) + 1;
         if (n <= 200) {
-            const RE::FormID efshID = (fx && fx->effectData) ? fx->effectData->GetFormID() : 0;
-            spdlog::info("[diag-init #{}] SNDR={:08X} EFSH={:08X} target={:08X} {} -> {}",
-                         n, sndrID, efshID, tgtHandle, why, suppress ? "MUTE" : "PLAY");
+            const RE::FormID    efshID    = (fx && fx->effectData) ? fx->effectData->GetFormID() : 0;
+            const std::uint32_t tgtHandle = fx ? fx->target.native_handle() : 0;
+            RE::TESObjectREFR*  tgtRef    = fx ? fx->target.get().get() : nullptr;
+            const bool          isPlayer  = tgtRef && tgtRef == RE::PlayerCharacter::GetSingleton();
+            const std::uintptr_t vtOff    = ctrlVt ? (ctrlVt - REL::Module::get().base()) : 0;
+            spdlog::info("[diag-init #{}] SNDR={:08X} EFSH={:08X} target={:08X} plr={} "
+                         "ctrlVt=+0x{:X} aeCtrl={} cast={} spell={:08X} -> {}",
+                         n, sndrID, efshID, tgtHandle, isPlayer ? 1 : 0, vtOff,
+                         isAECtrl ? 1 : 0, castingType, spellID, suppress ? "MUTE" : "PLAY");
         }
 
         if (suppress) {
             const int m = g_muted.fetch_add(1, std::memory_order_relaxed) + 1;
             if (m <= 60) {  // bounded confirmation log
-                spdlog::info("[snd] enchant hum muted ({}, SNDR={:08X}, target={:08X})",
-                             why, sndrID, tgtHandle);
+                spdlog::info("[snd] armor enchant hum muted (const-effect, SNDR={:08X}, spell={:08X})",
+                             sndrID, spellID);
             }
             return false;  // engine's own no-ambient-sound path; glow still attaches
         }
@@ -5941,8 +5962,13 @@ namespace sndhook {
                           resolved, target);
             return;
         }
+        // Cache the ActiveEffectReferenceEffectController vtable — the gate reads
+        // the enchantment behind an effect's controller ONLY when this matches, so
+        // a non-ActiveEffect controller is never misread.
+        g_aeCtrlVtable = REL::ID(205809).address();  // VTABLE_ActiveEffectReferenceEffectController (AE)
+
         g_buildSound = SKSE::GetTrampoline().write_call<5>(site, BuildSoundThunk);
-        spdlog::info("[snd] v15 enchant-hum gate installed (ShaderReferenceEffect::Init->BuildSound) — target-based: mute NPC + player-in-reequip, keep deliberate player draws");
+        spdlog::info("[snd] v16 enchant-hum gate installed (ShaderReferenceEffect::Init->BuildSound) — armor(const-effect)=mute, weapon=keep; aeCtrlVt=0x{:X}", g_aeCtrlVtable);
     }
 }  // namespace sndhook
 
