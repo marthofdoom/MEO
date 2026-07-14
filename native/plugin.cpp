@@ -5770,13 +5770,21 @@ namespace sndhook {
                 // at most 12 times total, never at shutdown since it's in-window only).
                 // Match either the form pointer itself OR its inner soundDescriptor —
                 // PlaySound may hand us either.
+                // BGSSoundDescriptorForm multiply-inherits BSISoundDescriptor at +0x28, and
+                // its inner BGSSoundDescriptor also IS-A BSISoundDescriptor (at offset 0). The
+                // game may hand BuildSound EITHER subobject, so compare with proper typed casts
+                // (the compiler applies the base-offset adjustment) — a void* compare misses the
+                // form-subobject case, which is what left v8/v9 at SNDR 00000000.
                 std::uint32_t fid  = 0;
                 const char*   edid = "";
                 void*         dp   = static_cast<void*>(a_desc);
                 if (auto* dh = RE::TESDataHandler::GetSingleton()) {
                     for (auto* snd : dh->GetFormArray<RE::BGSSoundDescriptorForm>()) {
-                        if (snd && (static_cast<void*>(snd) == dp ||
-                                    static_cast<void*>(snd->soundDescriptor) == dp)) {
+                        if (!snd) continue;
+                        const bool hitForm  = static_cast<RE::BSISoundDescriptor*>(snd) == a_desc;
+                        const bool hitInner = snd->soundDescriptor &&
+                                              static_cast<RE::BSISoundDescriptor*>(snd->soundDescriptor) == a_desc;
+                        if (hitForm || hitInner) {
                             fid  = snd->GetFormID();
                             edid = snd->GetFormEditorID();
                             break;
