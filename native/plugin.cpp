@@ -1557,7 +1557,7 @@ void EquipCycleWorn(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDat
     em->UnequipObject(a_owner, a_base, a_xList, 1, slot, false, false, false, true);
     em->EquipObject(a_owner, a_base, a_xList, 1, slot, false, false, false, true);
     g_inEquipCycle = false;
-    g_equipWinUntilMs.store(NowMs() + 500, std::memory_order_relaxed);  // async tail for the diag
+    g_equipWinUntilMs.store(NowMs() + 120, std::memory_order_relaxed);  // 120ms suppress tail (marth)
 }
 
 // ── M4b: every unique gem owns its own Gem XP pool (DESIGN §3) ────────
@@ -3760,7 +3760,7 @@ namespace menuhook {
     }
 
     void Install() {
-        SKSE::AllocTrampoline(512);  // menuhook (3 call-hooks) + sndhook (3 call-hooks)
+        SKSE::AllocTrampoline(2048);  // menuhook (3 call-hooks) + sndhook (up to 40 BuildSound call-hooks)
         write_thunk_call<D3DInitHook>();
         write_thunk_call<DXGIPresentHook>();
         write_thunk_call<InputDispatchHook>();
@@ -4192,7 +4192,7 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
             RE::ActorEquipManager::GetSingleton()->EquipObject(
                 actor, hit.tgt->base, nullptr, 1, nullptr, false, false, false, true);
             g_inEquipCycle = false;
-            g_equipWinUntilMs.store(NowMs() + 500, std::memory_order_relaxed);
+            g_equipWinUntilMs.store(NowMs() + 120, std::memory_order_relaxed);
             if (auto* wxl = FindWornXListFor(actor, hit.tgt->base)) {
                 ApplyWornAbility(actor, hit.tgt->base, wxl, hit.left);
             }
@@ -5761,7 +5761,7 @@ namespace sndhook {
         const bool inWin   = NowMs() < g_equipWinUntilMs.load(std::memory_order_relaxed);
         if (inCycle || inWin) {
             const int c = g_eqLog.load(std::memory_order_relaxed);
-            if (c < 48) {  // bounded log so we can read the funnel + timing
+            if (c < 64) {  // bounded log so we can read the funnel that carries the hum
                 g_eqLog.store(c + 1, std::memory_order_relaxed);
                 const auto rva = reinterpret_cast<std::uintptr_t>(_ReturnAddress()) -
                                  REL::Module::get().base();
@@ -5769,9 +5769,7 @@ namespace sndhook {
                              rva, static_cast<void*>(a_desc), a_flags,
                              inCycle ? "CYCLE(sync)" : "win(async)");
             }
-            if (inCycle) {
-                return false;  // mute the hum synchronously — only during MEO's equip
-            }
+            return false;  // mute — during MEO's equip OR its 120ms tail
         }
         return g_buildSound(a_self, a_handle, a_desc, a_flags);
     }
@@ -5784,11 +5782,35 @@ namespace sndhook {
             return;
         }
         auto& tr = SKSE::GetTrampoline();
-        // CALL-SITE hooks (safe): all three sound-start paths that call BuildSound.
-        g_buildSound = tr.write_call<5>(REL::ID(67663).address() + 0x49, BuildSoundThunk);  // Play A (positional)
-        tr.write_call<5>(REL::ID(67665).address() + 0x49, BuildSoundThunk);                  // Play B (positional)
-        tr.write_call<5>(REL::ID(52939).address() + 0x42, BuildSoundThunk);                  // global PlaySound
-        spdlog::info("[EQSND] re-equip hum gate installed (Play663/Play665/PlaySound, sync-suppress + async log)");
+        // ALL BuildSoundDataFromDescriptor(67666) direct call sites (from the
+        // decrypted 1.6.1170 .text): whatever funnel the hum takes, it builds its
+        // sound through one of these. Guarded — only patch a site that is actually
+        // an E8 call, so a mis-attributed offset can't corrupt code.
+        static constexpr struct { std::uint64_t id; std::uint32_t off; } kSites[] = {
+            {15010,0x3F0},{15768,0x422},{17922,0x491},{18102,0x11CE},{19828,0x35A},
+            {32058,0x1C3},{32061,0x80},{33040,0x5A},{33041,0x54},{34438,0x79},
+            {34912,0x113},{35128,0x194},{35128,0x3CD},{35128,0x5A9},{35130,0xBF},
+            {35139,0x11E},{36208,0x153},{36239,0x49},{37196,0x14A},{37348,0x403},
+            {37348,0x966},{37744,0x4A},{37968,0xD1},{37997,0x13C},{38818,0x245},
+            {39402,0x7F},{39846,0x240},{40595,0x50},{40749,0x18A},{43855,0x94},
+            {43869,0x4C7},{43976,0x62},{44166,0x6E7},{44272,0x30},{51948,0x3D9},
+            {52939,0x42},{52940,0x3E},{53093,0x548},{67663,0x49},{67665,0x49},
+        };
+        int hooked = 0, skipped = 0;
+        for (const auto& s : kSites) {
+            const auto addr = REL::ID(s.id).address() + s.off;
+            if (*reinterpret_cast<const std::uint8_t*>(addr) != 0xE8) {
+                ++skipped;
+                continue;  // not a direct call here — never patch the wrong bytes
+            }
+            const auto orig = tr.write_call<5>(addr, BuildSoundThunk);
+            if (!g_buildSound.address()) {
+                g_buildSound = orig;  // all sites call the same BuildSound
+            }
+            ++hooked;
+        }
+        spdlog::info("[EQSND] re-equip hum gate installed at {} BuildSound call sites ({} skipped, 120ms window)",
+                     hooked, skipped);
     }
 }  // namespace sndhook
 
