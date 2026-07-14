@@ -5711,39 +5711,41 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
 // (ambience, music, dialogue, combat, UI) sees a pure pass-through. Both
 // funnels are covered: PlaySound(editorID) and the descriptor builder that
 // BSAudioManager::Play routes through.
+// The enchant SFX flows: Add*Enchantment -> ... -> BSAudioManager::Play
+// (AE ids 67663/67665) -> BuildSoundDataFromDescriptor, a DIRECT `call` at
+// Play+0x49. We hook that CALL SITE with write_call (MEO's proven method —
+// no entry-detour, no prologue relocation) and drop the build ONLY while
+// g_inEnchCreate is set. Verified against the decrypted 1.6.1170 .text:
+//   Play 67663 @0x140CB0F60 +0x49 = call 0x140CB11A0 (BuildSoundDataFromDescriptor)
+//   Play 67665 @0x140CB1110 +0x49 = call 0x140CB11A0  (the other Play overload)
 namespace sndhook {
-    struct BuildSoundHook {
-        static bool thunk(RE::BSAudioManager* a_self, RE::BSSoundHandle& a_handle,
-                          RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags) {
-            if (g_inEnchCreate) {
-                spdlog::warn("[SNDSUPPRESS] dropped BuildSoundDataFromDescriptor "
-                             "(desc={}) during enchant-create", static_cast<void*>(a_desc));
-                return false;  // report "not built" — caller just plays nothing
-            }
-            return func(a_self, a_handle, a_desc, a_flags);
+    // Matches BSAudioManager::BuildSoundDataFromDescriptor(BSSoundHandle&,
+    // BSISoundDescriptor*, uint32_t) as a member (this in rcx).
+    static bool BuildSoundThunk(RE::BSAudioManager* a_self, RE::BSSoundHandle& a_handle,
+                                RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags);
+    static inline REL::Relocation<decltype(BuildSoundThunk)> g_buildSound;
+    static bool BuildSoundThunk(RE::BSAudioManager* a_self, RE::BSSoundHandle& a_handle,
+                                RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags) {
+        if (g_inEnchCreate) {
+            spdlog::warn("[SNDSUPPRESS] enchant SFX suppressed (Play->BuildSound, desc={})",
+                         static_cast<void*>(a_desc));
+            return false;  // a normal "sound failed to build" result — game handles it
         }
-        static inline REL::Relocation<decltype(thunk)> func;
-        static constexpr auto id = REL::RelocationID(66404, 67666);
-    };
-    struct PlaySoundHook {
-        static void thunk(const char* a_editorID) {
-            if (g_inEnchCreate) {
-                spdlog::warn("[SNDSUPPRESS] dropped PlaySound('{}') during enchant-create",
-                             a_editorID ? a_editorID : "(null)");
-                return;
-            }
-            func(a_editorID);
-        }
-        static inline REL::Relocation<decltype(thunk)> func;
-        static constexpr auto id = REL::RelocationID(52054, 52939);
-    };
+        return g_buildSound(a_self, a_handle, a_desc, a_flags);
+    }
     void Install() {
-        auto& trampoline = SKSE::GetTrampoline();
-        BuildSoundHook::func = trampoline.write_branch<5>(
-            REL::Relocation<std::uintptr_t>{ BuildSoundHook::id }.address(), BuildSoundHook::thunk);
-        PlaySoundHook::func = trampoline.write_branch<5>(
-            REL::Relocation<std::uintptr_t>{ PlaySoundHook::id }.address(), PlaySoundHook::thunk);
-        spdlog::info("[snd] enchant-SFX suppression hooks installed");
+        // The call-site offsets + address-library ids are 1.6.1170-specific
+        // (ids differ per runtime). On any other version, skip — the enchant
+        // sound simply isn't suppressed rather than risk patching the wrong code.
+        if (REL::Module::get().version() != REL::Version(1, 6, 1170, 0)) {
+            spdlog::warn("[snd] enchant-SFX hook skipped — runtime is not 1.6.1170");
+            return;
+        }
+        auto& tr = SKSE::GetTrampoline();
+        // Both Play overloads call BuildSound at +0x49; hook both call sites.
+        g_buildSound = tr.write_call<5>(REL::ID(67663).address() + 0x49, BuildSoundThunk);
+        tr.write_call<5>(REL::ID(67665).address() + 0x49, BuildSoundThunk);
+        spdlog::info("[snd] enchant-SFX call-site hooks installed (Play->BuildSound)");
     }
 }  // namespace sndhook
 
