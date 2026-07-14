@@ -196,7 +196,13 @@ inline std::string ShortGemName(const char* a_full) {
         return s;
     }
     if (s.rfind("Fortify ", 0) == 0) {
-        s.erase(0, 8);
+        // Drop "Fortify " — EXCEPT for Magicka/Stamina, which would then read the
+        // same as the "Magicka Damage"/"Stamina Damage" gems (both -> "Magicka"/
+        // "Stamina"). Keeping "Fortify " on just those two preserves the distinction.
+        const std::string rest = s.substr(8);
+        if (rest != "Magicka" && rest != "Stamina") {
+            s = rest;
+        }
     } else if (s.rfind("Resist ", 0) == 0) {
         s.replace(0, 7, "Res ");
     }
@@ -205,7 +211,7 @@ inline std::string ShortGemName(const char* a_full) {
         s.compare(s.size() - dmg.size(), dmg.size(), dmg) == 0) {
         s.erase(s.size() - dmg.size());
     }
-    return s;
+    return s.empty() ? std::string(a_full) : s;  // never strip a name to nothing
 }
 float g_socketValueMult = 1.0f; // [Balance] fSocketValueMult — scale on per-tier socketed-item gold; RebuildInstanceEnchant uses it (declared up top like g_magnitudeMult) (m38c)
 

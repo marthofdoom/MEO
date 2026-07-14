@@ -10,7 +10,9 @@ arc; point fixes are folded into their feature entry unless load-bearing.
   abbreviates "Resist" to "Res". The gem-joining "+" and support "·" are
   unchanged; loose gems in the pouch keep their full names. New MCM toggle
   `bFullGemNames` (XP & Balance page, default off) restores the full effect
-  names. Worn gear updates on the next rebuild (reload / re-equip).
+  names. Worn gear updates on the next rebuild (reload / re-equip). (Fortify
+  Magicka/Stamina keep the "Fortify" so they stay distinct from the Magicka/
+  Stamina Damage gems.)
 
 ## v1.0.5 — Synthesis-only install (no exe) (2026-07-14)
 - **The install-time patcher is now a Synthesis patcher, not a bundled exe.**
