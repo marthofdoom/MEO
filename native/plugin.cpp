@@ -215,6 +215,10 @@ inline std::string ShortGemName(const char* a_full) {
 }
 float g_socketValueMult = 1.0f; // [Balance] fSocketValueMult — scale on per-tier socketed-item gold; RebuildInstanceEnchant uses it (declared up top like g_magnitudeMult) (m38c)
 std::atomic<int> g_sndProbe{0}; // [DEBUG snd-probe] temporary: correlate the vendor "enchant sound" with enchant-build vs world-place. Remove before release.
+// [snd] Raised ONLY for the synchronous duration of MEO's own Add{Weapon,Armor}Enchantment
+// call (main thread). The sound hooks drop a sound ONLY while this is set, so nothing but the
+// engine's incidental enchant SFX is ever affected — ambience/music/dialogue/other SFX untouched.
+thread_local bool g_inEnchCreate = false;
 
 // ── M3d forms (all IDs extracted from the real Lorerim masters) ───────
 constexpr RE::FormID kPouchContID = 0x8FE;        // MEO.esp CONT (frozen) — M5 Gem Pouch menu
@@ -1305,7 +1309,9 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     auto* com = RE::BGSCreatedObjectManager::GetSingleton();
     spdlog::warn("[SNDPROBE #{}] ADD-ENCH (BGSCreatedObjectManager::Add{}Enchantment) base={:08X}",
                  ++g_sndProbe, isArmor ? "Armor" : "Weapon", a_base->GetFormID());
+    g_inEnchCreate = true;  // [snd] mute ONLY the engine's incidental enchant SFX during this call
     auto* ench = isArmor ? com->AddArmorEnchantment(effects) : com->AddWeaponEnchantment(effects);
+    g_inEnchCreate = false;
     if (!ench) {
         spdlog::error("[rebuild] Add{}Enchantment null on {:08X}/{}",
                       isArmor ? "Armor" : "Weapon", a_base->GetFormID(), uid);
@@ -3729,7 +3735,7 @@ namespace menuhook {
     }
 
     void Install() {
-        SKSE::AllocTrampoline(64);
+        SKSE::AllocTrampoline(256);  // menuhook (3 call-hooks) + sndhook (2 branch-hooks)
         write_thunk_call<D3DInitHook>();
         write_thunk_call<DXGIPresentHook>();
         write_thunk_call<InputDispatchHook>();
@@ -5694,12 +5700,60 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
     }
 }
 
+// ── [snd] Enchant-SFX suppression ─────────────────────────────────────
+// The engine plays its enchanting SFX INSIDE BGSCreatedObjectManager::Add*
+// Enchantment (a game function). MEO builds runtime enchants constantly
+// (load reapply, loot conversion, re-equip), so that blip fires in bursts —
+// a racket at a vendor. We can't pass a "no sound" flag to a game function,
+// so instead we detour the sound funnels and drop a sound ONLY while
+// g_inEnchCreate is set — i.e. only for the synchronous span of MEO's own
+// Add*Enchantment call on the main thread. Every other sound in the game
+// (ambience, music, dialogue, combat, UI) sees a pure pass-through. Both
+// funnels are covered: PlaySound(editorID) and the descriptor builder that
+// BSAudioManager::Play routes through.
+namespace sndhook {
+    struct BuildSoundHook {
+        static bool thunk(RE::BSAudioManager* a_self, RE::BSSoundHandle& a_handle,
+                          RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags) {
+            if (g_inEnchCreate) {
+                spdlog::warn("[SNDSUPPRESS] dropped BuildSoundDataFromDescriptor "
+                             "(desc={}) during enchant-create", static_cast<void*>(a_desc));
+                return false;  // report "not built" — caller just plays nothing
+            }
+            return func(a_self, a_handle, a_desc, a_flags);
+        }
+        static inline REL::Relocation<decltype(thunk)> func;
+        static constexpr auto id = REL::RelocationID(66404, 67666);
+    };
+    struct PlaySoundHook {
+        static void thunk(const char* a_editorID) {
+            if (g_inEnchCreate) {
+                spdlog::warn("[SNDSUPPRESS] dropped PlaySound('{}') during enchant-create",
+                             a_editorID ? a_editorID : "(null)");
+                return;
+            }
+            func(a_editorID);
+        }
+        static inline REL::Relocation<decltype(thunk)> func;
+        static constexpr auto id = REL::RelocationID(52054, 52939);
+    };
+    void Install() {
+        auto& trampoline = SKSE::GetTrampoline();
+        BuildSoundHook::func = trampoline.write_branch<5>(
+            REL::Relocation<std::uintptr_t>{ BuildSoundHook::id }.address(), BuildSoundHook::thunk);
+        PlaySoundHook::func = trampoline.write_branch<5>(
+            REL::Relocation<std::uintptr_t>{ PlaySoundHook::id }.address(), PlaySoundHook::thunk);
+        spdlog::info("[snd] enchant-SFX suppression hooks installed");
+    }
+}  // namespace sndhook
+
 }  // namespace
 
 SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SKSE::Init(skse);
     SetupLog();
     menuhook::Install();  // must be written before the renderer initializes
+    sndhook::Install();   // [snd] enchant-SFX suppression (reuses menuhook's trampoline)
 
     const auto gameVersion = REL::Module::get().version();
     spdlog::info("MEO native v1.0.6 loading; runtime {}", gameVersion.string());
