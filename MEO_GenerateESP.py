@@ -360,6 +360,9 @@ MCM_TUNABLES=[
     ("Debug","Debug","bDebugAllPerks","Grant all MEO perks (testing)",
      "Testing aid: forces every MEO perk ON — Attunement V, BOTH dual-socket perks (chest + main-hand weapon), all elemental affinities, Facet Insight, Gem Cutter, and Soul Feeder — without grinding Enchanting or spending points. It does not add real perks to your character; toggling OFF reverts to what you actually hold. Applies on menu close; re-socket or reload for worn gear to pick up new magnitudes.",
      'b',0,None,None,None,None),
+    ("Debug","Debug","bEnableLogging","Write the MEO log file",
+     "Writes MEO.log (in the SKSE logs folder) with MEO's internal diagnostics. ON by default — leave it on if you might report an issue, since the log is what pins down bugs. Turn OFF to stop all MEO file logging. Applies on menu close.",
+     'b',1,None,None,None,None),
 ]
 
 def write_mcm_files(out_dir):

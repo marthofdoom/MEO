@@ -1527,6 +1527,7 @@ float g_supportDropChance = 0.03f;// [Loot] fSupportDropChance — support gem o
 int   g_supportMinLevel = 15;     // [Loot] iSupportMinLevel — no support gems before this player level
 float g_bossXPMult = 10.0f;       // [XP] fBossXPMult — boss/dragon kill multiplier
 bool  g_xpNotify = true;          // [UI] bXPNotify — "Gem XP +N" on kills
+bool  g_enableLogging = true;     // [Debug] bEnableLogging — write MEO.log (default on); ReadConfig sets the spdlog level (m38d)
 bool  g_stationTakeover = true;   // [UI] bStationTakeover — gem menu REPLACES the vanilla enchanting menu
 int   g_menuStyle = 0;            // [UI] iMenuStyle — gem menu skin 0..3 (m24 MCM dropdown)
 bool  g_temperNoPerk = true;      // [UI] bTemperNoPerk — socketed gear tempers w/o Arcane Blacksmith (m33)
@@ -1576,6 +1577,7 @@ static void ApplyIniFile(const char* a_path) {
         else if (key == "fBossXPMult")        g_bossXPMult = val;
         else if (key == "fMagnitudeMult")     g_magnitudeMult = val;
         else if (key == "bXPNotify")          g_xpNotify = val != 0.0f;
+        else if (key == "bEnableLogging")     g_enableLogging = val != 0.0f;
         else if (key == "bStationTakeover")   g_stationTakeover = val != 0.0f;
         else if (key == "iMenuStyle")         g_menuStyle = std::clamp(static_cast<int>(val), 0, 3);
         else if (key == "bTemperNoPerk")      g_temperNoPerk = val != 0.0f;
@@ -1596,6 +1598,10 @@ static void ApplyIniFile(const char* a_path) {
 void ReadConfig() {
     ApplyIniFile("Data/SKSE/Plugins/MEO.ini");
     ApplyIniFile("Data/MCM/Settings/MEO.ini");
+    // m38d: bEnableLogging gates ALL file logging in one place — flip the spdlog
+    // level rather than guard every call site. Default on; MCM re-reads on menu
+    // close, so toggling takes effect immediately.
+    spdlog::set_level(g_enableLogging ? spdlog::level::info : spdlog::level::off);
     if (g_xpPerKill != 1.0f) {
         spdlog::warn("DEV: fXPPerKill={} override", g_xpPerKill);
     }
@@ -5166,8 +5172,10 @@ void DispelStaleGemEffects() {
         ae->Dispel(true);
     }
     if (!stale.empty()) {
+        // m38d (marth): no player-facing notification/sound for dedup — it's
+        // internal housekeeping that fires on load/replace and shouldn't nag.
+        // The [avfix] log line (gated by bEnableLogging) is the only record.
         spdlog::info("[avfix] {} stale gem effect(s) dispelled — modifiers recovered", stale.size());
-        Notify(std::format("MEO: cleaned {} stale gem effect(s) from your save.", stale.size()));
     }
 }
 

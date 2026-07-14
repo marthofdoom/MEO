@@ -5,6 +5,11 @@ standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
 ## v1.0.2 — vendor restock defeated the conversion sweep (m38, 2026-07-13)
+- **Dedup is silent + logging is toggleable** (m38d): the save-cleanup pass that
+  dispels stale/duplicate gem effects no longer shows a corner notification (or
+  its sound) — it's internal housekeeping that fires on load/replace and
+  shouldn't nag. Added a `bEnableLogging` toggle (MCM Debug page + INI, default
+  ON) that turns MEO's log file on/off in one place.
 - **Socketed-item gold value scales with gem tier** (m38c): a socketed gem used
   to inflate its item's price to 20k+ — the instance enchant carried a flat
   `charge = 0xFFFF`, and the engine prices weapon enchants as
