@@ -1542,7 +1542,7 @@ float g_enchSkillXPMult = 1.0f;   // [XP] fEnchSkillXP — Enchanting SKILL xp p
 float g_discoverSkillXP = 50.0f;  // [XP] fDiscoverSkillXP — Enchanting SKILL xp for discovering a NEW gem family (one-time each, m37)
 float g_destroySkillXP  = 20.0f;  // [XP] fDestroySkillXP — Enchanting SKILL xp per gem destroyed (× level) (m37)
 float g_levelSkillXP    = 12.0f;  // [XP] fLevelSkillXP — Enchanting SKILL xp per gem level gained (× new level) (m37)
-float g_gemXpSkillXP    = 0.05f;  // [XP] fGemXpSkillXP — Enchanting SKILL xp per point of Gem XP a gem earns from a kill (tiny trickle, m37)
+float g_gemXpSkillXP    = 0.01f;  // [XP] fGemXpSkillXP — Enchanting SKILL xp per point of Gem XP a gem earns from a kill (tiny trickle, m37; nerfed 5x + MCM slider m39, was 0.05 — too fast)
 // NB: socketing grants NO skill xp on purpose — socket/unsocket would be a farm loop (marth).
 // g_socketValueMult [Balance] fSocketValueMult is declared up top (RebuildInstanceEnchant uses it)
 bool  g_debugAllPerks = false;    // [Debug] bDebugAllPerks — force every MEO perk ON for testing (m36)
@@ -5594,7 +5594,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         StartEchoHeartbeat();  // m36: Echo armor follower-share
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v1.0.2 loaded");
+            console->Print("MEO native v1.0.3 loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -5662,7 +5662,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v1.0.2 loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v1.0.3 loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }

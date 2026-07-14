@@ -4,6 +4,12 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.3 — enchanting-XP-from-kills nerf + slider (m39, 2026-07-13)
+- The per-kill Enchanting skill-XP trickle (from Gem XP your socketed gems earn)
+  was leveling Enchanting far too fast; cut the default 5× (0.05 → 0.01) and
+  exposed it as an MCM slider ("Enchanting XP from gem kills", `fGemXpSkillXP`,
+  0–0.05) so it's tunable in game, down to off.
+
 ## v1.0.2 — vendor restock defeated the conversion sweep (m38, 2026-07-13)
 - **Dedup no longer breaks the stacking cap or strips follower gear** (m38e,
   from a pre-release review): the save-cleanup pass counted a "first copy wins"
