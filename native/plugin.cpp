@@ -118,7 +118,7 @@ bool          g_starterGranted = false;
 
 constexpr std::uint32_t kSerID = 'MEO1';
 constexpr std::uint32_t kRecGems = 'GEMS';
-constexpr std::uint32_t kSerVersion = 10;  // v10: + handPlacedMask. v9: supportScaffold. v8: meoGrantedArcane.
+constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPlacedMask. v9: supportScaffold.
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -474,6 +474,8 @@ RE::BGSPerk* g_perkArcaneBlacksmith = nullptr;
 bool         g_meoGrantedArcane = false;  // co-save v8: MEO added the perk (revocable)
 bool         g_supportScaffoldGranted = false;  // co-save v9: test-scaffold support gems handed out
 std::uint8_t g_handPlacedMask = 0;              // co-save v10: bitmask of hand-placed support gems dropped (m36i)
+std::unordered_set<std::string> g_discoveredGems;  // co-save v11: gem gids the player has studied (m37 Enchanting XP)
+bool g_needSeedDiscoveries = false;             // m37: pre-v11 save loaded — seed held gems silently, no XP burst
 bool g_treeMode = false;  // MEO - Patch.esp installed: perks come from the tree, not auto-grant
 // Cached from the player's perks (refreshed on load + menu close).
 int  g_attuneRank = 0;      // 0..5 → +8% gem magnitude per rank
@@ -1494,6 +1496,11 @@ bool  g_stationTakeover = true;   // [UI] bStationTakeover — gem menu REPLACES
 int   g_menuStyle = 0;            // [UI] iMenuStyle — gem menu skin 0..3 (m24 MCM dropdown)
 bool  g_temperNoPerk = true;      // [UI] bTemperNoPerk — socketed gear tempers w/o Arcane Blacksmith (m33)
 float g_enchSkillXPMult = 1.0f;   // [XP] fEnchSkillXP — Enchanting SKILL xp per soul fed (m25)
+float g_discoverSkillXP = 50.0f;  // [XP] fDiscoverSkillXP — Enchanting SKILL xp for discovering a NEW gem family (one-time each, m37)
+float g_destroySkillXP  = 20.0f;  // [XP] fDestroySkillXP — Enchanting SKILL xp per gem destroyed (× level) (m37)
+float g_levelSkillXP    = 12.0f;  // [XP] fLevelSkillXP — Enchanting SKILL xp per gem level gained (× new level) (m37)
+float g_gemXpSkillXP    = 0.05f;  // [XP] fGemXpSkillXP — Enchanting SKILL xp per point of Gem XP a gem earns from a kill (tiny trickle, m37)
+// NB: socketing grants NO skill xp on purpose — socket/unsocket would be a farm loop (marth).
 bool  g_debugAllPerks = false;    // [Debug] bDebugAllPerks — force every MEO perk ON for testing (m36)
 bool  g_purgeSupportGems = false; // [Debug] bPurgeSupportGems — one-shot: strip all support gems from inv+pouch (m36l cleanup)
 // g_magnitudeMult [XP] fMagnitudeMult is declared up top (StampInstance uses it)
@@ -1537,6 +1544,10 @@ static void ApplyIniFile(const char* a_path) {
         else if (key == "iMenuStyle")         g_menuStyle = std::clamp(static_cast<int>(val), 0, 3);
         else if (key == "bTemperNoPerk")      g_temperNoPerk = val != 0.0f;
         else if (key == "fEnchSkillXP")       g_enchSkillXPMult = val;
+        else if (key == "fDiscoverSkillXP")   g_discoverSkillXP = val;
+        else if (key == "fDestroySkillXP")    g_destroySkillXP = val;
+        else if (key == "fLevelSkillXP")      g_levelSkillXP = val;
+        else if (key == "fGemXpSkillXP")      g_gemXpSkillXP = val;
         else if (key == "bDebugAllPerks")     g_debugAllPerks = val != 0.0f;
         else if (key == "bPurgeSupportGems")  g_purgeSupportGems = val != 0.0f;
     }
@@ -1752,6 +1763,79 @@ public:
 
 bool IsWornXList(const RE::ExtraDataList* a_xl);  // defined below
 
+// ── m37: Enchanting SKILL xp from regular play (not just soul feeding) ──
+// Non-abusable sources (marth): DISCOVER a new gem family (one-time), DESTROY a
+// gem, gem LEVEL-UPS (from kills), and a tiny per-kill TRICKLE proportional to
+// Gem XP earned. Socketing grants NOTHING (socket/unsocket would be a farm loop).
+void GrantEnchantingXP(float a_xp) {
+    if (a_xp <= 0.0f || g_enchSkillXPMult <= 0.0f) {
+        return;
+    }
+    if (auto* p = RE::PlayerCharacter::GetSingleton()) {
+        p->AddSkillExperience(RE::ActorValue::kEnchanting, a_xp * g_enchSkillXPMult);
+    }
+}
+
+// First time the player possesses a gem of a family, they "study" it: one-time
+// Enchanting xp + notify, persisted in g_discoveredGems (co-save v11).
+void DiscoverGem(const ResolvedGem& a_rg) {
+    std::string gid(a_rg.def->gid);
+    if (g_discoveredGems.count(gid)) {
+        return;
+    }
+    g_discoveredGems.insert(gid);
+    GrantEnchantingXP(g_discoverSkillXP);
+    Notify(std::format("You study a new gem: {}. (Enchanting rises.)", GemName(a_rg)));
+    spdlog::info("[discover] '{}' — +{:.0f} Enchanting xp", gid, g_discoverSkillXP * g_enchSkillXPMult);
+}
+
+// Scan the player's inventory + pouch and discover any new gem family.
+void CheckGemDiscoveries() {
+    auto scan = [](RE::TESObjectREFR* a_h) {
+        if (!a_h) {
+            return;
+        }
+        for (const auto& [obj, data] : a_h->GetInventory(
+                 [](RE::TESBoundObject& o) { return o.Is(RE::FormType::Misc); })) {
+            if (data.first <= 0) {
+                continue;
+            }
+            auto it = g_gemByItem.find(obj->GetFormID());
+            if (it != g_gemByItem.end()) {
+                DiscoverGem(g_gems[it->second.first]);
+            }
+        }
+    };
+    scan(RE::PlayerCharacter::GetSingleton());
+    scan(PouchRef());
+}
+
+// Pre-v11 save upgrade: mark every gem family already held or socketed as
+// discovered WITHOUT xp/notify, so only genuinely-new finds grant afterward.
+void SeedDiscoveries() {
+    auto seed = [](RE::TESObjectREFR* a_h) {
+        if (!a_h) {
+            return;
+        }
+        for (const auto& [obj, data] : a_h->GetInventory(
+                 [](RE::TESBoundObject& o) { return o.Is(RE::FormType::Misc); })) {
+            if (data.first > 0) {
+                auto it = g_gemByItem.find(obj->GetFormID());
+                if (it != g_gemByItem.end()) {
+                    g_discoveredGems.insert(std::string(g_gems[it->second.first].def->gid));
+                }
+            }
+        }
+    };
+    seed(RE::PlayerCharacter::GetSingleton());
+    seed(PouchRef());
+    for (const auto& [key, rec] : g_sockets) {
+        g_discoveredGems.insert(rec.gid);
+    }
+    spdlog::info("[discover] seeded {} already-known gem families (pre-v11 save)",
+                 g_discoveredGems.size());
+}
+
 // Add Gem XP to one socketed worn instance; handles the level-up re-stamp,
 // notifications (named for followers), and mastered births. a_rec must be
 // the live g_sockets entry (StampInstance rewrites the same key — the
@@ -1795,6 +1879,9 @@ bool GrantGemXP(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataLis
         }
     }
     const bool isPlayer = a_owner->IsPlayerRef();
+    if (isPlayer) {  // m37: a gem reaching a new level is Enchanting practice (× the level)
+        GrantEnchantingXP(g_levelSkillXP * newLevel);
+    }
     const char* who = a_owner->GetName();
     Notify(isPlayer
                ? std::format("Your {} gem has grown to {}.", GemName(rg), meo::kRoman[newLevel - 1])
@@ -1880,6 +1967,12 @@ void AwardKillXP(RE::Actor* a_owner, float a_ap) {
                 }
             }
         }
+    }
+    // m37: tiny Enchanting trickle for the player — the Gem XP a kill puts into
+    // your gems is enchanting practice. Once per kill (not × gem count, so more
+    // sockets isn't a faster grind); accumulates over normal combat.
+    if (awarded > 0 && a_owner->IsPlayerRef()) {
+        GrantEnchantingXP(xp * g_gemXpSkillXP);
     }
     // "Gem XP +N" HUD feedback (player only; bXPNotify, MCM toggle later).
     if (awarded > 0 && g_xpNotify && a_owner->IsPlayerRef()) {
@@ -2302,6 +2395,7 @@ void DestroyGem(RE::FormID a_base, std::uint16_t a_uid, std::uint8_t a_slot) {
     } else {
         Notify("Gem destroyed — too little essence to reclaim a soul.");
     }
+    GrantEnchantingXP(g_destroySkillXP * rec.level);  // m37: breaking a gem down teaches its craft (× level)
     spdlog::info("[destroy] {:08X}/{} '{}' L{} xp={:.0f} -> soul tier {}", a_base, a_uid, rec.gid,
                  rec.level, rec.xp, tier);
 }
@@ -3507,6 +3601,8 @@ void OpenGemMenu(bool a_station) {
                    // fresh at every open so the skin dropdown takes effect now
     EnsurePouchRef();     // m27: gems present in the pouch before the snapshot
     RouteGemsToPouch();
+    if (g_needSeedDiscoveries) { SeedDiscoveries(); g_needSeedDiscoveries = false; }
+    CheckGemDiscoveries();  // m37: study newly-acquired gem families
     g_menu.selBase = 0;  // fresh open: no remembered selection
     g_menu.selUid = 0;
     g_menu.selItem = 0;
@@ -3779,9 +3875,16 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
     return 1;
 }
 
+// m37 (conversion blocker: vendor barter stock never converted): this used to
+// bail on any non-actor holder, so StockVendorGems's sweep of the merchant
+// CONTAINER (a chest ref, not an actor) has been a silent no-op since m23 —
+// which is exactly where a low-level player meets "of Major Wielding / Minor
+// Alteration / the Major Knight" armor. Now a container holder is swept too,
+// via the engine's own flow (PlaceObjectAtMe -> stamp -> AddObjectToContainer
+// with fromRefr, which consumes the temp ref like Papyrus AddItem(ObjectReference)).
 int ConvertInventory(RE::TESObjectREFR* a_holder) {
     auto* actor = a_holder ? a_holder->As<RE::Actor>() : nullptr;
-    if (!actor || g_convert.empty()) {
+    if (!a_holder || g_convert.empty()) {
         return 0;
     }
     struct Hit {
@@ -3792,7 +3895,7 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
         bool                left;
     };
     std::vector<Hit> hits;
-    for (auto& [obj, data] : actor->GetInventory()) {
+    for (auto& [obj, data] : a_holder->GetInventory()) {
         auto it = g_convert.find(obj->GetFormID());
         if (it == g_convert.end() || data.first <= 0) {
             continue;
@@ -3815,7 +3918,7 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
     // gear, say exactly what and why — an enchanted BASE not in the table is
     // an installer question; an INSTANCE enchant (on the copy, not the
     // record) is the player-enchant signature and skipped by design.
-    if (actor->IsPlayerRef()) {
+    if (actor && actor->IsPlayerRef()) {
         for (auto& [obj, data] : actor->GetInventory()) {
             if (data.first <= 0 || g_convert.contains(obj->GetFormID())) {
                 continue;
@@ -3857,17 +3960,17 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
             }
         }
     }
-    const std::uint32_t seed = HashU32(actor->GetFormID() ^ 0x4D454F43u);  // 'MEOC'
+    const std::uint32_t seed = HashU32(a_holder->GetFormID() ^ 0x4D454F43u);  // 'MEOC'
     const std::uint32_t l2cut = static_cast<std::uint32_t>(g_gemLevel2Chance * 10000.0f);
     for (const auto& hit : hits) {
-        actor->RemoveItem(hit.old, hit.count, RE::ITEM_REMOVE_REASON::kRemove,
-                          nullptr, nullptr);
+        a_holder->RemoveItem(hit.old, hit.count, RE::ITEM_REMOVE_REASON::kRemove,
+                             nullptr, nullptr);
         for (std::int32_t i = 0; i < hit.count; ++i) {
-            auto ref = actor->PlaceObjectAtMe(hit.tgt->base, false);
+            auto ref = a_holder->PlaceObjectAtMe(hit.tgt->base, false);
             if (!ref) {
                 spdlog::error("[convert] PlaceObjectAtMe failed for '{}' — plain base given",
                               hit.tgt->base->GetName());
-                actor->AddObjectToContainer(hit.tgt->base, nullptr, 1, nullptr);
+                a_holder->AddObjectToContainer(hit.tgt->base, nullptr, 1, nullptr);
                 continue;
             }
             auto& xl = ref->extraList;
@@ -3880,29 +3983,39 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
             // pickup, so there is no player-theft to prevent. Baking the
             // actor's ownership was what made a bandit's converted drop
             // read as stolen.
-            if (actor->IsPlayerRef()) {
+            if (actor && actor->IsPlayerRef()) {
                 xl.SetOwner(actor->GetActorBase());
             }
             const std::uint32_t hi =
                 HashU32(seed ^ hit.old->GetFormID() ^ static_cast<std::uint32_t>(i));
             const int level = (hi % 10000) < l2cut ? 2 : 1;
             StampInstance(hit.tgt->base, &xl, hit.tgt->gemIdx, level);
-            actor->PickUpObject(ref.get(), 1, false, false);
+            if (actor) {
+                actor->PickUpObject(ref.get(), 1, false, false);
+            } else {
+                // container holder (vendor chest): move the stamped instance in,
+                // fromRefr = the temp world ref, which the engine then consumes.
+                a_holder->AddObjectToContainer(hit.tgt->base, &xl, 1, ref.get());
+            }
             ++converted;
         }
         // The list picked this enemy to fight with an enchanted weapon; the
         // converted gem stays worn and ACTIVE (marth's ruling).
-        if (hit.worn) {
+        if (actor && hit.worn) {
             RE::ActorEquipManager::GetSingleton()->EquipObject(
                 actor, hit.tgt->base, nullptr, 1, nullptr, false, false, false, true);
             if (auto* wxl = FindWornXListFor(actor, hit.tgt->base)) {
                 ApplyWornAbility(actor, hit.tgt->base, wxl, hit.left);
             }
         }
-        spdlog::info("[convert] {:08X} '{}': '{}' x{} -> '{}' + {} gem",
-                     actor->GetFormID(), actor->GetName(), hit.old->GetName(),
-                     hit.count, hit.tgt->base->GetName(),
+        spdlog::info("[convert] {:08X} '{}'{}: '{}' x{} -> '{}' + {} gem",
+                     a_holder->GetFormID(), a_holder->GetName(), actor ? "" : " (container)",
+                     hit.old->GetName(), hit.count, hit.tgt->base->GetName(),
                      GemName(g_gems[hit.tgt->gemIdx]));
+    }
+    if (!actor && converted > 0) {  // m37: vendor/container sweeps self-diagnose now
+        spdlog::info("[convert] container {:08X} '{}': {} item(s) converted",
+                     a_holder->GetFormID(), a_holder->GetName(), converted);
     }
     return converted;
 }
@@ -4671,6 +4784,8 @@ public:
             SKSE::GetTaskInterface()->AddTask([]() {
                 EnsurePouchRef();
                 RouteGemsToPouch();
+                if (g_needSeedDiscoveries) { SeedDiscoveries(); g_needSeedDiscoveries = false; }
+                CheckGemDiscoveries();  // m37: study newly-acquired gem families
                 // m32h (marth: 'delayed sync between pouch and inv'): a gem
                 // that just routed to the pouch got a new uid — an open menu's
                 // snapshot now holds the stale one. Rebuild it so socketing
@@ -5183,6 +5298,13 @@ void SaveCallback(SKSE::SerializationInterface* a_intfc) {
     const std::uint8_t supportScaffold = g_supportScaffoldGranted ? 1 : 0;  // v9 field
     a_intfc->WriteRecordData(supportScaffold);
     a_intfc->WriteRecordData(g_handPlacedMask);  // v10 field: hand-placed support gems dropped
+    const std::uint32_t discN = static_cast<std::uint32_t>(g_discoveredGems.size());  // v11
+    a_intfc->WriteRecordData(discN);
+    for (const auto& gid : g_discoveredGems) {
+        const std::uint16_t len = static_cast<std::uint16_t>(gid.size());
+        a_intfc->WriteRecordData(len);
+        a_intfc->WriteRecordData(gid.data(), len);
+    }
     const std::uint32_t count = static_cast<std::uint32_t>(g_sockets.size());
     a_intfc->WriteRecordData(count);
     for (const auto& [key, rec] : g_sockets) {
@@ -5212,6 +5334,8 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
     g_armorStarterGranted = false;
     g_supportScaffoldGranted = false;
     g_handPlacedMask = 0;
+    g_discoveredGems.clear();
+    g_needSeedDiscoveries = false;
     CloseGemMenu();
     std::uint32_t type = 0, version = 0, length = 0;
     while (a_intfc->GetNextRecordInfo(type, version, length)) {
@@ -5257,6 +5381,21 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
         if (version >= 10) {  // v10: hand-placed support-gem bitmask (older saves = 0)
             a_intfc->ReadRecordData(g_handPlacedMask);
         }
+        if (version >= 11) {  // v11: discovered gem families
+            std::uint32_t discN = 0;
+            a_intfc->ReadRecordData(discN);
+            for (std::uint32_t i = 0; i < discN; ++i) {
+                std::uint16_t len = 0;
+                a_intfc->ReadRecordData(len);
+                std::string gid(len, '\0');
+                a_intfc->ReadRecordData(gid.data(), len);
+                g_discoveredGems.insert(std::move(gid));
+            }
+        } else {
+            // Pre-v11 save: seed already-held/socketed gems as discovered on load
+            // (silently, no XP burst) so only genuinely-new finds grant afterward.
+            g_needSeedDiscoveries = true;
+        }
         std::uint32_t count = 0;
         a_intfc->ReadRecordData(count);
         for (std::uint32_t i = 0; i < count; ++i) {
@@ -5298,6 +5437,8 @@ void RevertCallback(SKSE::SerializationInterface*) {
     g_armorStarterGranted = false;
     g_supportScaffoldGranted = false;
     g_handPlacedMask = 0;
+    g_discoveredGems.clear();
+    g_needSeedDiscoveries = false;
     CloseGemMenu();
     spdlog::info("[revert] socket index cleared");
 }
@@ -5318,7 +5459,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         StartEchoHeartbeat();  // m36: Echo armor follower-share
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v1.0.0 loaded");
+            console->Print("MEO native v1.0.1 loaded");
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -5335,6 +5476,8 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
             }
             EnsurePouchRef();     // m27: gems live in the hidden pouch container
             RouteGemsToPouch();
+            if (g_needSeedDiscoveries) { SeedDiscoveries(); g_needSeedDiscoveries = false; }
+            CheckGemDiscoveries();  // m37: study newly-acquired gem families
             TryPlaceHandPlaced();  // m36i: place persistent hand-placed gems now (Offering Box);
                                    // temporary boss-chest refs place on cell-attach
             // m32d: recovery runs EVERY load — the creation-only gate missed
@@ -5384,7 +5527,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     menuhook::Install();  // must be written before the renderer initializes
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v1.0.0 loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v1.0.1 loading; runtime {}", gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
