@@ -3819,7 +3819,7 @@ namespace menuhook {
     }
 
     void Install() {
-        SKSE::AllocTrampoline(2048);  // menuhook (3) + sndhook Init gate (1) + v19 probe (39 BuildSound sites)
+        SKSE::AllocTrampoline(4096);  // menuhook(3) + Init gate(1) + v21 all-SNDR census (39 BuildSound + 66 Play sites)
         write_thunk_call<D3DInitHook>();
         write_thunk_call<DXGIPresentHook>();
         write_thunk_call<InputDispatchHook>();
@@ -6019,17 +6019,46 @@ namespace sndhook {
 
     static bool BuildSoundProbe(RE::BSAudioManager* a_self, RE::BSSoundHandle* a_handle,
                                 RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags) {
+        // v21: log EVERY SNDR-form build (not just the 4 vanilla). The load hum plays
+        // while the screen is still BLACK = early actor/magic restore, before any 3D —
+        // so it's a NON-shader build we've been filtering out. sndr!=0 means the guard
+        // matched a real BGSSoundDescriptorForm (non-form descriptors like physics
+        // impact return 0 and are skipped — no flood, no fault).
         const RE::FormID sndr = ReadEnchantSndrSafe(a_desc);
-        if (sndr >= 0x001037D6 && sndr <= 0x001037D9) {
+        if (sndr != 0) {
             const std::uintptr_t ra      = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
             const std::uintptr_t siteRva = ra - REL::Module::get().base() - 5;  // the E8 call site
             const int            n       = g_probeLog.fetch_add(1, std::memory_order_relaxed) + 1;
-            if (n <= 250) {
-                spdlog::info("[diag-probe #{}] SNDR={:08X} site=+0x{:X} flags=0x{:X}",
+            if (n <= 900) {
+                spdlog::info("[diag-bld #{}] SNDR={:08X} site=+0x{:X} flags=0x{:X}",
                              n, sndr, siteRva, a_flags);
             }
         }
         return g_realBuildSound(a_self, a_handle, a_desc, a_flags);
+    }
+
+    // ── v21 also: valid-handle census at BSSoundHandle::Play (67616) ─────
+    // Closes the cached-replay path: a handle built once and Play()'d without a
+    // rebuild bypasses every BuildSound hook. At Play we only have the handle, so we
+    // log the soundID (!= kInvalidID = a live/replayed sound) + the caller site. A
+    // burst of one caller RVA during the black-screen phase = the replay emitter.
+    // (Muted armor handles are kInvalidID and are skipped.) Reading this->soundID is
+    // a plain member read — always valid since `this` is a real BSSoundHandle.
+    using PlayFn = bool(RE::BSSoundHandle*);
+    static PlayFn*          g_realPlay = nullptr;
+    static std::atomic<int> g_playLog{ 0 };
+
+    static bool PlayProbe(RE::BSSoundHandle* a_this) {
+        if (a_this && a_this->soundID != static_cast<std::uint32_t>(RE::BSSoundHandle::kInvalidID)) {
+            const std::uintptr_t ra      = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+            const std::uintptr_t siteRva = ra - REL::Module::get().base() - 5;
+            const int            n       = g_playLog.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (n <= 500) {
+                spdlog::info("[diag-play #{}] soundID={:08X} site=+0x{:X}",
+                             n, a_this->soundID, siteRva);
+            }
+        }
+        return g_realPlay(a_this);
     }
 
     // 39 non-Init direct call sites of BuildSoundDataFromDescriptor (1.6.1170 RVAs;
@@ -6064,9 +6093,47 @@ namespace sndhook {
             tramp.write_call<5>(site, BuildSoundProbe);
             ++ok;
         }
-        spdlog::info("[snd] v19 BuildSound-site probe installed: {} sites hooked, {} skipped "
-                     "(log-only; finds the 2nd MAGEnchantedUnsheathe emitter); sndrVt=0x{:X}/0x{:X}",
+        spdlog::info("[snd] v21 all-SNDR BuildSound census: {} sites hooked, {} skipped "
+                     "(log-only; logs EVERY SNDR build); sndrVt=0x{:X}/0x{:X}",
                      ok, skip, g_sndrVt1, g_sndrVt2);
+    }
+
+    // 66 direct call sites of BSSoundHandle::Play (67616), 1.6.1170 RVAs, each
+    // verified E8->67616 before patching.
+    static constexpr std::uintptr_t kPlaySites[] = {
+        0x1EF443, 0x21B164, 0x27CD89, 0x27DF04, 0x287E82, 0x2D9B82,
+        0x2E072D, 0x2E0819, 0x2EEA8B, 0x2EEE66, 0x2F01D1, 0x3124DF,
+        0x312C5C, 0x312CB5, 0x312E37, 0x3135F2, 0x3200D2, 0x34B7E5,
+        0x34B8E6, 0x409539, 0x51C3DC, 0x51CD7B, 0x551AC3, 0x551B82,
+        0x551C24, 0x5AEB17, 0x5B3522, 0x5BEF80, 0x5CFC7A, 0x5D3B24,
+        0x5D3BAE, 0x5D62C9, 0x5DA923, 0x5DB0B1, 0x62EFA2, 0x6317EB,
+        0x660011, 0x66818B, 0x6686F8, 0x6689F2, 0x67A3C8, 0x67B482,
+        0x67B59F, 0x68F13C, 0x68F21F, 0x69CA32, 0x69F5B0, 0x69F723,
+        0x6C6D2F, 0x6E41CE, 0x70F3A4, 0x743F0A, 0x74DB02, 0x7D38BE,
+        0x7D4944, 0x7D4AEA, 0x7D9DD5, 0x7E94E2, 0x7EEB3D, 0x9396F3,
+        0x947836, 0x96AF94, 0x97ACBC, 0x97AD8D, 0xA49BB7, 0xA49CF7,
+    };
+
+    void PlayProbeInstall() {
+        if (REL::Module::get().version() != REL::Version(1, 6, 1170, 0)) {
+            return;
+        }
+        g_realPlay = reinterpret_cast<PlayFn*>(REL::ID(67616).address());
+        const auto  base   = REL::Module::get().base();
+        const auto  target = REL::ID(67616).address();
+        auto&       tramp  = SKSE::GetTrampoline();
+        int ok = 0, skip = 0;
+        for (const auto rva : kPlaySites) {
+            const auto  site = base + rva;
+            const auto* p    = reinterpret_cast<const std::uint8_t*>(site);
+            if (*p != 0xE8) { ++skip; continue; }
+            const auto rel = *reinterpret_cast<const std::int32_t*>(site + 1);
+            if (site + 5 + static_cast<std::intptr_t>(rel) != target) { ++skip; continue; }
+            tramp.write_call<5>(site, PlayProbe);
+            ++ok;
+        }
+        spdlog::info("[snd] v21 valid-handle Play census: {} sites hooked, {} skipped (log-only)",
+                     ok, skip);
     }
 }  // namespace sndhook
 
@@ -6077,9 +6144,8 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SetupLog();
     menuhook::Install();     // must be written before the renderer initializes
     sndhook::Install();      // [snd] enchant-hum gate (Init+0x113 OwnedController mute)
-    // sndhook::ProbeInstall(); // v19 39-site BuildSound net done its job (0 hits) — disabled
-    //   v20: log-all-SNDR at Init+0x113 (in BuildSoundThunk) tests whether the load
-    //   hum is an EnchantmentArtExtender/Vibrant-Weapons custom-SNDR shimmer we PLAY.
+    sndhook::ProbeInstall();     // [snd] v21: ALL-SNDR census at the 39 non-Init BuildSound sites
+    sndhook::PlayProbeInstall(); // [snd] v21: valid-handle census at the 66 BSSoundHandle::Play sites
 
     const auto gameVersion = REL::Module::get().version();
     spdlog::info("MEO native v1.0.6 loading; runtime {}", gameVersion.string());
