@@ -2068,6 +2068,37 @@ public:
                     }
                 });
             });
+        } else if (a_event->opening && a_event->menuName == RE::ContainerMenu::MENU_NAME) {
+            // m41 (marth): sweep an opened container the same way the vendor barter
+            // path does. Static/hand-placed enchanted content never fires a
+            // TESContainerChangedEvent (ContainerSink only catches an item LANDING —
+            // leveled generation or pickup), so a never-looted chest shows its
+            // enchanted generics until they're taken. Defer two frames so the
+            // container list is fully built before we mutate it (the m38 barter-break
+            // lesson), convert in place — ConvertInventory opens the enchant-hum mute
+            // window so the batch of conversions is silent — then rebuild the open
+            // list via the engine's OWN inventory-update signal (as a buy/sell does).
+            SKSE::GetTaskInterface()->AddTask([]() {
+                SKSE::GetTaskInterface()->AddTask([]() {
+                    auto ref = RE::TESObjectREFR::LookupByHandle(
+                        RE::ContainerMenu::GetTargetRefHandle());
+                    if (!ref) {
+                        return;
+                    }
+                    const int n = ConvertInventory(ref.get());
+                    if (n > 0) {
+                        // Call the engine's own inventory-update routine (never hand-
+                        // repaint the UI). CommonLibSSE-NG 3.7.0 predates the helper,
+                        // so bind the relocation it uses (SE 51911 / AE 52849).
+                        static REL::Relocation<void(RE::TESObjectREFR*,
+                                                    const RE::TESBoundObject*)>
+                            sendInvUpdate{ RELOCATION_ID(51911, 52849) };
+                        sendInvUpdate(ref.get(), nullptr);
+                        spdlog::info("[chest] container sweep: {} converted in {:08X}",
+                                     n, ref->GetFormID());
+                    }
+                });
+            });
         } else if (!a_event->opening && a_event->menuName == RE::CraftingMenu::MENU_NAME) {
             // Overlay mode only: leaving the vanilla enchanting UI takes the gem
             // menu with it. In takeover mode (m18) the crafting menu closing IS
