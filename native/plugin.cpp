@@ -886,7 +886,7 @@ void ResolveCatalog() {
                 }
             }
         }
-        if (!rg.mgef) {
+        if (!rg.mgef && !def.isSupport) {  // support gems have NO MGEF by design (inert alone) — not "disabled"
             spdlog::warn("gem '{}' disabled: MGEF {:06X} not found in {}", def.gid, def.mgefID, def.plugin);
         }
         if (auto cal = g_calibration.find(def.gid); cal != g_calibration.end()) {
@@ -944,7 +944,7 @@ void ResolveCatalog() {
             prev = rg.items[lv];
         }
         g_gemByGid[def.gid] = static_cast<int>(g_gems.size());
-        if (rg.mgef) {
+        if (rg.mgef || def.isSupport) {  // supports register + function via isSupport — count them live
             ++ok;
         }
         g_gems.push_back(rg);
@@ -1644,10 +1644,17 @@ bool IsSocketableArmorBase(const RE::TESObjectARMO* a_armo) {
     // this they were hidden from the socketing menu, refused instance conversion
     // ("not socketable gear"), and never stamped on NPCs, even though the
     // installer's table already converts base-enchanted circlets (m36f, Fable).
+    // kShield (slot 39): shields are off-hand armor and were omitted here entirely
+    // (same class as kHair/kCirclet). The installer converts enchanted shields
+    // with no slot filter, so a shield DID convert + get a socket record — but the
+    // DLL hid it from the pouch menu and refused unsocket, making the gem invisible
+    // and unrecoverable in-game (marth, 2026-07-15). SocketCapacity already returns
+    // 1 for a shield (DESIGN off-hand budget), so this is the only change needed.
     return a_armo->HasPartOf(S::kHead) || a_armo->HasPartOf(S::kHair) ||
            a_armo->HasPartOf(S::kBody) || a_armo->HasPartOf(S::kHands) ||
            a_armo->HasPartOf(S::kAmulet) || a_armo->HasPartOf(S::kRing) ||
-           a_armo->HasPartOf(S::kCirclet) || a_armo->HasPartOf(S::kFeet);
+           a_armo->HasPartOf(S::kCirclet) || a_armo->HasPartOf(S::kFeet) ||
+           a_armo->HasPartOf(S::kShield);
 }
 
 // Re-apply a socketed instance's ability to an already-worn item after a
