@@ -5998,6 +5998,7 @@ namespace sndhook {
     static std::uintptr_t g_sndrVt1 = 0, g_sndrVt2 = 0;  // BGSSoundDescriptorForm vtables
     static BuildSoundFn*  g_realBuildSound = nullptr;    // real 67666 entry (unhooked)
     static std::atomic<int> g_probeLog{ 0 };
+    static std::atomic<int> g_rejLog{ 0 };               // v22: guard-rejected descriptor census
 
     // POD-only, SEH-guarded. Returns the owning SNDR FormID iff a_desc is the
     // BSISoundDescriptor subobject (form+0x20) of a BGSSoundDescriptorForm; else 0.
@@ -6017,6 +6018,21 @@ namespace sndhook {
         return 0;
     }
 
+    // v22: SEH-safe read of the descriptor's OWN vtable (no form deref). Lets us
+    // type a non-BGSSoundDescriptorForm descriptor (e.g. a raw BGSStandardSoundDef
+    // or a runtime/temp/magic-apply descriptor) that the form guard rejects — the
+    // leading suspect for the black-screen hum, since it'd be built but never logged.
+    static std::uintptr_t ReadDescVtableSafe(void* a_desc) noexcept {
+        if (!a_desc) {
+            return 0;
+        }
+        __try {
+            return *reinterpret_cast<std::uintptr_t*>(a_desc);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return 0;
+        }
+    }
+
     static bool BuildSoundProbe(RE::BSAudioManager* a_self, RE::BSSoundHandle* a_handle,
                                 RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags) {
         // v21: log EVERY SNDR-form build (not just the 4 vanilla). The load hum plays
@@ -6024,14 +6040,26 @@ namespace sndhook {
         // so it's a NON-shader build we've been filtering out. sndr!=0 means the guard
         // matched a real BGSSoundDescriptorForm (non-form descriptors like physics
         // impact return 0 and are skipped — no flood, no fault).
-        const RE::FormID sndr = ReadEnchantSndrSafe(a_desc);
+        const std::uintptr_t base    = REL::Module::get().base();
+        const std::uintptr_t siteRva = reinterpret_cast<std::uintptr_t>(_ReturnAddress()) - base - 5;
+        const RE::FormID     sndr    = ReadEnchantSndrSafe(a_desc);
         if (sndr != 0) {
-            const std::uintptr_t ra      = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
-            const std::uintptr_t siteRva = ra - REL::Module::get().base() - 5;  // the E8 call site
-            const int            n       = g_probeLog.fetch_add(1, std::memory_order_relaxed) + 1;
+            const int n = g_probeLog.fetch_add(1, std::memory_order_relaxed) + 1;
             if (n <= 900) {
                 spdlog::info("[diag-bld #{}] SNDR={:08X} site=+0x{:X} flags=0x{:X}",
                              n, sndr, siteRva, a_flags);
+            }
+        } else {
+            // v22: descriptor is NOT a BGSSoundDescriptorForm — the form guard rejected
+            // it. Log its own vtable RVA + site so we can identify the class (a burst
+            // of one vtable at one site during the black-screen phase = the hum).
+            const std::uintptr_t vt = ReadDescVtableSafe(a_desc);
+            if (vt) {
+                const int m = g_rejLog.fetch_add(1, std::memory_order_relaxed) + 1;
+                if (m <= 900) {
+                    spdlog::info("[diag-rej #{}] descVt=+0x{:X} site=+0x{:X} flags=0x{:X}",
+                                 m, vt - base, siteRva, a_flags);
+                }
             }
         }
         return g_realBuildSound(a_self, a_handle, a_desc, a_flags);
@@ -6093,8 +6121,8 @@ namespace sndhook {
             tramp.write_call<5>(site, BuildSoundProbe);
             ++ok;
         }
-        spdlog::info("[snd] v21 all-SNDR BuildSound census: {} sites hooked, {} skipped "
-                     "(log-only; logs EVERY SNDR build); sndrVt=0x{:X}/0x{:X}",
+        spdlog::info("[snd] v22 BuildSound census: {} sites hooked, {} skipped "
+                     "([diag-bld]=form builds, [diag-rej]=non-form descriptor vtables); sndrVt=0x{:X}/0x{:X}",
                      ok, skip, g_sndrVt1, g_sndrVt2);
     }
 
@@ -6144,8 +6172,8 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SetupLog();
     menuhook::Install();     // must be written before the renderer initializes
     sndhook::Install();      // [snd] enchant-hum gate (Init+0x113 OwnedController mute)
-    sndhook::ProbeInstall();     // [snd] v21: ALL-SNDR census at the 39 non-Init BuildSound sites
-    sndhook::PlayProbeInstall(); // [snd] v21: valid-handle census at the 66 BSSoundHandle::Play sites
+    sndhook::ProbeInstall();     // [snd] v22: all-SNDR + guard-REJECT vtable census at 39 BuildSound sites
+    // sndhook::PlayProbeInstall(); // v21 Play census done (only UI/physics, no enchant replay) — disabled
 
     const auto gameVersion = REL::Module::get().version();
     spdlog::info("MEO native v1.0.6 loading; runtime {}", gameVersion.string());
