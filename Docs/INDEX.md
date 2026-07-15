@@ -30,17 +30,31 @@ support. Remaining for 1.0.0: docs/portability audit + release engineering.
    co-save discipline, ops traps, known issues (§8). Synced once to
    `../Linux-Native-Tools/instance-data-and-events.md` (this repo is
    canonical). The living truth for behavior is `native/plugin.cpp`.
-3. **MANUAL_MOD_CREATION_GUIDE.md** (when creating/altering RECORDS) — the
+3. **ARCHITECTURE.md** (before touching `native/plugin.cpp`) — the subsystem
+   map with line refs: identity/`g_sockets`, the enchant-build pipeline and
+   the owner-gated stacking cap, pouch/transfers, the kill sink + XP economy,
+   loot/conversion, perks, the three hooks + thread/lock map, the windowed
+   sound mute, co-save + load reactivation, config, and the generator/
+   installer contracts (FormID bands, calibration).
+4. **INVARIANTS.md** (before ANY code change) — the load-bearing rules, each
+   an imperative + the failure mode that violating it produced: engine flows
+   + the two approved hand-write exceptions, snapshot-before-mutate,
+   ResolveFormID/bounded co-save reads, owner-gated cap, uid minting, the
+   ImGui/sound lock protocols, the INI rename rule, frozen FormID contracts.
+5. **ANTI_PATTERNS.md** (for siblings MRO/MAO, and before repeating history)
+   — the portable "never again" catalog distilled from the 1.0.6 four-review
+   cycle: one rule + one line on how each bit MEO.
+6. **MANUAL_MOD_CREATION_GUIDE.md** (when creating/altering RECORDS) — the
    binary format reference: record/group/subrecord encoding, verified recipes
    (GLOB, QUST, VMAD, MGEF, SPEL, PERK, FLST, LVLI, GMST, SEQ), the PO3 event
    rules, Papyrus-on-Linux compilation, FOMOD rules.
-4. **DEBUGGING.md** (when something misbehaves) — symptom → cause → fix for
+7. **DEBUGGING.md** (when something misbehaves) — symptom → cause → fix for
    every failure class hit across both this project and its sibling MRO, plus
    the universal diff-against-vanilla method and native crash-log guidance.
-5. **TEST_GUIDE.md** (before/after each release) — the 1.0 in-game test
+8. **TEST_GUIDE.md** (before/after each release) — the 1.0 in-game test
    matrix: sockets, leveling, conversion, perks, support gems, the pouch,
    stations, MCM.
-6. **P0_TESTING.md** (HISTORICAL) — the pre-native Papyrus prototype gate.
+9. **P0_TESTING.md** (HISTORICAL) — the pre-native Papyrus prototype gate.
    Passed 2026-07-05; kept for the record.
 
 ## Forward plans (designed, not yet built)

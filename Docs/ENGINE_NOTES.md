@@ -127,10 +127,25 @@ The `- 4` offset on the callback message is the trap everyone hits.
 - Store stable STRING identities (catalog gids / effect signatures), never
   enumeration indexes — they must survive load-order and catalog changes.
 - Key per-instance records on `(baseFormID, uniqueID)` (§1).
-- Newer-version records on an older DLL: log loudly, leave unread, don't
-  crash (downgrade = sockets inert for the session).
+- **Every stored FormID passes `ResolveFormID` on load** (v1.0.6 review B1) —
+  the co-save stores raw runtime ids, mod-index byte included; any load-order
+  change remaps plugin indices and un-resolved rehydration mis-keys every
+  record. Applies to dynamic FF-form ids too (they go through the handle
+  map). Unresolvable → drop + log, never guess.
+- **Bound counts, bail on short reads, clamp fields at ingestion** — a
+  truncated record must stop the parse, not fabricate keys; a corrupt level 0
+  indexed `thresholds[-1]` two subsystems away.
+- **SKSE does NOT round-trip unread co-save records** (v1.0.6 review S1):
+  newer-version records loaded by an older DLL are DESTROYED by its next
+  save. Warn loudly (log + one-shot message box); the old "preserved as
+  unread" log line was a comforting falsehood.
 - One-time grants (starter kits): only consume the persisted flag when the
   grant actually succeeded — a missing ESP must retry next load, not burn it.
+- **Equip/unequip dispatch is SYNCHRONOUS into every registered sink** —
+  never cycle equipment while iterating a live `entryList`/`extraLists`
+  (`BSSimpleList`); snapshot targets first, re-find records by key, hold
+  actors by handle (INVARIANTS.md has the full rule set; cross-repo copy
+  §17-§20 of the Linux-Native-Tools notes).
 
 ## 7. Ops traps (test protocol)
 
