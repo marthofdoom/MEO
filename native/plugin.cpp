@@ -76,6 +76,7 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <intrin.h>  // _ReturnAddress (v19 BuildSound-site probe)
 #include <mutex>
 #include <thread>
 
@@ -3818,7 +3819,7 @@ namespace menuhook {
     }
 
     void Install() {
-        SKSE::AllocTrampoline(512);  // menuhook (3 call-hooks) + sndhook (1 call-hook)
+        SKSE::AllocTrampoline(2048);  // menuhook (3) + sndhook Init gate (1) + v19 probe (39 BuildSound sites)
         write_thunk_call<D3DInitHook>();
         write_thunk_call<DXGIPresentHook>();
         write_thunk_call<InputDispatchHook>();
@@ -5975,6 +5976,95 @@ namespace sndhook {
                      "OwnedController(armor)=mute UNCAPPED, weapon/other=keep; ownedVt=0x{:X} weapVt=0x{:X}",
                      g_ownedCtrlVtable, g_weapCtrlVtable);
     }
+
+    // ── v19 DIAG: wide BuildSound-site probe to find the SECOND emitter ──
+    // marth: the load racket is the SAME MAGEnchantedUnsheathe hum (001037D6-9),
+    // "just stacked", yet the v18 census proved all 90 armor glows at Init+0x113
+    // ARE muted (and vendor is silent). So on load these SNDRs are (re)built by a
+    // DIFFERENT one of BuildSoundDataFromDescriptor's 40 call sites. We hook the
+    // OTHER 39 (Init+0x113 stays on its OwnedController mute) and, for any build of
+    // SNDR 001037D6-9, log WHICH site fired (via the return address). LOG-ONLY: we
+    // always call through to the real builder, so nothing is suppressed here — this
+    // run identifies the emitter; a later build adds the gate.
+    //
+    // SAFETY (this is what CTD'd before): the descriptor read is BOTH SEH-guarded
+    // AND vtable-matched to BGSSoundDescriptorForm, so a non-form descriptor (e.g.
+    // the physics-impact one at id36208 that was on the old crash stack) can never
+    // fault us or be misread. Call-site write_call (never an entry-detour), which
+    // v12's 40-site net already proved crash-safe on this exact game.
+    static std::uintptr_t g_sndrVt1 = 0, g_sndrVt2 = 0;  // BGSSoundDescriptorForm vtables
+    static BuildSoundFn*  g_realBuildSound = nullptr;    // real 67666 entry (unhooked)
+    static std::atomic<int> g_probeLog{ 0 };
+
+    // POD-only, SEH-guarded. Returns the owning SNDR FormID iff a_desc is the
+    // BSISoundDescriptor subobject (form+0x20) of a BGSSoundDescriptorForm; else 0.
+    static RE::FormID ReadEnchantSndrSafe(RE::BSISoundDescriptor* a_desc) noexcept {
+        if (!a_desc) {
+            return 0;
+        }
+        __try {
+            auto* p = reinterpret_cast<std::uint8_t*>(a_desc) - 0x20;  // candidate form
+            const std::uintptr_t vt = *reinterpret_cast<std::uintptr_t*>(p);
+            if (vt == g_sndrVt1 || (g_sndrVt2 && vt == g_sndrVt2)) {
+                return *reinterpret_cast<RE::FormID*>(p + 0x14);  // TESForm::formID
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return 0;
+        }
+        return 0;
+    }
+
+    static bool BuildSoundProbe(RE::BSAudioManager* a_self, RE::BSSoundHandle* a_handle,
+                                RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags) {
+        const RE::FormID sndr = ReadEnchantSndrSafe(a_desc);
+        if (sndr >= 0x001037D6 && sndr <= 0x001037D9) {
+            const std::uintptr_t ra      = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+            const std::uintptr_t siteRva = ra - REL::Module::get().base() - 5;  // the E8 call site
+            const int            n       = g_probeLog.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (n <= 250) {
+                spdlog::info("[diag-probe #{}] SNDR={:08X} site=+0x{:X} flags=0x{:X}",
+                             n, sndr, siteRva, a_flags);
+            }
+        }
+        return g_realBuildSound(a_self, a_handle, a_desc, a_flags);
+    }
+
+    // 39 non-Init direct call sites of BuildSoundDataFromDescriptor (1.6.1170 RVAs;
+    // enumerated from the decrypted .text, each verified E8->67666 before patching).
+    static constexpr std::uintptr_t kProbeSites[] = {
+        0x1EF430, 0x21B132, 0x27DEE1, 0x287E5E, 0x2EEA4A, 0x51BF53,
+        0x51C3D0, 0x551A8A, 0x551B44, 0x5BEEB9, 0x5DA404, 0x5DA63D,
+        0x5DA819, 0x5DAC7F, 0x5DB09E, 0x62EF73, 0x6317A9, 0x65FFDA,
+        0x668143, 0x6686A6, 0x68F1CA, 0x69C9C1, 0x69F58C, 0x6C6D25,
+        0x6E419F, 0x70F350, 0x743F00, 0x74DAEA, 0x7D3884, 0x7D4907,
+        0x7D9D92, 0x7E94C7, 0x7F0B80, 0x936B89, 0x97AC92, 0x97AD5E,
+        0x983C08, 0xCB0FA9, 0xCB1159,
+    };
+
+    void ProbeInstall() {
+        if (REL::Module::get().version() != REL::Version(1, 6, 1170, 0)) {
+            return;  // RVAs are 1.6.1170-specific
+        }
+        g_sndrVt1        = REL::ID(191106).address();  // VTABLE_BGSSoundDescriptorForm [0]
+        g_sndrVt2        = REL::ID(191108).address();  // VTABLE_BGSSoundDescriptorForm [1]
+        g_realBuildSound = reinterpret_cast<BuildSoundFn*>(REL::ID(67666).address());
+        const auto  base   = REL::Module::get().base();
+        const auto  target = REL::ID(67666).address();
+        auto&       tramp  = SKSE::GetTrampoline();
+        int ok = 0, skip = 0;
+        for (const auto rva : kProbeSites) {
+            const auto  site = base + rva;
+            const auto* p    = reinterpret_cast<const std::uint8_t*>(site);
+            if (*p != 0xE8) { ++skip; continue; }  // never patch non-call bytes
+            const auto rel = *reinterpret_cast<const std::int32_t*>(site + 1);
+            if (site + 5 + static_cast<std::intptr_t>(rel) != target) { ++skip; continue; }
+            tramp.write_call<5>(site, BuildSoundProbe);
+            ++ok;
+        }
+        spdlog::info("[snd] v19 BuildSound-site probe installed: {} sites hooked, {} skipped "
+                     "(log-only; finds the 2nd MAGEnchantedUnsheathe emitter); sndrVt=0x{:X}/0x{:X}",
+                     ok, skip, g_sndrVt1, g_sndrVt2);
+    }
 }  // namespace sndhook
 
 }  // namespace
@@ -5982,8 +6072,9 @@ namespace sndhook {
 SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SKSE::Init(skse);
     SetupLog();
-    menuhook::Install();  // must be written before the renderer initializes
-    sndhook::Install();   // [snd] enchant-SFX suppression (reuses menuhook's trampoline)
+    menuhook::Install();     // must be written before the renderer initializes
+    sndhook::Install();      // [snd] enchant-hum gate (Init+0x113 OwnedController mute)
+    sndhook::ProbeInstall(); // [snd] v19 diag: wide BuildSound-site probe (find 2nd emitter)
 
     const auto gameVersion = REL::Module::get().version();
     spdlog::info("MEO native v1.0.6 loading; runtime {}", gameVersion.string());
