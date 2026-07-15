@@ -103,15 +103,11 @@ def make_mgefs():
         body =subrec('EDID',zstr(edid))+subrec('FULL',zstr(""))+subrec('MDOB',struct.pack('<I',0))
         body+=subrec('DATA',mgef_marker_data(deliv))+subrec('SNDD',b'')+subrec('DNAM',struct.pack('<I',0))
         out.write(record('MGEF',fid,0,body))
-    # Pouch scripted MGEF (order copied from vanilla scripted MGEF: EDID,VMAD,FULL,MDOB,DATA,SNDD,DNAM)
-    vmad=VMADBuilder(); vmad.add_script("MEO_PouchScript",[
-        ("PlayerRef",prop_obj(FREF_PLAYER)),
-        ("AllGems",prop_obj(FID_FLST_ALL)),
-        ("RuntimePath",prop_str(RUNTIME_REL)),
-        ("MarkerContact",prop_obj(FID_MARKER_CONTACT)),
-        ("MarkerSelf",prop_obj(FID_MARKER_SELF)),
-    ])
-    body =subrec('EDID',zstr("MEO_PouchMGEF"))+subrec('VMAD',vmad.build())+subrec('FULL',zstr("Gem Pouch"))
+    # Pouch scripted MGEF. The DLL owns the pouch entirely (it intercepts the
+    # power's cast — plugin.cpp kPouchSpellID), so NO VMAD/MEO_PouchScript: that
+    # pex isn't shipped in any 1.0.x zip, and attaching it only spammed a
+    # "Cannot open store" Papyrus error every load (audit). Order: EDID,FULL,MDOB,DATA,SNDD,DNAM.
+    body =subrec('EDID',zstr("MEO_PouchMGEF"))+subrec('FULL',zstr("Gem Pouch"))
     body+=subrec('MDOB',struct.pack('<I',0))+subrec('DATA',mgef_scripted_self_data())+subrec('SNDD',b'')+subrec('DNAM',struct.pack('<I',0))
     out.write(record('MGEF',FID_POUCH_MGEF,0,body))
     return group('MGEF',out.getvalue())
@@ -191,7 +187,11 @@ def allocate_gems():
             body+=subrec('DATA',struct.pack('<If',0,0.1))
             out.write(record('MISC',fid,0,body))
             gem_form_map[gid][lvl]=fid
-            (weapon_fids if g['domain']=='weapon' else armor_fids).append(fid)
+            # Support-domain gems (Echo/Conduit/Focus) belong to NEITHER the weapon
+            # nor the armor FLST — the DLL keys off the compiled catalog (isSupport),
+            # not these lists. Bucketing them under armor was a mis-classification.
+            if g['domain']=='weapon': weapon_fids.append(fid)
+            elif g['domain']=='armor': armor_fids.append(fid)
     return out.getvalue(), gem_form_map, weapon_fids, armor_fids, next_fid
 
 def make_flst(fid,edid,member_fids):
@@ -233,8 +233,11 @@ def make_cont():
 # against MRO's shipped, in-game-proven MCM quest — flags live at offset 4).
 def qust_dnam(flags=0x0001|0x0004): return struct.pack('<B',20)+b'\x01\x00\xff'+struct.pack('<HHI',flags,0,0)
 def make_startup_quest():
-    vmad=VMADBuilder(); vmad.add_script("MEO_StartupQuest",[("PlayerRef",prop_obj(FREF_PLAYER)),("GemPouchPower",prop_obj(FID_POUCH_SPELL))])
-    body =subrec('EDID',zstr("MEO_StartupQuest"))+subrec('FULL',zstr("MEO Startup"))+subrec('VMAD',vmad.build())
+    # No VMAD/MEO_StartupQuest: the DLL grants the Gem Pouch power itself
+    # (plugin.cpp AddSpell), that pex ships in no 1.0.x zip, and attaching it
+    # only spammed a "Cannot open store" Papyrus error every load (audit). The
+    # empty run-once quest record is kept so its FormID stays reserved (frozen).
+    body =subrec('EDID',zstr("MEO_StartupQuest"))+subrec('FULL',zstr("MEO Startup"))
     body+=subrec('DNAM',qust_dnam())+subrec('NEXT',b'')+subrec('ANAM',struct.pack('<I',0))
     return record('QUST',FID_STARTUP_QUEST,0,body)
 def make_mcm_quest():
@@ -344,7 +347,11 @@ MCM_TUNABLES=[
     ("XP & Balance","XP","fEnchSkillXP","Enchanting skill XP from souls",
      "Multiplier (1.0 = tuned default) on the Enchanting SKILL experience gained per soul fed to a gem (base 11/26/56/94/150 by soul size). Soul feeding is this list's enchanting practice.",
      'f',1.0,0.0,3.0,0.05,"{2}"),
-    ("XP & Balance","XP","fGemXpSkillXP","Enchanting XP from gem kills",
+    # v1.0.6: RENAMED from fGemXpSkillXP. Pre-1.0.6 that key was an ABSOLUTE rate
+    # (default 0.01, max 0.05); v1.0.6 makes it a 1.0-default ×multiplier. Renaming
+    # orphans any persisted legacy value so the DLL can't misread 0.01 as "0.01×".
+    # plugin.cpp's ApplyIniFile branch must parse this exact key: "fGemKillXpMult".
+    ("XP & Balance","XP","fGemKillXpMult","Enchanting XP from gem kills",
      "Multiplier (1.0 = tuned default) on the tiny Enchanting SKILL experience your socketed gems' kills trickle into Enchanting, so combat slowly trains it. Counted once per kill, not per gem. Toward 0 = slower, up to 10x = faster.",
      'f',1.0,0.0,10.0,0.5,"{1}"),
     ("XP & Balance","XP","fDiscoverSkillXP","Enchanting XP from new gems",

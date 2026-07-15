@@ -77,7 +77,9 @@ static class Commands
         foreach (var n in av.PerkTree)
         {
             if (!n.Perk.TryResolve(cache, out var perk)) continue;
-            for (var p = perk; p is not null;
+            // Guard against an NNAM cycle in a malformed perk mod (audit).
+            var seen = new HashSet<FormKey>();
+            for (var p = perk; p is not null && seen.Add(p.FormKey);
                  p = p.NextPerk.TryResolve(cache, out var np) ? np : null)
             {
                 // Re-resolve to the WINNING override (NNAM may point at origin).
@@ -237,7 +239,10 @@ static class Commands
         }
         IEnumerable<IPerkGetter> RankChain(IPerkGetter first)
         {
-            for (var p = first; p is not null;
+            // Guard against an NNAM cycle in a malformed perk mod (self- or
+            // mutually-referential NextPerk) — never rewalk a perk (audit).
+            var seen = new HashSet<FormKey>();
+            for (var p = first; p is not null && seen.Add(p.FormKey);
                  p = !p.NextPerk.IsNull && p.NextPerk.TryResolve(cache, out var np) ? np : null)
             {
                 yield return p;
@@ -614,7 +619,10 @@ static class Commands
         // the moment absolute riders landed — wrong domain). Marked for a
         // deeper perk-vs-equipment classification pass later.
         var ruledWaived = new HashSet<FormKey>();
-        var rulingsPath = outPath.Replace(".json", ".rulings.json");
+        // Only the trailing extension — a parent dir containing ".json" must not
+        // be rewritten (audit): meo_calibration.json -> meo_calibration.rulings.json.
+        var rulingsPath = outPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
+            ? outPath[..^5] + ".rulings.json" : outPath + ".rulings.json";
         if (File.Exists(rulingsPath))
         {
             using var doc2 = System.Text.Json.JsonDocument.Parse(File.ReadAllText(rulingsPath));
@@ -638,7 +646,10 @@ static class Commands
             noteWeight[msg] = noteWeight.GetValueOrDefault(msg) + weight;
         foreach (var (ench, weight) in enchWeight)
         {
-            var fx = data.EnchInfo[ench].Fx
+            // Dangling/unresolvable ENCH (missing master, dirty plugin): no census
+            // entry — skip rather than KeyNotFoundException on the indexer (audit).
+            if (!data.EnchInfo.TryGetValue(ench, out var einfo)) continue;
+            var fx = einfo.Fx
                 .Where(t => t.Sig is not null && t.M is not null).ToList();
             if (fx.Count == 0) continue;
 
@@ -1105,9 +1116,14 @@ static class Commands
         string Classify(FormKey ench, bool generic)
         {
             if (!generic) return "keep-named";
-            var info = data.EnchInfo.GetValueOrDefault(ench);
+            // Unresolvable or effect-less ENCH (missing master, dirty plugin): never
+            // strip and never convert — a 0-effect record must not fall through to
+            // "keep-generic-multifx" (which would feed the calibration indexer).
+            if (!data.EnchInfo.TryGetValue(ench, out var info) ||
+                info.Fx is null || info.Fx.Count == 0)
+                return "keep-named";
             if (info.CastLike) return "keep-cast";
-            var (n, cov) = (info.Fx?.Count ?? 0, info.Covered);
+            var (n, cov) = (info.Fx.Count, info.Covered);
             return n switch
             {
                 1 when cov => "strip-1fx",

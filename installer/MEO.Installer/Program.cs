@@ -39,6 +39,8 @@ var subs = new List<string>();
 var adds = new List<string>();
 var positional = new List<string>();
 var installMode = args.Length == 0;
+try
+{
 if (installMode)
 {
     // Post-install mode: the exe ships inside the mod folder (<MO2>/mods/MEO),
@@ -94,10 +96,25 @@ else
     (cmd, mo2Root, profile) = (args[0], args[1], args[2]);
     for (int i = 3; i < args.Length; i++)
     {
-        if (args[i] == "--sub") subs.Add(args[++i]);
-        else if (args[i] == "--add") adds.Add(args[++i]);
+        if (args[i] is "--sub" or "--add")
+        {
+            if (i + 1 >= args.Length)
+                return Commands.Fail($"{args[i]}: expects a following esp path");
+            (args[i] == "--sub" ? subs : adds).Add(args[++i]);
+        }
         else positional.Add(args[i]);
     }
+}
+}
+catch (Exception ex)
+{
+    // Setup (MO2-root prompt, PickProfile, arg parse) reads the filesystem and
+    // can throw BEFORE the load-order try below (missing profiles/ dir, bad
+    // args). It sat outside any try, so a double-clicked Wine console died
+    // silently — the m32e vanishing-window class. Surface it and hold the window.
+    Console.Error.WriteLine("SETUP FAILED — MEO cannot determine the load order to read:");
+    Console.Error.WriteLine(ex.ToString());
+    return Pause(1, installMode);
 }
 
 List<(string Name, string Path)> resolved;

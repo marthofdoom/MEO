@@ -9,3 +9,4 @@ assets/mods/
 installer/**/publish*/
 installer/**/bin/
 installer/**/obj/
+assets/enchant-sounds/
