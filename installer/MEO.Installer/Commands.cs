@@ -864,12 +864,6 @@ static class Commands
         // proportions. A gem thus tracks the list's own balance — crafting
         // included — instead of a baked constant. Families with no generic
         // enchant in the list keep the compiled default.
-        static float Pct(List<float> v, double p)
-        {
-            var s = v.OrderBy(x => x).ToList();
-            var idx = (int)Math.Clamp(Math.Round(p * (s.Count - 1)), 0, s.Count - 1);
-            return s[idx];
-        }
         int curvesDerived = 0;
         foreach (var (fam, mags) in famMags)
         {
@@ -995,19 +989,44 @@ static class Commands
         $"{(int)(m.Flags & (MagicEffect.Flag.Hostile | MagicEffect.Flag.Detrimental))}|" +
         $"{m.ResistValue}|{m.SecondActorValue}";
 
+    // Nearest-rank percentile over an unsorted sample. Empty -> 0 (WriteCalibration
+    // and DetectCandidates share this; the level-V calibration anchor and the
+    // candidate report's p90_anchor must be the SAME definition or the report
+    // stops predicting what the conversion does).
+    static float Pct(List<float> v, double p)
+    {
+        if (v.Count == 0) return 0f;
+        var s = v.OrderBy(x => x).ToList();
+        return s[(int)Math.Clamp(Math.Round(p * (s.Count - 1)), 0, s.Count - 1)];
+    }
+
     // ── Phase 2: uncovered-family candidate detector (REPORT ONLY) ──────
-    // Census the load order for enchanted generic loot whose enchantment
-    // matches NO catalog family — the exact `best is null` drop the conversion
-    // makes at WriteCalibration — cluster the misses by their primary MGEF, and
-    // emit proposed catalog stubs for marth to review + hand-add (the phase-1
+    // Census EVERY winning carried ENCH (not just strip-class generics — the
+    // m38 baseline's blind spot: on Requiem-based lists generic loot is sparse
+    // and the real gaps ride CC/leveled/named gear, e.g. "Waning Shock" /
+    // "of Harrowing") and report what the catalog misses, in two buckets:
+    //   A: fully-uncovered family — the exact `best is null` drop the
+    //      conversion makes at WriteCalibration; NO catalog family matches.
+    //      New-gem candidates, clustered by primary MGEF.
+    //   B: partial match — a family matches (so the conversion produces a gem)
+    //      but the enchant ALSO carries an effect whose signature no catalog
+    //      gem mirrors ("almost works"), clustered by the UNCOVERED effect's
+    //      MGEF, recording which covered family it rides on. NB this is a
+    //      catalog-coverage statement, not a hard conversion-loss one: at
+    //      WriteCalibration an unconditional leftover is ADOPTED as a rider on
+    //      the matched family and a conditional/pinning one keeps the item
+    //      enchanted — bucket B flags "no gem of its own", the value marth
+    //      decides whether to promote to a first-class gem.
+    // Emits proposed catalog stubs for marth to review + hand-add (the phase-1
     // flow, formalized). This NEVER mutates the catalog, ESP, or frozen forms;
     // it only reads the load order and writes a candidates report.
     sealed class Candidate
     {
         public IMagicEffectGetter? Primary;
-        public int ItemCount, EnchCount, Weapon, Armor;
+        public int ItemCount, EnchCount, Weapon, Armor, Generic, Named;
         public List<float> Mags = [];
         public Dictionary<FormKey, IMagicEffectGetter> Refs = [];  // union of effect refs (the recipe)
+        public Dictionary<string, int> RidesOn = [];  // bucket B: covered family -> carrying items
         public List<string> Samples = [];
     }
 
@@ -1018,32 +1037,35 @@ static class Commands
         if (BuildCensus(lo, cache, catalogPath) is not { } data) return 1;
 
         var clsByItem = data.Items.ToDictionary(i => i.Key, i => i.Cls);
-        // The same generic-loot population the conversion considers (strip* or
-        // keep-generic-multifx): count carrying items per ENCH and keep their
-        // Raw rows for the domain tally + sample names.
-        var enchWeight = new Dictionary<FormKey, int>();
+        // EVERY enchanted item, whatever its class (strip, keep-named, CC
+        // gear, NPC twins): count carrying items per ENCH and keep their Raw
+        // rows for the domain tally, generic/named split, and sample names.
         var rawByEnch = new Dictionary<FormKey, List<(FormKey Key, FormKey Ench, string? Name,
             string? BaseName, FormKey? Root, ModKey Mod, string? Edid)>>();
         foreach (var r in data.Raw)
         {
-            if (!clsByItem.TryGetValue(r.Key, out var cls)) continue;
-            if (!(cls.StartsWith("strip") || cls == "keep-generic-multifx")) continue;
-            enchWeight[r.Ench] = enchWeight.GetValueOrDefault(r.Ench) + 1;
             if (!rawByEnch.TryGetValue(r.Ench, out var rows)) rawByEnch[r.Ench] = rows = [];
             rows.Add(r);
         }
 
-        var clusters = new Dictionary<FormKey, Candidate>();  // keyed by primary MGEF
-        int uncoveredEnch = 0, coveredSkipped = 0, castSkipped = 0;
-        foreach (var (ench, weight) in enchWeight)
+        var bucketA = new Dictionary<FormKey, Candidate>();  // keyed by primary MGEF
+        var bucketB = new Dictionary<FormKey, Candidate>();  // keyed by the UNCOVERED companion MGEF
+        var bItems = new HashSet<FormKey>();  // distinct bucket-B carriers (an ENCH may have >1 uncovered effect)
+        int aEnch = 0, bEnch = 0, coveredSkipped = 0, castSkipped = 0, noCarrier = 0, zeroEffect = 0;
+        foreach (var (ench, einfo) in data.EnchInfo)
         {
-            if (!data.EnchInfo.TryGetValue(ench, out var einfo)) continue;
             if (einfo.CastLike) { castSkipped++; continue; }  // staff/concentration — never a gem
             var fx = einfo.Fx.Where(t => t.Sig is not null && t.M is not null).ToList();
-            if (fx.Count == 0) continue;
+            // No resolvable effect (missing master, dirty plugin): nothing to
+            // cover. Counted, not silently dropped.
+            if (fx.Count == 0) { zeroEffect++; continue; }
+            // Not carried by any weapon/armor record => unreachable as item
+            // loot (spell-support or orphaned ENCH). Dropped, but counted and
+            // logged — no silent truncation.
+            if (!rawByEnch.TryGetValue(ench, out var rows)) { noCarrier++; continue; }
+            var weight = rows.Count;
 
-            // The identical family match the conversion runs — best is null =>
-            // no catalog family covers this enchant => an uncovered candidate.
+            // The identical family match the conversion runs at WriteCalibration.
             string? best = null;
             int bestN = 0;
             bool bestFirst = false;
@@ -1055,35 +1077,63 @@ static class Commands
                 if (refs.Count > bestN || (refs.Count == bestN && firstMatch && !bestFirst))
                     (best, bestN, bestFirst) = (famKey, refs.Count, firstMatch);
             }
-            if (best is not null) { coveredSkipped++; continue; }
-            uncoveredEnch++;
+            var uncovered = fx.Where(t => !data.Covered.Contains(t.Sig!)).ToList();
+            if (best is not null && uncovered.Count == 0) { coveredSkipped++; continue; }
 
-            var prim = fx[0];  // first effect is the primary, as the match loop treats it
-            if (!clusters.TryGetValue(prim.M!.FormKey, out var c))
-                clusters[prim.M!.FormKey] = c = new Candidate { Primary = prim.M };
-            c.ItemCount += weight;
-            c.EnchCount++;
-            if (prim.Mag > 0) for (int w = 0; w < weight; w++) c.Mags.Add(prim.Mag);
-            foreach (var t in fx) c.Refs[t.M!.FormKey] = t.M!;  // union of the recipe's effects
-            if (rawByEnch.TryGetValue(ench, out var rows))
+            // Shared tally: anchor = the effect the cluster is named after
+            // (bucket A: the primary; bucket B: the uncovered companion).
+            void Tally(Candidate c, (string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds) anchor)
+            {
+                c.ItemCount += weight;
+                c.EnchCount++;
+                if (anchor.Mag > 0) for (int w = 0; w < weight; w++) c.Mags.Add(anchor.Mag);
+                foreach (var t in fx) c.Refs[t.M!.FormKey] = t.M!;  // union of the recipe's effects
                 foreach (var row in rows)
                 {
                     if (cache.TryResolve<IWeaponGetter>(row.Key, out _)) c.Weapon++;
                     else if (cache.TryResolve<IArmorGetter>(row.Key, out _)) c.Armor++;
+                    // Generic-loot vs named/unique carriers: a cluster whose
+                    // items are ALL named singletons is likely an artifact
+                    // enchant — reported anyway (marth filters), just labeled.
+                    if (clsByItem.TryGetValue(row.Key, out var cls) &&
+                        (cls.StartsWith("strip") || cls.StartsWith("keep-generic"))) c.Generic++;
+                    else c.Named++;
                     if (c.Samples.Count < 6 && row.Name is { } nm && !c.Samples.Contains(nm))
                         c.Samples.Add(nm);
                 }
+            }
+
+            if (best is null)
+            {
+                // Bucket A: no catalog family matches — a wholly new family.
+                aEnch++;
+                var prim = fx[0];  // first effect is the primary, as the match loop treats it
+                if (!bucketA.TryGetValue(prim.M!.FormKey, out var c))
+                    bucketA[prim.M!.FormKey] = c = new Candidate { Primary = prim.M };
+                Tally(c, prim);
+            }
+            else
+            {
+                // Bucket B: a family matched but at least one effect's signature
+                // is outside the catalog — cluster per uncovered MGEF and
+                // remember which covered family it rides on. (The uncovered
+                // effect may be the enchant's primary, e.g. a shock line whose
+                // only catalog match is a fortify companion — still a partial
+                // match, not a wholly-new family, so it belongs here.)
+                bEnch++;
+                foreach (var row in rows) bItems.Add(row.Key);  // distinct-carrier tally
+                foreach (var u in uncovered.DistinctBy(t => t.M!.FormKey))
+                {
+                    if (!bucketB.TryGetValue(u.M!.FormKey, out var c))
+                        bucketB[u.M!.FormKey] = c = new Candidate { Primary = u.M };
+                    Tally(c, u);
+                    c.RidesOn[best] = c.RidesOn.GetValueOrDefault(best) + weight;
+                }
+            }
         }
 
-        static float Pct(List<float> v, double p)
-        {
-            if (v.Count == 0) return 0f;
-            var s = v.OrderBy(x => x).ToList();
-            return s[(int)Math.Clamp(Math.Round(p * (s.Count - 1)), 0, s.Count - 1)];
-        }
-        var outList = new List<object>();
-        foreach (var c in clusters.Values.OrderByDescending(c => c.ItemCount))
-            outList.Add(new Dictionary<string, object?>
+        static List<object> Stubs(Dictionary<FormKey, Candidate> bucket) =>
+            bucket.Values.OrderByDescending(c => c.ItemCount).Select(c => (object)new Dictionary<string, object?>
             {
                 ["name"] = c.Primary?.Name?.String ?? c.Primary?.EditorID ?? "?",
                 ["domain"] = c.Weapon == 0 && c.Armor == 0 ? "unknown"
@@ -1092,12 +1142,17 @@ static class Commands
                 ["tier"] = "C",         // default — marth adjusts
                 ["item_count"] = c.ItemCount,
                 ["ench_variants"] = c.EnchCount,
+                ["generic_items"] = c.Generic,  // strip*/keep-generic* carriers
+                ["named_items"] = c.Named,      // named/unique/CC carriers
+                ["rides_on"] = c.RidesOn.Count == 0 ? null
+                    : c.RidesOn.OrderByDescending(kv => kv.Value)
+                        .ToDictionary(kv => kv.Key, kv => (object)kv.Value),
                 ["magnitude"] = new Dictionary<string, object>
                 {
-                    ["min"] = c.Mags.Count > 0 ? c.Mags[0] : 0f,
+                    ["min"] = Pct(c.Mags, 0.0),
                     ["p50"] = Pct(c.Mags, 0.50),
                     ["p90_anchor"] = Pct(c.Mags, 0.90),  // suggested level-V anchor (as WriteCalibration)
-                    ["max"] = c.Mags.Count > 0 ? c.Mags[^1] : 0f,
+                    ["max"] = Pct(c.Mags, 1.0),
                 },
                 ["mgef_refs"] = c.Refs.Select(kv => new Dictionary<string, string>
                 {
@@ -1106,25 +1161,57 @@ static class Commands
                     ["mgef"] = kv.Value.EditorID ?? kv.Value.Name?.String ?? "?",
                 }).ToList(),
                 ["samples"] = c.Samples,
-            });
+            }).ToList();
 
+        var aStubs = Stubs(bucketA);
+        var bStubs = Stubs(bucketB);
         var json = System.Text.Json.JsonSerializer.Serialize(new
         {
             generated = "MEO detect-candidates (report only)",
-            uncovered_families = outList.Count,
-            uncovered_ench_records = uncoveredEnch,
-            items_affected = clusters.Values.Sum(c => c.ItemCount),
-            candidates = outList,
+            fully_uncovered = new
+            {
+                families = aStubs.Count,
+                ench_records = aEnch,
+                items = bucketA.Values.Sum(c => c.ItemCount),
+                candidates = aStubs,
+            },
+            uncovered_riders = new
+            {
+                effects = bStubs.Count,
+                ench_records = bEnch,
+                items = bItems.Count,  // distinct carriers (per-effect item_count may overlap)
+                candidates = bStubs,
+            },
+            skipped = new
+            {
+                fully_covered = coveredSkipped,
+                cast_like = castSkipped,
+                no_carrying_items = noCarrier,
+                zero_effect = zeroEffect,
+            },
         }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
         File.WriteAllText(outPath, json);
 
-        Console.WriteLine($"detect-candidates: {clusters.Count} uncovered family/families " +
-            $"({uncoveredEnch} ENCH records, {clusters.Values.Sum(c => c.ItemCount)} generic items) " +
-            $"— {coveredSkipped} covered, {castSkipped} cast-like skipped");
-        foreach (var c in clusters.Values.OrderByDescending(c => c.ItemCount).Take(25))
-            Console.WriteLine($"  {c.ItemCount,4} items  {(c.Weapon >= c.Armor ? "W" : "A")}  " +
-                $"{c.Primary?.Name?.String ?? c.Primary?.EditorID}  " +
-                $"[{string.Join(", ", c.Samples.Take(3))}]");
+        Console.WriteLine($"detect-candidates: A={bucketA.Count} fully-uncovered family/families " +
+            $"({aEnch} ENCH, {bucketA.Values.Sum(c => c.ItemCount)} items), " +
+            $"B={bucketB.Count} uncovered rider effect(s) on matched families " +
+            $"({bEnch} ENCH, {bItems.Count} items) " +
+            $"— skipped: {coveredSkipped} covered, {castSkipped} cast-like, " +
+            $"{noCarrier} no-carrier, {zeroEffect} zero-effect");
+        void Print(Dictionary<FormKey, Candidate> bucket, bool ridesOn)
+        {
+            foreach (var c in bucket.Values.OrderByDescending(c => c.ItemCount).Take(15))
+                Console.WriteLine($"  {c.ItemCount,4} items ({c.Generic}g/{c.Named}n)  " +
+                    $"{(c.Weapon >= c.Armor ? "W" : "A")}  " +
+                    $"{c.Primary?.Name?.String ?? c.Primary?.EditorID}" +
+                    (ridesOn && c.RidesOn.Count > 0
+                        ? $"  rides on {c.RidesOn.OrderByDescending(kv => kv.Value).First().Key}" : "") +
+                    $"  [{string.Join(", ", c.Samples.Take(3))}]");
+        }
+        Console.WriteLine("A: fully-uncovered families (no catalog family matches — new-gem candidates)");
+        Print(bucketA, ridesOn: false);
+        Console.WriteLine("B: partial match — a family matches but an effect has no gem of its own");
+        Print(bucketB, ridesOn: true);
         Console.WriteLine($"written: {outPath}");
         return 0;
     }
