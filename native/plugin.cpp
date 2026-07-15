@@ -243,13 +243,14 @@ static inline std::uint64_t NowMs() {
 // attenuation; MEO's main-thread actions just bump an atomic deadline.
 constexpr RE::FormID     kEnchHumSndr[4]     = { 0x001037D6, 0x001037D7, 0x001037D8, 0x001037D9 };
 constexpr std::uint16_t  kSilentAttenuation  = 0xFFFF;  // centibel attenuation cap = inaudible
-std::atomic<std::uint64_t> g_soundMuteUntilMs{ 0 };     // window deadline (ms); bumped by MEO actions
-static RE::BGSStandardSoundDef* g_magDef[4]     = {};   // cached SNDR standard-defs (kDataLoaded)
-static std::uint16_t            g_magOrigAtten[4] = {}; // saved originals (present-thread only)
-static bool                     g_magMuted        = false; // present-thread only: currently silenced?
+std::atomic<std::uint64_t> g_soundMuteUntilMs{ 0 };     // window deadline (ms)
+static RE::BGSStandardSoundDef* g_magDef[4]     = {};   // cached SNDR standard-defs
+static std::uint16_t            g_magOrigAtten[4] = {}; // saved originals (guarded by g_magMx)
+static std::atomic<bool>        g_magMuted{ false };    // fast flag; transitions under g_magMx
+static std::mutex               g_magMx;                // guards the attenuation writes + origs
 
-// Cache the 4 MAGEnchantedUnsheathe standard sound defs once forms are loaded
-// (main thread, kDataLoaded). Idempotent.
+// Cache the 4 MAGEnchantedUnsheathe standard sound defs. Idempotent; safe to call
+// from kDataLoaded (main menu) AND lazily at kPreLoadGame (covers first load).
 static void CacheEnchHumSndr() {
     for (int i = 0; i < 4; ++i) {
         if (g_magDef[i]) {
@@ -261,40 +262,67 @@ static void CacheEnchHumSndr() {
     }
 }
 
-// Open/extend the mute window (main thread, from MEO's activity sites).
-static inline void OpenEnchHumMuteWindow(std::uint64_t a_durMs) {
-    const std::uint64_t until = NowMs() + a_durMs;
-    // keep the latest/longest deadline
-    std::uint64_t cur = g_soundMuteUntilMs.load(std::memory_order_relaxed);
-    while (until > cur &&
-           !g_soundMuteUntilMs.compare_exchange_weak(cur, until, std::memory_order_relaxed)) {
-    }
-}
-
-// Per-frame from the D3D-present hook. Single writer of the attenuation; applies
-// while the window is open, restores exactly once when it closes. Idempotent.
-static void TickEnchHumMute() {
-    const bool want = NowMs() < g_soundMuteUntilMs.load(std::memory_order_relaxed);
-    if (want == g_magMuted) {
+// Silence the 4 SNDR forms NOW (idempotent). Called immediately on the main thread
+// from every mute trigger — a load beginning (kPreLoadGame) or a MEO action — so the
+// forms are muted BEFORE the first (async) hum, not a render-frame later.
+static void ApplyEnchHumMute() {
+    std::lock_guard<std::mutex> lk(g_magMx);
+    if (g_magMuted.load(std::memory_order_relaxed)) {
         return;
     }
-    g_magMuted = want;
     int touched = 0;
     for (int i = 0; i < 4; ++i) {
         if (!g_magDef[i]) {
             continue;
         }
         auto& atten = g_magDef[i]->soundCharacteristics.staticAttenuation;
-        if (want) {
-            g_magOrigAtten[i] = atten;
-            atten             = kSilentAttenuation;
-        } else {
-            atten = g_magOrigAtten[i];
-        }
+        g_magOrigAtten[i] = atten;
+        atten             = kSilentAttenuation;
         ++touched;
     }
-    spdlog::info("[snd] enchant-hum {} (staticAttenuation on {} SNDR forms)",
-                 want ? "muted for MEO window" : "restored", touched);
+    g_magMuted.store(true, std::memory_order_relaxed);
+    spdlog::info("[snd] enchant-hum muted (staticAttenuation on {} SNDR forms)", touched);
+}
+
+// Restore the originals exactly (idempotent). Called from the D3D-present tick when
+// the window closes.
+static void RestoreEnchHumMute() {
+    std::lock_guard<std::mutex> lk(g_magMx);
+    if (!g_magMuted.load(std::memory_order_relaxed)) {
+        return;
+    }
+    for (int i = 0; i < 4; ++i) {
+        if (g_magDef[i]) {
+            g_magDef[i]->soundCharacteristics.staticAttenuation = g_magOrigAtten[i];
+        }
+    }
+    g_magMuted.store(false, std::memory_order_relaxed);
+    spdlog::info("[snd] enchant-hum restored");
+}
+
+// Extend the window to at least now+dur AND apply the mute immediately (main thread).
+// Used by MEO's actions (rebuild/convert/re-equip/vendor) and by kPreLoadGame.
+static inline void OpenEnchHumMuteWindow(std::uint64_t a_durMs) {
+    const std::uint64_t until = NowMs() + a_durMs;
+    std::uint64_t       cur   = g_soundMuteUntilMs.load(std::memory_order_relaxed);
+    while (until > cur &&
+           !g_soundMuteUntilMs.compare_exchange_weak(cur, until, std::memory_order_relaxed)) {
+    }
+    ApplyEnchHumMute();
+}
+
+// Set the window end directly (may SHORTEN) — kPostLoadGame uses this to restore a
+// few seconds after the load actually completes, rather than at the long fallback.
+static inline void SetEnchHumMuteDeadline(std::uint64_t a_durMs) {
+    g_soundMuteUntilMs.store(NowMs() + a_durMs, std::memory_order_relaxed);
+}
+
+// Per-frame from the D3D-present hook (render thread): restore once the window closes.
+static void TickEnchHumMute() {
+    if (g_magMuted.load(std::memory_order_relaxed) &&
+        NowMs() >= g_soundMuteUntilMs.load(std::memory_order_relaxed)) {
+        RestoreEnchHumMute();
+    }
 }
 
 // ── M3d forms (all IDs extracted from the real Lorerim masters) ───────
@@ -5723,8 +5751,24 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
+    case SKSE::MessagingInterface::kPreLoadGame:
+        // [snd] EARLIEST per-load signal — fires BEFORE the save deserializes, i.e.
+        // before the black-screen actor-restore where the stacked enchant hum plays.
+        // Arm the mute IMMEDIATELY (don't wait for MEO's rebuild, which runs later)
+        // with a generous fallback deadline; kPostLoadGame shortens it once the load
+        // actually completes. Lazy-cache in case kDataLoaded timing ever shifts.
+        CacheEnchHumSndr();
+        OpenEnchHumMuteWindow(30000);  // immediate mute + 30s fallback blanket
+        spdlog::info("[snd] load-in mute armed (immediate)");
+        break;
     case SKSE::MessagingInterface::kPostLoadGame:
     case SKSE::MessagingInterface::kNewGame:
+        // [snd] Load completed — belt-mute (in case kPreLoadGame was missed) then set
+        // the restore ~4s out so draws shortly after load-in settle hum normally. A
+        // MEO rebuild running around here re-extends via OpenEnchHumMuteWindow.
+        CacheEnchHumSndr();
+        ApplyEnchHumMute();
+        SetEnchHumMuteDeadline(4000);
         // After LoadCallback/Revert — co-save flags are current here.
         SKSE::GetTaskInterface()->AddTask([]() {
             EnsurePlayerSetup();
