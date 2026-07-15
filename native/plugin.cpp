@@ -76,7 +76,6 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
-#include <intrin.h>  // _ReturnAddress (v19 BuildSound-site probe)
 #include <mutex>
 #include <thread>
 
@@ -215,91 +214,87 @@ inline std::string ShortGemName(const char* a_full) {
     return s.empty() ? std::string(a_full) : s;  // never strip a name to nothing
 }
 float g_socketValueMult = 1.0f; // [Balance] fSocketValueMult — scale on per-tier socketed-item gold; RebuildInstanceEnchant uses it (declared up top like g_magnitudeMult) (m38c)
-std::atomic<int> g_sndProbe{0}; // [DEBUG snd-probe] temporary: correlate the vendor "enchant sound" with enchant-build vs world-place. Remove before release.
-// [snd] Raised ONLY for the synchronous duration of MEO's own Add{Weapon,Armor}Enchantment
-// call (main thread). The sound hooks drop a sound ONLY while this is set, so nothing but the
-// engine's incidental enchant SFX is ever affected — ambience/music/dialogue/other SFX untouched.
-thread_local bool g_inEnchCreate = false;
-// [snd] steady-clock deadline (ms) opened after each enchant build. The enchant
-// SFX is ASYNC — it plays a short time AFTER g_inEnchCreate clears (confirmed on
-// deck), so the sync flag alone can't gate it. Global (not thread_local): the
-// async sound may play on the audio/main thread, not the builder's thread.
-std::atomic<std::uint64_t> g_enchWinUntilMs{0};
 static inline std::uint64_t NowMs() {
     return static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count());
 }
-// [snd] The "enchanted weapon" hum (MAGEnchantedUnsheathe / any list's equivalent)
-// is NOT an equip foley — it's the enchant EFSH's AMBIENT sound, played once from
-// ShaderReferenceEffect::Init (a DIRECT BuildSound call, addrlib 34912+0x113) on a
-// LATER frame when the item's 3D attaches. That deferral is why every equip-window
-// gate missed it (Fable, cross-verified in the binary + Skyrim.esm data chain
-// SNDR→EFSH→MGEF-enchantShader). Fix: hook that one call site and, if the effect's
-// target is an actor MEO just re-equipped, skip the sound — the handle stays
-// invalid and the engine's follow/play/stop all bail on it, so the enchant GLOW
-// still attaches, only the hum drops. Per-instance: normal draws elsewhere hum.
-// The ref-set stamps each re-equipped actor with a short deadline; MEO re-equips
-// only after 3D is live, so Init fires within a few frames. Lock-free (main-thread
-// stamp + main-thread Init, but atomics keep it safe with zero teardown-hang risk).
-constexpr int           kMutedRefCap  = 64;
-constexpr std::uint64_t kMuteWindowMs = 5000;
-struct MutedRef {
-    std::atomic<std::uint32_t> handle{ 0 };
-    std::atomic<std::uint64_t> until{ 0 };
-};
-static MutedRef g_mutedRefs[kMutedRefCap];
 
-static void MarkReequippedRef(RE::Actor* a_actor) {
-    if (!a_actor) {
-        return;
-    }
-    const std::uint32_t h = a_actor->GetHandle().native_handle();
-    if (h == 0) {
-        return;
-    }
-    // DIAG v14: dump the stamped handle so we can compare it against the
-    // fx->target handle the Init+0x113 thunk sees (age-bit / wrong-ref mismatch?).
-    {
-        static std::atomic<int> dm{ 0 };
-        const int n = dm.fetch_add(1, std::memory_order_relaxed) + 1;
-        if (n <= 40) {
-            spdlog::info("[diag-mark #{}] actor={:08X} handle={:08X}",
-                         n, a_actor->GetFormID(), h);
+// ── [snd] Windowed mute of the enchanted-unsheathe hum ────────────────
+// The load/vendor "racket" is the vanilla MAGEnchantedUnsheathe sound (SNDR
+// 0x001037D6-9). MEO's bulk gear conversion makes dozens of worn enchanted items
+// materialize at once — worst on the black-screen load-in — so that one sound
+// stacks into a racket. We PROVED exhaustively (v14-v22) that on load it reaches
+// audio via an engine/other-mod path OUTSIDE every interceptable funnel: not the
+// enchant-shader shimmer (ShaderReferenceEffect::Init), not any of the 40
+// BuildSoundDataFromDescriptor call sites (form or non-form descriptors), not any
+// of the 66 BSSoundHandle::Play call sites, not an indirect pointer table, and not
+// any mod DLL's own code (grepped all 18 SKSE plugins). So instead of intercepting
+// the PLAY (unfindable), we mute the SOUND ITSELF at its source for the brief
+// window MEO is active: while the window is open we max out the 4 SNDR forms'
+// static attenuation (inaudible); when it closes we restore the originals exactly.
+// This is emitter-AGNOSTIC (works no matter who plays it) and fully reversible, so
+// a normal weapon draw OUTSIDE the window hums exactly as vanilla — the cue is
+// preserved. A deliberate, tightly-scoped, reversible tweak of engine form data
+// (a pragmatic exception to "follow engine flows", marth-approved) — never a
+// synthesized play. The window opens on MEO's own actions (rebuild sweep on load,
+// per enchant build, worn re-equip, vendor convert) and is generously sized to
+// blanket the async tail. Single-writer: only the D3D-present tick touches the
+// attenuation; MEO's main-thread actions just bump an atomic deadline.
+constexpr RE::FormID     kEnchHumSndr[4]     = { 0x001037D6, 0x001037D7, 0x001037D8, 0x001037D9 };
+constexpr std::uint16_t  kSilentAttenuation  = 0xFFFF;  // centibel attenuation cap = inaudible
+std::atomic<std::uint64_t> g_soundMuteUntilMs{ 0 };     // window deadline (ms); bumped by MEO actions
+static RE::BGSStandardSoundDef* g_magDef[4]     = {};   // cached SNDR standard-defs (kDataLoaded)
+static std::uint16_t            g_magOrigAtten[4] = {}; // saved originals (present-thread only)
+static bool                     g_magMuted        = false; // present-thread only: currently silenced?
+
+// Cache the 4 MAGEnchantedUnsheathe standard sound defs once forms are loaded
+// (main thread, kDataLoaded). Idempotent.
+static void CacheEnchHumSndr() {
+    for (int i = 0; i < 4; ++i) {
+        if (g_magDef[i]) {
+            continue;
+        }
+        if (auto* f = RE::TESForm::LookupByID<RE::BGSSoundDescriptorForm>(kEnchHumSndr[i])) {
+            g_magDef[i] = static_cast<RE::BGSStandardSoundDef*>(f->soundDescriptor);
         }
     }
-    const std::uint64_t now   = NowMs();
-    const std::uint64_t until = now + kMuteWindowMs;
-    MutedRef*           slot  = nullptr;
-    for (auto& e : g_mutedRefs) {
-        const std::uint32_t eh = e.handle.load(std::memory_order_relaxed);
-        if (eh == h) {  // already tracked — refresh its deadline
-            e.until.store(until, std::memory_order_relaxed);
-            return;
-        }
-        if (!slot && (eh == 0 || e.until.load(std::memory_order_relaxed) < now)) {
-            slot = &e;  // first free/expired slot
-        }
-    }
-    if (!slot) {  // all slots live: round-robin overwrite (a big sweep just churns)
-        static std::atomic<int> rr{ 0 };
-        slot = &g_mutedRefs[rr.fetch_add(1, std::memory_order_relaxed) % kMutedRefCap];
-    }
-    slot->handle.store(h, std::memory_order_relaxed);
-    slot->until.store(until, std::memory_order_relaxed);
 }
-[[maybe_unused]] static bool IsRefMuted(std::uint32_t a_handle) {
-    if (a_handle == 0) {
-        return false;
+
+// Open/extend the mute window (main thread, from MEO's activity sites).
+static inline void OpenEnchHumMuteWindow(std::uint64_t a_durMs) {
+    const std::uint64_t until = NowMs() + a_durMs;
+    // keep the latest/longest deadline
+    std::uint64_t cur = g_soundMuteUntilMs.load(std::memory_order_relaxed);
+    while (until > cur &&
+           !g_soundMuteUntilMs.compare_exchange_weak(cur, until, std::memory_order_relaxed)) {
     }
-    const std::uint64_t now = NowMs();
-    for (auto& e : g_mutedRefs) {
-        if (e.handle.load(std::memory_order_relaxed) == a_handle &&
-            e.until.load(std::memory_order_relaxed) >= now) {
-            return true;
+}
+
+// Per-frame from the D3D-present hook. Single writer of the attenuation; applies
+// while the window is open, restores exactly once when it closes. Idempotent.
+static void TickEnchHumMute() {
+    const bool want = NowMs() < g_soundMuteUntilMs.load(std::memory_order_relaxed);
+    if (want == g_magMuted) {
+        return;
+    }
+    g_magMuted = want;
+    int touched = 0;
+    for (int i = 0; i < 4; ++i) {
+        if (!g_magDef[i]) {
+            continue;
         }
+        auto& atten = g_magDef[i]->soundCharacteristics.staticAttenuation;
+        if (want) {
+            g_magOrigAtten[i] = atten;
+            atten             = kSilentAttenuation;
+        } else {
+            atten = g_magOrigAtten[i];
+        }
+        ++touched;
     }
-    return false;
+    spdlog::info("[snd] enchant-hum {} (staticAttenuation on {} SNDR forms)",
+                 want ? "muted for MEO window" : "restored", touched);
 }
 
 // ── M3d forms (all IDs extracted from the real Lorerim masters) ───────
@@ -1389,12 +1384,10 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         namePart += std::format("{} {}", ShortGemName(GemName(*eg)), meo::kRoman[lvIdx]);
     }
     auto* com = RE::BGSCreatedObjectManager::GetSingleton();
-    spdlog::warn("[SNDPROBE #{}] ADD-ENCH (BGSCreatedObjectManager::Add{}Enchantment) base={:08X}",
-                 ++g_sndProbe, isArmor ? "Armor" : "Weapon", a_base->GetFormID());
-    g_inEnchCreate = true;  // [snd] mute ONLY the engine's incidental enchant SFX during this call
+    // [snd] each runtime enchant build can trigger the stacked unsheathe hum a few
+    // frames later (async) — hold the mute window open across the whole burst + tail.
+    OpenEnchHumMuteWindow(4000);
     auto* ench = isArmor ? com->AddArmorEnchantment(effects) : com->AddWeaponEnchantment(effects);
-    g_inEnchCreate = false;
-    g_enchWinUntilMs.store(NowMs() + 3000, std::memory_order_relaxed);  // [SNDID diag] wide window to catch the async SFX for identification
     if (!ench) {
         spdlog::error("[rebuild] Add{}Enchantment null on {:08X}/{}",
                       isArmor ? "Armor" : "Weapon", a_base->GetFormID(), uid);
@@ -1616,7 +1609,7 @@ void EquipCycleWorn(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDat
     }
     em->UnequipObject(a_owner, a_base, a_xList, 1, slot, false, false, false, true);
     em->EquipObject(a_owner, a_base, a_xList, 1, slot, false, false, false, true);
-    MarkReequippedRef(a_owner);  // [snd] mute this actor's enchant-shader hum until its 3D re-inits
+    OpenEnchHumMuteWindow(3000);  // [snd] silence the re-equip's enchant hum this burst
 }
 
 // ── M4b: every unique gem owns its own Gem XP pool (DESIGN §3) ────────
@@ -3636,6 +3629,7 @@ namespace menuhook {
     struct DXGIPresentHook {
         static void thunk(std::uint32_t a_p1) {
             func(a_p1);
+            TickEnchHumMute();  // [snd] single-writer: apply/restore the windowed enchant-hum mute
             if (!g_d3dReady.load() || !g_menu.open.load()) {
                 return;
             }
@@ -3819,7 +3813,7 @@ namespace menuhook {
     }
 
     void Install() {
-        SKSE::AllocTrampoline(4096);  // menuhook(3) + Init gate(1) + v21 all-SNDR census (39 BuildSound + 66 Play sites)
+        SKSE::AllocTrampoline(256);  // menuhook: D3DInit + DXGIPresent + InputDispatch (3 call-hooks)
         write_thunk_call<D3DInitHook>();
         write_thunk_call<DXGIPresentHook>();
         write_thunk_call<InputDispatchHook>();
@@ -4127,9 +4121,7 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
     if (!a_holder || g_convert.empty()) {
         return 0;
     }
-    spdlog::warn("[SNDPROBE] --- ConvertInventory sweep START holder={:08X} '{}' isPlayer={} ---",
-                 a_holder->GetFormID(), a_holder->GetName(),
-                 actor && actor->IsPlayerRef());
+    OpenEnchHumMuteWindow(4000);  // [snd] blanket the convert sweep's stacked enchant hums
     struct Hit {
         RE::TESBoundObject* old;
         const ConvTarget*   tgt;
@@ -4209,8 +4201,6 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
         a_holder->RemoveItem(hit.old, hit.count, RE::ITEM_REMOVE_REASON::kRemove,
                              nullptr, nullptr);
         for (std::int32_t i = 0; i < hit.count; ++i) {
-            spdlog::warn("[SNDPROBE #{}] PLACE (PlaceObjectAtMe) base={:08X} worn={}",
-                         ++g_sndProbe, hit.tgt->base->GetFormID(), hit.worn);
             auto ref = a_holder->PlaceObjectAtMe(hit.tgt->base, false);
             if (!ref) {
                 spdlog::error("[convert] PlaceObjectAtMe failed for '{}' — plain base given",
@@ -4249,7 +4239,7 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
         if (actor && hit.worn) {
             RE::ActorEquipManager::GetSingleton()->EquipObject(
                 actor, hit.tgt->base, nullptr, 1, nullptr, false, false, false, true);
-            MarkReequippedRef(actor);  // [snd] mute this NPC's enchant-shader hum this sweep
+            OpenEnchHumMuteWindow(3000);  // [snd] silence this NPC's enchant hum this sweep
             if (auto* wxl = FindWornXListFor(actor, hit.tgt->base)) {
                 ApplyWornAbility(actor, hit.tgt->base, wxl, hit.left);
             }
@@ -5387,8 +5377,11 @@ void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag = false) {
     if (!changes || !changes->entryList) {
         return;
     }
-    spdlog::warn("[SNDPROBE] === ReapplyWornSockets START rebuild={} reequip={} (no PlaceObjectAtMe here) ===",
-                 a_rebuild, a_reequip);
+    // [snd] The load-in racket is the enchant unsheathe hum stacking as MEO rebuilds
+    // all worn socketed gear during the black screen. Open a generous window up front
+    // so the mute is in place before the first (async) hum and blankets the whole
+    // load-in + its tail. Per-build/equip calls below keep extending it.
+    OpenEnchHumMuteWindow(a_rebuild ? 8000 : 4000);
     struct Target { RE::TESBoundObject* base; RE::ExtraDataList* xl; bool isArmor; bool left; };
     std::vector<Target> targets;
     for (auto* entry : *changes->entryList) {
@@ -5715,6 +5708,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         LoadCalibration();
         ResolveCatalog();
         ReadConfig();
+        CacheEnchHumSndr();  // [snd] cache the 4 MAGEnchantedUnsheathe SNDR defs for the windowed mute
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESSpellCastEvent>(SpellCastSink::GetSingleton());
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESDeathEvent>(DeathSink::GetSingleton());
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESHitEvent>(HitSink::GetSingleton());  // m36 Echo AoE
@@ -5785,395 +5779,15 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
     }
 }
 
-// ── [snd] Enchant-shader "unsheathe" hum suppression ──────────────────
-// GOAL: kill the enchanted-weapon hum MEO's bulk re-equips replay (a racket on
-// load and at a vendor) while leaving that same sound intact for normal draws.
-//
-// MECHANISM (Fable, verified in binary + Skyrim.esm): the hum is the enchant
-// EFSH's AMBIENT SOUND. Equipping an enchanted weapon attaches the enchant-glow
-// shader, and its ShaderReferenceEffect::Init plays the shader's ambient sound —
-// via a DIRECT BuildSoundDataFromDescriptor call at addrlib 34912+0x113 — on a
-// LATER frame when the item 3D attaches (not the generic Play/PlaySound wrappers,
-// which is why 11 builds of funnel-hooking + equip-window gating never caught it:
-// wrong clock, not wrong funnel). Init null-checks the ambient sound first, so a
-// skipped build is a state the engine already handles: the sound handle stays
-// invalid and its later SetObjectToFollow/Play/Stop all bail on it — the glow
-// visual still attaches, only the hum is dropped.
-//
-// FIX: write_call at that ONE site. The thunk recovers the effect (rdx is always
-// &this->soundHandle, member 0xC0) and, if the effect's target is an actor MEO
-// just re-equipped (the ref-set) AND it's a worn-item shader (wornObject set),
-// returns false — no sound. Per-instance and per-ref, so nothing global is muted:
-// a normal draw on any actor MEO didn't just touch hums exactly as before. Mod-
-// proof — gated by WHICH ref, not which sound, so a list's custom enchant EFSH/
-// SNDR is covered too. E8-guarded + target-verified so a bad offset can't patch
-// the wrong bytes.
-namespace sndhook {
-    // Matches the call at ShaderReferenceEffect::Init+0x113: rcx=BSAudioManager,
-    // rdx=&effect->soundHandle, r8=BSISoundDescriptor, r9=flags. Return bool.
-    using BuildSoundFn = bool(RE::BSAudioManager*, RE::BSSoundHandle*,
-                              RE::BSISoundDescriptor*, std::uint32_t);
-    static inline REL::Relocation<BuildSoundFn> g_buildSound;
-    static std::atomic<int>                     g_muted{ 0 };  // suppressed count (log)
-    static std::atomic<int>                     g_diag{ 0 };   // census count (log)
-
-    // ShaderReferenceEffect::soundHandle offset (RE/S/ShaderReferenceEffect.h: "0C0").
-    // Hardcoded rather than offsetof() — the type is polymorphic (non-standard-layout).
-    static constexpr std::uintptr_t kSoundHandleOffset = 0xC0;
-
-    // ── The enchant "unsheathe" ambient SNDRs (Skyrim.esm, index 00) ──
-    // Every MEO-socketed weapon/armor's enchant glow (vanilla Ench*FXShader /
-    // EnchArmor*FXS) plays one of these four as its ambient sound. Confirmed on
-    // deck: the load-time racket is these SNDRs and only these. We touch nothing
-    // else that flows through this site (candlelight/cloak/spell shader ambients
-    // pass straight through untouched).
-    static constexpr RE::FormID kEnchHumSndr[] = {
-        0x001037D6,  // MAGEnchantedUnsheatheFire
-        0x001037D7,  // MAGEnchantedUnsheatheFrost
-        0x001037D8,  // MAGEnchantedUnsheatheOther (non-elemental)
-        0x001037D9,  // MAGEnchantedUnsheatheShock
-    };
-    static inline bool IsEnchHumSndr(RE::FormID a_id) {
-        for (auto id : kEnchHumSndr) {
-            if (id == a_id) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // ── Armor-vs-weapon gate (v17) — by controller CLASS (deck-verified) ─
-    // The v16 census resolved the real split by the effect's controller RTTI:
-    //   • ARMOR worn-enchant shimmer → RE::OwnedController (vtable AE id 190287).
-    //     92/92 NPC armor glows on load used this; it is the generic "owned"
-    //     persistent-effect controller the worn constant-effect enchant shimmer
-    //     runs on. You never DRAW armor, so its ambient is pure load/area noise.
-    //     → MUTE.
-    //   • WEAPON enchant shimmer → RE::WeaponEnchantmentController (vtable AE id
-    //     206025), or (sheathed/first-frame) a null controller. This is the combat
-    //     draw cue marth requires kept for player AND NPCs. → PLAY.
-    // So: MUTE iff controller is OwnedController; otherwise PLAY. Mod-proof — the
-    // discriminator is an ENGINE RTTI class resolved by addrlib id (portable within
-    // 1.6.1170, which MEO is pinned to), never a form/EFSH/SNDR FormID. Guarded: we
-    // only compare the controller's vtable pointer, never blind-deref it.
-    //
-    // The load burst is ALL armor; a drawn weapon is rare in a census. To make sure
-    // weapon-draw samples are never starved by the armor flood, the census logs the
-    // armor (OwnedController) path only briefly but logs every NON-armor init with a
-    // generous budget.
-    static std::uintptr_t g_ownedCtrlVtable = 0;  // RE::OwnedController (armor shimmer)
-    static std::uintptr_t g_weapCtrlVtable  = 0;  // RE::WeaponEnchantmentController
-    static std::atomic<int> g_armorLog{ 0 };
-    static std::atomic<int> g_otherLog{ 0 };
-
-    static bool BuildSoundThunk(RE::BSAudioManager* a_self, RE::BSSoundHandle* a_handle,
-                                RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags) {
-        // rdx points at effect->soundHandle (member 0xC0); recover the effect.
-        auto* fx = reinterpret_cast<RE::ShaderReferenceEffect*>(
-            reinterpret_cast<std::uintptr_t>(a_handle) - kSoundHandleOffset);
-
-        // The engine passes r8 = &BGSSoundDescriptorForm::BSISoundDescriptor
-        // (form+0x20 at this call site), so form = a_desc - 0x20.
-        RE::FormID sndrID = 0;
-        if (a_desc) {
-            auto* form = reinterpret_cast<RE::BGSSoundDescriptorForm*>(
-                reinterpret_cast<std::uintptr_t>(a_desc) - 0x20);
-            sndrID = form->GetFormID();
-        }
-
-        // Resolve the controller vtable (never deref it — just identify the class).
-        std::uintptr_t ctrlVt = 0;
-        if (auto* ctrl = fx ? fx->controller : nullptr) {
-            ctrlVt = *reinterpret_cast<std::uintptr_t*>(ctrl);
-        }
-        const bool isArmor   = g_ownedCtrlVtable && ctrlVt == g_ownedCtrlVtable;
-        const bool isWeapon  = g_weapCtrlVtable && ctrlVt == g_weapCtrlVtable;
-        const bool isEnchSnd = IsEnchHumSndr(sndrID);
-        // Gate UNCHANGED: mute only the vanilla enchant-unsheathe SNDRs on an armor
-        // (OwnedController) shimmer. v20 only widens LOGGING, not suppression.
-        const bool suppress  = isEnchSnd && isArmor;
-
-        // ── DIAG v20: log EVERY sound built at Init+0x113 (ALL SNDRs, ALL controller
-        // classes), not just the 4 vanilla enchant ones. This is the bisect: if the
-        // stacked load hum is an enchant-shader ambient we currently let PLAY (a non-
-        // OwnedController controller, or a SNDR outside the 4), it WILL show here as a
-        // burst of PLAY lines. If load shows only the muted armor + player weapon
-        // (nothing new), the hum does NOT pass through Init+0x113 at all → it's the
-        // Play-path/cached-replay case (see PlayProbe below).
-        {
-            const int n = g_diag.fetch_add(1, std::memory_order_relaxed) + 1;
-            if (n <= 200) {
-                const RE::FormID    efshID    = (fx && fx->effectData) ? fx->effectData->GetFormID() : 0;
-                const std::uint32_t tgtHandle = fx ? fx->target.native_handle() : 0;
-                RE::TESObjectREFR*  tgtRef    = fx ? fx->target.get().get() : nullptr;
-                const bool          isPlayer  = tgtRef && tgtRef == RE::PlayerCharacter::GetSingleton();
-                const std::uintptr_t vtOff    = ctrlVt ? (ctrlVt - REL::Module::get().base()) : 0;
-                const char* cls = isArmor ? "Owned(armor)"
-                                : isWeapon ? "WeapEnch"
-                                : ctrlVt   ? "other"
-                                           : "null";
-                spdlog::info("[diag-init #{}] SNDR={:08X} EFSH={:08X} target={:08X} plr={} "
-                             "ench4={} ctrl={} ctrlVt=+0x{:X} -> {}",
-                             n, sndrID, efshID, tgtHandle, isPlayer ? 1 : 0, isEnchSnd ? 1 : 0,
-                             cls, vtOff, suppress ? "MUTE" : "PLAY");
-            }
-        }
-
-        if (suppress) {
-            // v18: the SUPPRESSION (return false) is UNCAPPED — it always fires for
-            // every OwnedController armor glow. Only the LOG is throttled. The v17
-            // "muted=40" was this log's old cap (40), NOT a suppression limit. We now
-            // print the running index so the MAX # printed = the true total muted
-            // this session: >40 proves the mute is uncapped (and if the racket then
-            // persists, the residual sound bypasses Init+0x113); ==40 would mean only
-            // 40 armor glows ever Init'd this run.
-            const int m = g_muted.fetch_add(1, std::memory_order_relaxed) + 1;
-            if (m <= 20 || m % 10 == 0) {  // first 20, then every 10th (uncapped view)
-                spdlog::info("[snd] armor enchant hum muted #{} (OwnedController, SNDR={:08X})",
-                             m, sndrID);
-            }
-            // Belt-and-suspenders: force the handle invalid so the engine's own
-            // SetObjectToFollow/Play (both bail on soundID==kInvalidID) DEFINITELY
-            // skip — independent of the handle's pre-state on a save-restored effect
-            // (a fresh vendor effect is already invalid here; a load-restored one may
-            // not be, which would explain "vendor silent but load still hums").
-            if (a_handle) {
-                a_handle->soundID = RE::BSSoundHandle::kInvalidID;
-            }
-            return false;  // engine's own no-ambient-sound path; glow still attaches
-        }
-        return g_buildSound(a_self, a_handle, a_desc, a_flags);
-    }
-
-    void Install() {
-        // Address-library id + call offset are 1.6.1170-specific; skip otherwise.
-        if (REL::Module::get().version() != REL::Version(1, 6, 1170, 0)) {
-            spdlog::warn("[snd] enchant-shader hum gate skipped — runtime is not 1.6.1170");
-            return;
-        }
-        const auto site   = REL::ID(34912).address() + 0x113;  // ShaderReferenceEffect::Init+0x113
-        const auto target = REL::ID(67666).address();          // BuildSoundDataFromDescriptor
-        // Verify it's a direct E8 call whose displacement lands on BuildSound —
-        // never patch the wrong bytes if the layout ever shifts.
-        const auto* p = reinterpret_cast<const std::uint8_t*>(site);
-        if (*p != 0xE8) {
-            spdlog::error("[snd] hum gate: site 34912+0x113 is not a call (0x{:02X}) — skipping", *p);
-            return;
-        }
-        const auto rel      = *reinterpret_cast<const std::int32_t*>(site + 1);
-        const auto resolved = site + 5 + static_cast<std::intptr_t>(rel);
-        if (resolved != target) {
-            spdlog::error("[snd] hum gate: site resolves to 0x{:X}, not BuildSound 0x{:X} — skipping",
-                          resolved, target);
-            return;
-        }
-        // Cache the controller-class vtables that identify armor vs weapon enchant
-        // shimmers. We only COMPARE an effect's controller vtable pointer to these;
-        // we never deref the controller, so a mismatch is always safe.
-        g_ownedCtrlVtable = REL::ID(190287).address();  // VTABLE_OwnedController (armor shimmer)
-        g_weapCtrlVtable  = REL::ID(206025).address();  // VTABLE_WeaponEnchantmentController
-
-        g_buildSound = SKSE::GetTrampoline().write_call<5>(site, BuildSoundThunk);
-        spdlog::info("[snd] v20 enchant-hum gate installed (Init->BuildSound) — mute UNCHANGED "
-                     "(4-SNDR & OwnedController); LOG-ALL-SNDR census on to find the load hum; "
-                     "ownedVt=0x{:X} weapVt=0x{:X}",
-                     g_ownedCtrlVtable, g_weapCtrlVtable);
-    }
-
-    // ── v19 DIAG: wide BuildSound-site probe to find the SECOND emitter ──
-    // marth: the load racket is the SAME MAGEnchantedUnsheathe hum (001037D6-9),
-    // "just stacked", yet the v18 census proved all 90 armor glows at Init+0x113
-    // ARE muted (and vendor is silent). So on load these SNDRs are (re)built by a
-    // DIFFERENT one of BuildSoundDataFromDescriptor's 40 call sites. We hook the
-    // OTHER 39 (Init+0x113 stays on its OwnedController mute) and, for any build of
-    // SNDR 001037D6-9, log WHICH site fired (via the return address). LOG-ONLY: we
-    // always call through to the real builder, so nothing is suppressed here — this
-    // run identifies the emitter; a later build adds the gate.
-    //
-    // SAFETY (this is what CTD'd before): the descriptor read is BOTH SEH-guarded
-    // AND vtable-matched to BGSSoundDescriptorForm, so a non-form descriptor (e.g.
-    // the physics-impact one at id36208 that was on the old crash stack) can never
-    // fault us or be misread. Call-site write_call (never an entry-detour), which
-    // v12's 40-site net already proved crash-safe on this exact game.
-    static std::uintptr_t g_sndrVt1 = 0, g_sndrVt2 = 0;  // BGSSoundDescriptorForm vtables
-    static BuildSoundFn*  g_realBuildSound = nullptr;    // real 67666 entry (unhooked)
-    static std::atomic<int> g_probeLog{ 0 };
-    static std::atomic<int> g_rejLog{ 0 };               // v22: guard-rejected descriptor census
-
-    // POD-only, SEH-guarded. Returns the owning SNDR FormID iff a_desc is the
-    // BSISoundDescriptor subobject (form+0x20) of a BGSSoundDescriptorForm; else 0.
-    static RE::FormID ReadEnchantSndrSafe(RE::BSISoundDescriptor* a_desc) noexcept {
-        if (!a_desc) {
-            return 0;
-        }
-        __try {
-            auto* p = reinterpret_cast<std::uint8_t*>(a_desc) - 0x20;  // candidate form
-            const std::uintptr_t vt = *reinterpret_cast<std::uintptr_t*>(p);
-            if (vt == g_sndrVt1 || (g_sndrVt2 && vt == g_sndrVt2)) {
-                return *reinterpret_cast<RE::FormID*>(p + 0x14);  // TESForm::formID
-            }
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            return 0;
-        }
-        return 0;
-    }
-
-    // v22: SEH-safe read of the descriptor's OWN vtable (no form deref). Lets us
-    // type a non-BGSSoundDescriptorForm descriptor (e.g. a raw BGSStandardSoundDef
-    // or a runtime/temp/magic-apply descriptor) that the form guard rejects — the
-    // leading suspect for the black-screen hum, since it'd be built but never logged.
-    static std::uintptr_t ReadDescVtableSafe(void* a_desc) noexcept {
-        if (!a_desc) {
-            return 0;
-        }
-        __try {
-            return *reinterpret_cast<std::uintptr_t*>(a_desc);
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            return 0;
-        }
-    }
-
-    static bool BuildSoundProbe(RE::BSAudioManager* a_self, RE::BSSoundHandle* a_handle,
-                                RE::BSISoundDescriptor* a_desc, std::uint32_t a_flags) {
-        // v21: log EVERY SNDR-form build (not just the 4 vanilla). The load hum plays
-        // while the screen is still BLACK = early actor/magic restore, before any 3D —
-        // so it's a NON-shader build we've been filtering out. sndr!=0 means the guard
-        // matched a real BGSSoundDescriptorForm (non-form descriptors like physics
-        // impact return 0 and are skipped — no flood, no fault).
-        const std::uintptr_t base    = REL::Module::get().base();
-        const std::uintptr_t siteRva = reinterpret_cast<std::uintptr_t>(_ReturnAddress()) - base - 5;
-        const RE::FormID     sndr    = ReadEnchantSndrSafe(a_desc);
-        if (sndr != 0) {
-            const int n = g_probeLog.fetch_add(1, std::memory_order_relaxed) + 1;
-            if (n <= 900) {
-                spdlog::info("[diag-bld #{}] SNDR={:08X} site=+0x{:X} flags=0x{:X}",
-                             n, sndr, siteRva, a_flags);
-            }
-        } else {
-            // v22: descriptor is NOT a BGSSoundDescriptorForm — the form guard rejected
-            // it. Log its own vtable RVA + site so we can identify the class (a burst
-            // of one vtable at one site during the black-screen phase = the hum).
-            const std::uintptr_t vt = ReadDescVtableSafe(a_desc);
-            if (vt) {
-                const int m = g_rejLog.fetch_add(1, std::memory_order_relaxed) + 1;
-                if (m <= 900) {
-                    spdlog::info("[diag-rej #{}] descVt=+0x{:X} site=+0x{:X} flags=0x{:X}",
-                                 m, vt - base, siteRva, a_flags);
-                }
-            }
-        }
-        return g_realBuildSound(a_self, a_handle, a_desc, a_flags);
-    }
-
-    // ── v21 also: valid-handle census at BSSoundHandle::Play (67616) ─────
-    // Closes the cached-replay path: a handle built once and Play()'d without a
-    // rebuild bypasses every BuildSound hook. At Play we only have the handle, so we
-    // log the soundID (!= kInvalidID = a live/replayed sound) + the caller site. A
-    // burst of one caller RVA during the black-screen phase = the replay emitter.
-    // (Muted armor handles are kInvalidID and are skipped.) Reading this->soundID is
-    // a plain member read — always valid since `this` is a real BSSoundHandle.
-    using PlayFn = bool(RE::BSSoundHandle*);
-    static PlayFn*          g_realPlay = nullptr;
-    static std::atomic<int> g_playLog{ 0 };
-
-    static bool PlayProbe(RE::BSSoundHandle* a_this) {
-        if (a_this && a_this->soundID != static_cast<std::uint32_t>(RE::BSSoundHandle::kInvalidID)) {
-            const std::uintptr_t ra      = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
-            const std::uintptr_t siteRva = ra - REL::Module::get().base() - 5;
-            const int            n       = g_playLog.fetch_add(1, std::memory_order_relaxed) + 1;
-            if (n <= 500) {
-                spdlog::info("[diag-play #{}] soundID={:08X} site=+0x{:X}",
-                             n, a_this->soundID, siteRva);
-            }
-        }
-        return g_realPlay(a_this);
-    }
-
-    // 39 non-Init direct call sites of BuildSoundDataFromDescriptor (1.6.1170 RVAs;
-    // enumerated from the decrypted .text, each verified E8->67666 before patching).
-    static constexpr std::uintptr_t kProbeSites[] = {
-        0x1EF430, 0x21B132, 0x27DEE1, 0x287E5E, 0x2EEA4A, 0x51BF53,
-        0x51C3D0, 0x551A8A, 0x551B44, 0x5BEEB9, 0x5DA404, 0x5DA63D,
-        0x5DA819, 0x5DAC7F, 0x5DB09E, 0x62EF73, 0x6317A9, 0x65FFDA,
-        0x668143, 0x6686A6, 0x68F1CA, 0x69C9C1, 0x69F58C, 0x6C6D25,
-        0x6E419F, 0x70F350, 0x743F00, 0x74DAEA, 0x7D3884, 0x7D4907,
-        0x7D9D92, 0x7E94C7, 0x7F0B80, 0x936B89, 0x97AC92, 0x97AD5E,
-        0x983C08, 0xCB0FA9, 0xCB1159,
-    };
-
-    void ProbeInstall() {
-        if (REL::Module::get().version() != REL::Version(1, 6, 1170, 0)) {
-            return;  // RVAs are 1.6.1170-specific
-        }
-        g_sndrVt1        = REL::ID(191106).address();  // VTABLE_BGSSoundDescriptorForm [0]
-        g_sndrVt2        = REL::ID(191108).address();  // VTABLE_BGSSoundDescriptorForm [1]
-        g_realBuildSound = reinterpret_cast<BuildSoundFn*>(REL::ID(67666).address());
-        const auto  base   = REL::Module::get().base();
-        const auto  target = REL::ID(67666).address();
-        auto&       tramp  = SKSE::GetTrampoline();
-        int ok = 0, skip = 0;
-        for (const auto rva : kProbeSites) {
-            const auto  site = base + rva;
-            const auto* p    = reinterpret_cast<const std::uint8_t*>(site);
-            if (*p != 0xE8) { ++skip; continue; }  // never patch non-call bytes
-            const auto rel = *reinterpret_cast<const std::int32_t*>(site + 1);
-            if (site + 5 + static_cast<std::intptr_t>(rel) != target) { ++skip; continue; }
-            tramp.write_call<5>(site, BuildSoundProbe);
-            ++ok;
-        }
-        spdlog::info("[snd] v22 BuildSound census: {} sites hooked, {} skipped "
-                     "([diag-bld]=form builds, [diag-rej]=non-form descriptor vtables); sndrVt=0x{:X}/0x{:X}",
-                     ok, skip, g_sndrVt1, g_sndrVt2);
-    }
-
-    // 66 direct call sites of BSSoundHandle::Play (67616), 1.6.1170 RVAs, each
-    // verified E8->67616 before patching.
-    static constexpr std::uintptr_t kPlaySites[] = {
-        0x1EF443, 0x21B164, 0x27CD89, 0x27DF04, 0x287E82, 0x2D9B82,
-        0x2E072D, 0x2E0819, 0x2EEA8B, 0x2EEE66, 0x2F01D1, 0x3124DF,
-        0x312C5C, 0x312CB5, 0x312E37, 0x3135F2, 0x3200D2, 0x34B7E5,
-        0x34B8E6, 0x409539, 0x51C3DC, 0x51CD7B, 0x551AC3, 0x551B82,
-        0x551C24, 0x5AEB17, 0x5B3522, 0x5BEF80, 0x5CFC7A, 0x5D3B24,
-        0x5D3BAE, 0x5D62C9, 0x5DA923, 0x5DB0B1, 0x62EFA2, 0x6317EB,
-        0x660011, 0x66818B, 0x6686F8, 0x6689F2, 0x67A3C8, 0x67B482,
-        0x67B59F, 0x68F13C, 0x68F21F, 0x69CA32, 0x69F5B0, 0x69F723,
-        0x6C6D2F, 0x6E41CE, 0x70F3A4, 0x743F0A, 0x74DB02, 0x7D38BE,
-        0x7D4944, 0x7D4AEA, 0x7D9DD5, 0x7E94E2, 0x7EEB3D, 0x9396F3,
-        0x947836, 0x96AF94, 0x97ACBC, 0x97AD8D, 0xA49BB7, 0xA49CF7,
-    };
-
-    void PlayProbeInstall() {
-        if (REL::Module::get().version() != REL::Version(1, 6, 1170, 0)) {
-            return;
-        }
-        g_realPlay = reinterpret_cast<PlayFn*>(REL::ID(67616).address());
-        const auto  base   = REL::Module::get().base();
-        const auto  target = REL::ID(67616).address();
-        auto&       tramp  = SKSE::GetTrampoline();
-        int ok = 0, skip = 0;
-        for (const auto rva : kPlaySites) {
-            const auto  site = base + rva;
-            const auto* p    = reinterpret_cast<const std::uint8_t*>(site);
-            if (*p != 0xE8) { ++skip; continue; }
-            const auto rel = *reinterpret_cast<const std::int32_t*>(site + 1);
-            if (site + 5 + static_cast<std::intptr_t>(rel) != target) { ++skip; continue; }
-            tramp.write_call<5>(site, PlayProbe);
-            ++ok;
-        }
-        spdlog::info("[snd] v21 valid-handle Play census: {} sites hooked, {} skipped (log-only)",
-                     ok, skip);
-    }
-}  // namespace sndhook
-
 }  // namespace
 
 SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SKSE::Init(skse);
     SetupLog();
     menuhook::Install();     // must be written before the renderer initializes
-    sndhook::Install();      // [snd] enchant-hum gate (Init+0x113 OwnedController mute)
-    sndhook::ProbeInstall();     // [snd] v22: all-SNDR + guard-REJECT vtable census at 39 BuildSound sites
-    // sndhook::PlayProbeInstall(); // v21 Play census done (only UI/physics, no enchant replay) — disabled
+    // [snd] enchanted-unsheathe hum: windowed source-mute (globals near NowMs). The
+    // window is opened by MEO's own actions; the D3D-present tick applies/restores it.
+    spdlog::info("[snd] enchant-hum windowed mute active (MAGEnchantedUnsheathe 001037D6-9, staticAttenuation)");
 
     const auto gameVersion = REL::Module::get().version();
     spdlog::info("MEO native v1.0.6 loading; runtime {}", gameVersion.string());
