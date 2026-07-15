@@ -152,6 +152,12 @@ constexpr std::uint32_t kSerID = 'MEO1';
 constexpr std::uint32_t kRecGems = 'GEMS';
 constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPlacedMask. v9: supportScaffold.
 
+// Single source of truth for the plugin version — surfaced in the load log AND
+// live in the MCM (Debug page) via the MEO_MCM.GetDLLVersion() Papyrus native, so
+// the menu always reflects the ACTUALLY LOADED dll (a stale/mismatched plugin
+// under a freshly-updated config shows the old number here).
+constexpr const char* kMEOVersion = "1.0.6b";
+
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
 constexpr RE::FormID  kPouchSpellID = 0x803;  // MEO.esp-local
@@ -4462,23 +4468,54 @@ void ConvertWorldRef(RE::TESObjectREFR* a_ref) {
                      base->GetName(), a_ref->GetFormID());
         return;  // quest-aliased — same caution
     }
+    // m43 (Fable): PlaceObjectAtMe places the replacement at GetPosition() ==
+    // data.location — the editor-authored spot. A loose weapon the author embedded
+    // in a shelf/table and let havok settle upward at runtime has a data.location
+    // that is still the sunken authored value (not rewritten until cell unload),
+    // so the replacement lands UNDER THE FLOOR. Snap it to the CURRENT VISIBLE
+    // position: the loaded 3D node's world.translate. If the 3D isn't up yet,
+    // there's no visible spot to match — defer to the pickup path like the others.
+    auto* node3D = a_ref->Get3D();
+    if (!node3D) {
+        spdlog::info("[convert-defer] '{}' {:08X} 3D not loaded — converts on pickup",
+                     base->GetName(), a_ref->GetFormID());
+        return;
+    }
+    // Capture everything we need from the original BEFORE any teardown: its visible
+    // spot, shelf pose, owner (theft semantics), and FormID (level RNG stays keyed
+    // to the original, so the swap is deterministic).
+    const RE::NiPoint3 visiblePos = node3D->world.translate;
+    const RE::NiPoint3 shelfAngle = a_ref->data.angle;
+    RE::TESForm* const  owner     = a_ref->GetOwner();
+    const RE::FormID    srcID     = a_ref->GetFormID();
+
+    // PlaceObjectAtMe reads the original's cell/worldspace, so the original must
+    // still be live here.
     auto newRef = a_ref->PlaceObjectAtMe(it->second.base, false);
     if (!newRef) {
         return;
     }
-    if (auto* owner = a_ref->GetOwner()) {
+    // m43 (marth): remove the original's collision BEFORE the replacement settles
+    // onto the same spot — otherwise two havok bodies share the point and one gets
+    // ejected (right back under the floor). newRef has no live havok this tick (its
+    // 3D streams in over the next frame or two), so by the time it settles the
+    // original is already gone and it drops into empty space. Disable AFTER
+    // PlaceObjectAtMe (which needed the original) but BEFORE SetPosition.
+    a_ref->Disable();
+    a_ref->SetDelete(true);
+
+    if (owner) {
         newRef->extraList.SetOwner(owner);  // pickup keeps the same theft semantics
     }
-    const std::uint32_t h = HashU32(a_ref->GetFormID() ^ 0x4D454F57u);
+    const std::uint32_t h = HashU32(srcID ^ 0x4D454F57u);
     const int level =
         (h % 10000) < static_cast<std::uint32_t>(g_gemLevel2Chance * 10000.0f) ? 2 : 1;
     StampInstance(it->second.base, &newRef->extraList, it->second.gemIdx, level);
-    newRef->data.angle = a_ref->data.angle;  // keep the shelf pose
+    newRef->data.angle = shelfAngle;  // keep the shelf pose
+    newRef->SetPosition(visiblePos);  // land where the player saw it, into now-vacated space
     spdlog::info("[convert] world ref {:08X} '{}' -> '{}' + {} gem",
-                 a_ref->GetFormID(), base->GetName(), it->second.base->GetName(),
+                 srcID, base->GetName(), it->second.base->GetName(),
                  GemName(g_gems[it->second.gemIdx]));
-    a_ref->Disable();
-    a_ref->SetDelete(true);
 }
 
 void MaybeStampNPCGear(RE::Actor* a_actor) {
@@ -6067,7 +6104,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::UI::GetSingleton()->AddEventSink<RE::MenuOpenCloseEvent>(MenuSink::GetSingleton());
         StartEchoHeartbeat();  // m36: Echo armor follower-share
         if (auto* console = RE::ConsoleLog::GetSingleton()) {
-            console->Print("MEO native v1.0.6 loaded");
+            console->Print(std::format("MEO native v{} loaded", kMEOVersion).c_str());
         }
         spdlog::info("kDataLoaded: MEO M6 live; SpellCast + Death + CellAttach + CrosshairRef sinks + render/input hooks");
         break;
@@ -6143,6 +6180,17 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
     }
 }
 
+// Papyrus: MEO_MCM.GetDLLVersion() -> the loaded plugin's version string. The MCM
+// (MEO_MCM.OnConfigOpen) pushes this into the sDLLVersion:Debug ModSetting so the
+// Debug page displays the live DLL version — no INI/co-save round-trip to go stale.
+RE::BSFixedString GetDLLVersion(RE::StaticFunctionTag*) { return kMEOVersion; }
+
+bool RegisterPapyrus(RE::BSScript::IVirtualMachine* a_vm) {
+    a_vm->RegisterFunction("GetDLLVersion", "MEO_MCM", GetDLLVersion);
+    spdlog::info("[papyrus] registered MEO_MCM.GetDLLVersion() -> {}", kMEOVersion);
+    return true;
+}
+
 }  // namespace
 
 SKSEPluginLoad(const SKSE::LoadInterface* skse) {
@@ -6154,10 +6202,12 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     spdlog::info("[snd] enchant-hum windowed mute active (MAGEnchantedUnsheathe 001037D6-9, staticAttenuation)");
 
     const auto gameVersion = REL::Module::get().version();
-    spdlog::info("MEO native v1.0.6 loading; runtime {}", gameVersion.string());
+    spdlog::info("MEO native v{} loading; runtime {}", kMEOVersion, gameVersion.string());
     if (gameVersion != REL::Version(1, 6, 1170, 0)) {
         spdlog::warn("Untested runtime {} (built against 1.6.1170)", gameVersion.string());
     }
+
+    SKSE::GetPapyrusInterface()->Register(RegisterPapyrus);  // MEO_MCM.GetDLLVersion()
 
     auto* serialization = SKSE::GetSerializationInterface();
     serialization->SetUniqueID(kSerID);

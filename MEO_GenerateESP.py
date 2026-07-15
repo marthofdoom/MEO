@@ -402,6 +402,15 @@ def write_mcm_files(out_dir):
             ctrl={"id":f"{key}:{section}","text":label,"type":"toggle","help":help_,
                   "valueOptions":{"sourceType":"ModSettingBool","defaultValue":bool(dflt)}}
         pages[page].append(ctrl)
+    # Live DLL-version readout at the top of the Debug page: a read-only text
+    # control bound to the sDLLVersion:Debug string ModSetting, which
+    # MEO_MCM.OnConfigOpen refreshes from the DLL's own GetDLLVersion() native
+    # each time the menu opens — so it always shows the ACTUALLY LOADED MEO.dll
+    # (a stale/mismatched plugin under a freshly-updated config surfaces here).
+    pages.setdefault("Debug",[]).insert(0,
+        {"id":"sDLLVersion:Debug","text":"DLL version","type":"text",
+         "help":"Version of the loaded MEO.dll, read live from the plugin. If this does not match the release you installed, the DLL did not update.",
+         "valueOptions":{"sourceType":"ModSettingString","defaultValue":""}})
     config={"modName":"MEO","displayName":"marth Enchanting Overhaul",
             "minMcmVersion":9,"cursorFillMode":"topToBottom",
             "pages":[{"pageDisplayName":p,"cursorFillMode":"topToBottom",
