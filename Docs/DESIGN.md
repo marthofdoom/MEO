@@ -406,12 +406,12 @@ Worked anchors (two example gems):
 | Requiem max | 35 | 70 | skill 100, max perks, Grand soul (the ceiling) |
 | **MEO Gem I** | **12** | **20** | universal early-game drop baseline (≈ Requiem base) |
 | **MEO Gem V** (unperked) | **35** | **70** | pure gem mastery = Requiem ceiling |
-| MEO Gem V + Attunement perks | 49 | 98 | × **1.40** (rewritten tree, +8%/rank ×5) |
-| MEO Gem V + perks + full CSF mastery | 73 | 147 | × **1.50** more (MRO/CSF over-cap) |
+| MEO Gem V + Attunement perks | 44 | 88 | × **1.25** (rewritten tree, +5%/rank ×5) |
+| MEO Gem V + perks + full CSF mastery | 66 | 131 | × **1.50** more (MRO/CSF over-cap) |
 
 - Multipliers **stack multiplicatively** on the unperked Level V value:
-  `V × 1.40 (perks) × 1.50 (mastery) = V × 2.10`. (35×2.1≈73, 70×2.1=147.)
-- The **+40% Attunement** tier is MEO's own perk tree (§6) — available on
+  `V × 1.25 (perks) × 1.50 (mastery) = V × 1.875`. (35×1.875≈66, 70×1.875≈131.)
+- The **+25% Attunement** tier is MEO's own perk tree (§6) — available on
   vanilla-core.
 - The **+50% mastery** tier is an OPTIONAL top layer gated on a CSF enchanting
   mastery (shared with / modeled on the sibling MRO). Without CSF present, the
@@ -660,7 +660,7 @@ skill requirement it inherits:
 
 | Vanilla perk (req) | Becomes | Effect |
 |---|---|---|
-| Enchanter 1–5 (0/20/40/60/80) | Gem Attunement 1–5 | Socketed gems +8% potency per rank (script-applied multiplier) |
+| Enchanter 1–5 (0/20/40/60/80) | Gem Attunement 1–5 | Socketed gems +5% potency per rank (script-applied multiplier) |
 | Soul Squeezer (20) | Gem Cutter | Gems earn +50% XP |
 | Soul Siphon (40) | **Soul Feeder** | Unlocks feeding filled soul gems to socketed gems for instant XP |
 | Fire Enchanter (30) | Pyrestone Affinity | Fire/Chaos gems +25% |

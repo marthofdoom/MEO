@@ -91,7 +91,7 @@ gems level I–III, only while linked.
       (Pyrestone/Froststone/Stormstone), Facet Insight, Twinned Fitting,
       Master Jeweler. Kept third-party perks (your installer choices)
       still present.
-- [ ] Attunement raises gem magnitude on re-stamp (+8%/rank).
+- [ ] Attunement raises gem magnitude on re-stamp (+5%/rank).
 - [ ] Affinities: +25% to matching elemental gems (Chaos counts for all
       three). Facet Insight: +25% to skill/attribute armor gems.
 - [ ] Twinned Fitting/Master Jeweler unlock the 2nd linked sockets.

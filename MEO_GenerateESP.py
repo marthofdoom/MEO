@@ -260,11 +260,11 @@ def make_qust():
 # next_slot chains ranked perks via NNAM (Requiem convention) so the five
 # Attunements display as one 5-rank node in the installer-written perk tree.
 MEO_PERKS = [
-    ("MEO_Perk_Attunement1", "Gem Attunement", "Socketed gems are 8% more potent.",   0,  1),
-    ("MEO_Perk_Attunement2", "Gem Attunement", "Socketed gems are 16% more potent.", 20,  2),
-    ("MEO_Perk_Attunement3", "Gem Attunement", "Socketed gems are 24% more potent.", 40,  3),
-    ("MEO_Perk_Attunement4", "Gem Attunement", "Socketed gems are 32% more potent.", 60,  4),
-    ("MEO_Perk_Attunement5", "Gem Attunement", "Socketed gems are 40% more potent.", 80, None),
+    ("MEO_Perk_Attunement1", "Gem Attunement", "Socketed gems are 5% more potent.",   0,  1),
+    ("MEO_Perk_Attunement2", "Gem Attunement", "Socketed gems are 10% more potent.", 20,  2),
+    ("MEO_Perk_Attunement3", "Gem Attunement", "Socketed gems are 15% more potent.", 40,  3),
+    ("MEO_Perk_Attunement4", "Gem Attunement", "Socketed gems are 20% more potent.", 60,  4),
+    ("MEO_Perk_Attunement5", "Gem Attunement", "Socketed gems are 25% more potent.", 80, None),
     ("MEO_Perk_GemCutter",   "Gem Cutter",     "Socketed gems earn 50% more Gem XP.", 20, None),
     ("MEO_Perk_SoulFeeder",  "Soul Feeder",    "Soul gems fed to gems at an enchanting station are twice as potent.", 40, None),
     ("MEO_Perk_TwinnedFitting","Twinned Fitting","Chest armor can hold a second linked gem.", 70, None),   # 0x817

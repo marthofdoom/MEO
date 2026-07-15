@@ -20,7 +20,7 @@ is uniform across effects. So for magnitude-scaling effects:
 
 - **base = vanilla tier-2 magnitude** (proxy for the Requiem skill-0 craft)
 - **Level V (unperked) = base × 3.5**; Levels I–V interpolate linearly
-- Investment then multiplies further: **× 1.40** (Attunement perks) **× 1.50**
+- Investment then multiplies further: **× 1.25** (Attunement perks) **× 1.50**
   (optional CSF mastery) — see DESIGN §3.
 
 This reproduced Fire `[10,16,22,29,35]` and Fortify Health `[20,32,45,58,70]`.
@@ -40,7 +40,7 @@ Absorb Health/Magicka/Stamina.
 ## Per-class decisions (marth, 2026-07-08 — full 50-gem review)
 
 ×3.5 was wrong for these; each was a balance call, now made. Investment
-multipliers (×1.40 perks, ×1.50 CSF) apply to ALL of these unless noted —
+multipliers (×1.25 perks, ×1.50 CSF) apply to ALL of these unless noted —
 the spreads below were reviewed with that in mind.
 
 | Class | Decision |
