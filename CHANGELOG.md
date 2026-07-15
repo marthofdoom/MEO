@@ -46,6 +46,13 @@ Content / UX
   which bypass the vanilla container menu). Static/hand-placed enchanted chest
   content that never triggered a pickup event is now caught; empty containers are
   left untouched (no early leveled-loot rolls, no save bloat).
+- **Shields can now be socketed.** Off-hand shields were the one worn armor slot
+  MEO didn't accept — plain shields couldn't be manually socketed, NPCs never
+  spawned socketed shields, and player-enchanted shields refused conversion, even
+  though DESIGN budgets the off-hand a socket. They now take their one gem like
+  any other worn piece. (Converted/looted shields already worked.) Also silenced a
+  cosmetic "gem disabled: MGEF 000000" log line for the support gems, which have
+  no effect of their own by design and function correctly.
 
 Stability & save safety (from a four-part pre-release code review)
 - **Sockets now survive a load-order change.** Co-save records (and the gem pouch
