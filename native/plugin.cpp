@@ -4391,18 +4391,21 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
                 HashU32(seed ^ hit.old->GetFormID() ^ static_cast<std::uint32_t>(i));
             const int level = (hi % 10000) < l2cut ? 2 : 1;
             StampInstance(hit.tgt->base, &xl, hit.tgt->gemIdx, level);
-            if (actor) {
+            if (actor && !actor->IsDead()) {
                 actor->PickUpObject(ref.get(), 1, false, false);
             } else {
-                // container holder (vendor chest): move the stamped instance in,
-                // fromRefr = the temp world ref, which the engine then consumes.
+                // m42: a CORPSE (dead actor) is loot, not a combatant — route it
+                // through the container path (AddObjectToContainer, no PickUpObject,
+                // no re-equip below) exactly like a chest. This is what lets DeathSink
+                // convert a corpse safely; the engine PickUpObject that crashed only
+                // ever ran on a LIVING actor. (else = a container holder OR a corpse.)
                 a_holder->AddObjectToContainer(hit.tgt->base, &xl, 1, ref.get());
             }
             ++converted;
         }
         // The list picked this enemy to fight with an enchanted weapon; the
         // converted gem stays worn and ACTIVE (marth's ruling).
-        if (actor && hit.worn) {
+        if (actor && !actor->IsDead() && hit.worn) {  // m42: a corpse doesn't wear / re-equip
             RE::ActorEquipManager::GetSingleton()->EquipObject(
                 actor, hit.tgt->base, nullptr, 1, nullptr, false, false, false, true);
             OpenEnchHumMuteWindow(3000);  // [snd] silence this NPC's enchant hum this sweep
@@ -4831,8 +4834,16 @@ public:
             SKSE::GetTaskInterface()->AddTask([handle]() {
                 if (auto ref = handle.get()) {
                     if (auto* actor = ref->As<RE::Actor>()) {
-                        ConvertInventory(actor);
-                        MaybeStampNPCGear(actor);
+                        // m42 (marth: reduce NPC involvement / harden the border):
+                        // NEVER convert a living NPC's existing enchanted gear — that
+                        // worn->place->PickUpObject on a half-attached actor is what
+                        // crashed (issue #1). MEO only ADDS its own gem to UNENCHANTED
+                        // gear here, and only once the actor is fully loaded so no
+                        // engine call runs mid-attach. Existing enchants convert on
+                        // TRUE death (DeathSink) or when the player loots them.
+                        if (actor->Is3DLoaded() && actor->GetActorRuntimeData().currentProcess) {
+                            MaybeStampNPCGear(actor);
+                        }
                     }
                 }
             });
@@ -4913,7 +4924,28 @@ public:
     RE::BSEventNotifyControl ProcessEvent(const RE::TESDeathEvent* a_event,
                                           RE::BSTEventSource<RE::TESDeathEvent>*) override {
         if (!a_event || !a_event->dead || !a_event->actorDying ||
-            a_event->actorDying->IsPlayerRef() || !a_event->actorKiller) {
+            a_event->actorDying->IsPlayerRef()) {
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        // m42 (marth: convert existing NPC gear ONLY on TRUE death): the living NPC
+        // is never converted anymore — do it now, on the corpse. Deferred + a second
+        // IsDead() check so a bleedout / defeat-revive (the actor gets back up) is
+        // NOT touched. ConvertInventory routes a dead actor through the container
+        // path (no PickUpObject / no re-equip) — the fragile engine call that crashed
+        // (issue #1) only ever ran on a LIVING actor. Fires for ANY death (killer or
+        // not) so every lootable corpse is pre-socketed; the player-loot ContainerSink
+        // is the backstop for anything missed.
+        {
+            const RE::ObjectRefHandle deadVictim = a_event->actorDying->GetHandle();
+            SKSE::GetTaskInterface()->AddTask([deadVictim]() {
+                if (auto ref = deadVictim.get()) {
+                    if (auto* v = ref->As<RE::Actor>(); v && v->IsDead()) {
+                        ConvertInventory(v);
+                    }
+                }
+            });
+        }
+        if (!a_event->actorKiller) {  // the XP/corpse-gem rewards below still need a killer
             return RE::BSEventNotifyControl::kContinue;
         }
         // M3d: player kills AND follower kills (followers feed their own gems).
@@ -5253,6 +5285,17 @@ public:
             const RE::FormID holder = a_event->newContainer;
             SKSE::GetTaskInterface()->AddTask([holder]() {
                 if (auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(holder)) {
+                    // m42 (marth: harden the NPC border): NEVER convert a LIVING NPC's
+                    // items — a mod AddItem'ing an enchanted weapon onto an NPC lands
+                    // exactly HERE (TESContainerChangedEvent), and converting it via the
+                    // worn->PickUpObject path on a mid-attach/unloaded actor is the
+                    // issue-#1 crash. Living NPCs convert on TRUE death (DeathSink) or
+                    // when the PLAYER loots the item. Player, containers, and CORPSES
+                    // still convert here (a corpse takes ConvertInventory's container path).
+                    if (auto* act = ref->As<RE::Actor>();
+                        act && !act->IsPlayerRef() && !act->IsDead()) {
+                        return;
+                    }
                     ConvertInventory(ref);
                 }
             });
@@ -5297,8 +5340,11 @@ public:
         SKSE::GetTaskInterface()->AddTask([id]() {
             if (auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(id)) {
                 if (auto* actor = ref->As<RE::Actor>()) {
-                    ConvertInventory(actor);
-                    MaybeStampNPCGear(actor);
+                    // m42: living NPCs are never converted (see CellAttachSink) —
+                    // MEO only adds its gem to unenchanted gear, once fully loaded.
+                    if (actor->Is3DLoaded() && actor->GetActorRuntimeData().currentProcess) {
+                        MaybeStampNPCGear(actor);
+                    }
                 }
             }
         });
