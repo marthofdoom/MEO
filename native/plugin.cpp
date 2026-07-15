@@ -1527,8 +1527,9 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
 // Returns the uid (minted if absent), or 0 on failure. Caller does the worn
 // ability + gem consumption. a_xp carries banked XP through a level-up re-stamp.
 std::uint16_t StampInstance(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList,
-                            int a_gemIdx, int a_level, std::uint8_t a_slot = 0, float a_xp = 0.0f) {
-    if (a_gemIdx < 0 || !a_base || !a_xList ||
+                            int a_gemIdx, int a_level, std::uint8_t a_slot = 0, float a_xp = 0.0f,
+                            RE::Actor* a_owner = nullptr) {
+    if (a_gemIdx < 0 || a_gemIdx >= static_cast<int>(g_gems.size()) || !a_base || !a_xList ||
         (!g_gems[a_gemIdx].mgef && !g_gems[a_gemIdx].def->isSupport)) {  // m36: supports have no mgef
         return 0;
     }
@@ -1542,7 +1543,14 @@ std::uint16_t StampInstance(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     const int lvIdx = std::clamp(a_level, 1, 5) - 1;
     g_sockets[MakeKey(a_base->GetFormID(), uid, a_slot)] =
         SocketRecord{ g_gems[a_gemIdx].def->gid, static_cast<std::uint8_t>(lvIdx + 1), a_xp };
-    RebuildInstanceEnchant(a_base, a_xList);
+    // m38e/build-B1: forward the owner so the 2-of-a-kind cap is applied ONLY to
+    // player-worn gear. MaybeStampNPCGear stamps a WORN NPC xList; with a nullptr
+    // owner RebuildInstanceEnchant's `applyCap = worn && !owner` fired true, and
+    // WornActiveEffectKeys (player inventory only) never contained the NPC's key
+    // → the just-written enchant was stripped, the item returned to plain, and its
+    // g_sockets record orphaned permanently in the co-save. A real owner (or an
+    // explicitly non-player owner) makes applyCap false, so NPC gear keeps its gem.
+    RebuildInstanceEnchant(a_base, a_xList, a_owner);
     return uid;
 }
 
@@ -1737,7 +1745,7 @@ float g_enchSkillXPMult = 1.0f;   // [XP] fEnchSkillXP — ×mult on kSoulSkillX
 float g_discoverSkillXP = 1.0f;   // [XP] fDiscoverSkillXP — ×mult on kDiscoverSkillXP (v1.0.6 marth: slider reads 1.0)
 float g_destroySkillXP  = 20.0f;  // [XP] fDestroySkillXP — Enchanting SKILL xp per gem destroyed (× level) (m37, dev ini)
 float g_levelSkillXP    = 12.0f;  // [XP] fLevelSkillXP — Enchanting SKILL xp per gem level gained (× new level) (m37, dev ini)
-float g_gemXpSkillXP    = 1.0f;   // [XP] fGemXpSkillXP — ×mult on kGemKillSkillXP (v1.0.6 marth: slider reads 1.0, up to 10×)
+float g_gemXpSkillXP    = 1.0f;   // [XP] INI key fGemKillXpMult (renamed from fGemXpSkillXP v1.0.6) — ×mult on kGemKillSkillXP (slider reads 1.0, up to 10×)
 constexpr float kDiscoverSkillXP = 10.0f;  // baked base: Enchanting SKILL xp per NEW gem family discovered (v1.0.6, was 50 — batched too hot)
 constexpr float kGemKillSkillXP  = 0.001f; // baked base: Enchanting SKILL xp per point of Gem XP earned from a kill (v1.0.6, was 0.01/0.05)
 // NB: socketing grants NO skill xp on purpose — socket/unsocket would be a farm loop (marth).
@@ -1769,7 +1777,13 @@ static void ApplyIniFile(const char* a_path) {
             continue;
         }
         const std::string key = trim(line.substr(0, eq));
-        const float       val = std::strtof(trim(line.substr(eq + 1)).c_str(), nullptr);
+        const std::string valStr = trim(line.substr(eq + 1));
+        char*             end = nullptr;
+        const float       val = std::strtof(valStr.c_str(), &end);
+        if (end == valStr.c_str()) {  // N2: nothing parsed — skip, don't silently apply 0.0
+            spdlog::warn("[ini] {}: unparseable value '{}' — keeping default", key, valStr);
+            continue;
+        }
         if (key == "fXPPerKill")              g_xpPerKill = val;
         else if (key == "fGemDropChance")     g_gemDropChance = val;
         else if (key == "fWorldSocketChance") g_worldSocketChance = val;
@@ -1790,7 +1804,7 @@ static void ApplyIniFile(const char* a_path) {
         else if (key == "fDiscoverSkillXP")   g_discoverSkillXP = val;
         else if (key == "fDestroySkillXP")    g_destroySkillXP = val;
         else if (key == "fLevelSkillXP")      g_levelSkillXP = val;
-        else if (key == "fGemXpSkillXP")      g_gemXpSkillXP = val;
+        else if (key == "fGemKillXpMult")     g_gemXpSkillXP = val;  // v1.0.6: renamed from fGemXpSkillXP (was an absolute rate; now a ×mult). The rename orphans any stale MCM-persisted absolute value (e.g. 0.01) so it can't be misread as a 0.01× multiplier that silently zeroes the kill-XP trickle. Keep the .py MCM key (fGemKillXpMult) in lockstep with this string.
         else if (key == "fSocketValueMult")   g_socketValueMult = val;
         else if (key == "bDebugAllPerks")     g_debugAllPerks = val != 0.0f;
         else if (key == "bPurgeSupportGems")  g_purgeSupportGems = val != 0.0f;
@@ -2166,7 +2180,8 @@ bool GrantGemXP(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataLis
     const auto& rg = g_gems[a_gemIdx];
     const bool  isSupport = rg.def->isSupport;
     const int   maxLevel = isSupport ? 3 : 5;  // m36: supports cap at tier III
-    if ((!rg.mgef && !isSupport) || rg.def->xpMult <= 0.0f || a_rec.level >= maxLevel) {
+    if ((!rg.mgef && !isSupport) || rg.def->xpMult <= 0.0f ||
+        a_rec.level < 1 || a_rec.level >= maxLevel) {  // xp/hooks-S4: guard level<1 too — kXPThresholds[level-1] would underflow
         return false;  // single-level / disabled / mastered gems never level
     }
     // m36: a support gem earns XP only while LINKED to a working normal gem; an
@@ -2251,7 +2266,23 @@ void AwardKillXP(RE::Actor* a_owner, float a_ap) {
     if (g_hasGemCutter && a_owner->IsPlayerRef()) {  // Gem Cutter: +50% Gem XP
         xp *= 1.5f;
     }
-    int awarded = 0;
+    // build-S3/xp-S1: snapshot every (worn item, filled slot) target BEFORE
+    // granting. GrantGemXP can synchronously AddObjectToContainer (mastered-gem
+    // birth at the L4->5 crossing) and run ReapplyWornSockets' equip cycle — both
+    // mutate the very entryList/extraLists this loop walks. On a BSSimpleList
+    // head-insert the walker can revisit the head entry (a second, double XP tick
+    // that frame, which can chain another level-up), and equip events fire into
+    // other SKSE mods that may mutate the inventory under the live iterator.
+    // Collect first, then award — the pattern ReapplyWornSockets already uses.
+    struct KillTarget {
+        RE::TESBoundObject* object;
+        RE::ExtraDataList*  xl;
+        bool                left;
+        InstKey             key;
+        int                 gemIdx;
+        std::uint16_t       uid;
+    };
+    std::vector<KillTarget> targets;
     for (auto* entry : *changes->entryList) {
         if (!entry || !entry->object || !entry->extraLists ||
             !(entry->object->Is(RE::FormType::Weapon) || entry->object->Is(RE::FormType::Armor))) {
@@ -2270,10 +2301,11 @@ void AwardKillXP(RE::Actor* a_owner, float a_ap) {
             if (!xid) {
                 continue;
             }
-            // Feed every filled socket slot on this worn item.
+            // Every filled socket slot on this worn item is a target.
             for (int slot = 0; slot < kMaxSockets; ++slot) {
-                auto it = g_sockets.find(MakeKey(entry->object->GetFormID(), xid->uniqueID,
-                                                 static_cast<std::uint8_t>(slot)));
+                const InstKey key = MakeKey(entry->object->GetFormID(), xid->uniqueID,
+                                            static_cast<std::uint8_t>(slot));
+                auto it = g_sockets.find(key);
                 if (it == g_sockets.end()) {
                     continue;
                 }
@@ -2281,11 +2313,20 @@ void AwardKillXP(RE::Actor* a_owner, float a_ap) {
                 if (gemIt == g_gemByGid.end()) {
                     continue;
                 }
-                if (GrantGemXP(a_owner, entry->object, xList, left, it->second, gemIt->second, xp,
-                               xid->uniqueID)) {
-                    ++awarded;
-                }
+                targets.push_back({ entry->object, xList, left, key, gemIt->second, xid->uniqueID });
             }
+        }
+    }
+    int awarded = 0;
+    for (auto& t : targets) {
+        // Re-find the record each time: a prior target's level-up may have
+        // rewritten g_sockets (the record ref must be fresh, not a stale one).
+        auto it = g_sockets.find(t.key);
+        if (it == g_sockets.end()) {
+            continue;
+        }
+        if (GrantGemXP(a_owner, t.object, t.xl, t.left, it->second, t.gemIdx, xp, t.uid)) {
+            ++awarded;
         }
     }
     // m37: tiny Enchanting trickle for the player — the Gem XP a kill puts into
@@ -3083,6 +3124,14 @@ namespace menuhook {
     // open so the first click lands even before the mouse ever moves.
     std::atomic<bool>          g_shoutDownSeen{ false };
     std::atomic<bool>          g_cursorInit{ false };
+    // xp/hooks-S2: ImGui's IO event queue is NOT thread-safe. The input-dispatch
+    // hook (main/input thread) pushes Add*Event, the WndProc hook (window thread)
+    // calls ClearInputKeys, and the present hook (render thread) drains the queue
+    // in NewFrame — concurrent push/drain is a data race on a std::vector. This
+    // one mutex serializes every ImGui-IO touch across the three threads. Held
+    // only around the IO block on each thread (never around the passthrough to
+    // the original engine func), so no cross-lock with g_menu's snapshot mutex.
+    std::mutex                 g_imguiIoMx;
     std::atomic<float>         g_cursorX{ -1.0f };  // m35: read on render thread, written on input thread
     std::atomic<float>         g_cursorY{ -1.0f };
     std::atomic<std::uint64_t> g_destroyArm{ 0 };  // armed Destroy row (two-click confirm)
@@ -3634,10 +3683,10 @@ namespace menuhook {
     struct WndProcHook {
         static LRESULT thunk(HWND a_hwnd, UINT a_msg, WPARAM a_w, LPARAM a_l) {
             if (a_msg == WM_KILLFOCUS && g_d3dReady.load()) {
-                auto& io = ImGui::GetIO();
-                io.ClearInputKeys();
+                std::scoped_lock lk(g_imguiIoMx);  // xp/hooks-S2: serialize vs input/render threads
+                ImGui::GetIO().ClearInputKeys();
             }
-            return func(a_hwnd, a_msg, a_w, a_l);
+            return func(a_hwnd, a_msg, a_w, a_l);  // engine wndproc: never under our lock
         }
         static inline WNDPROC func = nullptr;
     };
@@ -3720,6 +3769,10 @@ namespace menuhook {
             if (!g_d3dReady.load() || !g_menu.open.load()) {
                 return;
             }
+            // xp/hooks-S2: NewFrame drains the IO event queue — hold the IO lock
+            // across the whole frame so a concurrent Add*Event/ClearInputKeys on
+            // the input/window thread can't race the drain.
+            std::scoped_lock lk(g_imguiIoMx);
             ImGui_ImplDX11_NewFrame();
             ImGui_ImplWin32_NewFrame();
             if (g_bbW > 0.0f) {
@@ -3796,6 +3849,7 @@ namespace menuhook {
                 return;
             }
             auto& io = ImGui::GetIO();
+            std::unique_lock ioLk(g_imguiIoMx);  // xp/hooks-S2: serialize Add*Event vs the render-thread drain
             if (g_cursorX < 0.0f) {
                 g_cursorX = io.DisplaySize.x * 0.5f;
                 g_cursorY = io.DisplaySize.y * 0.5f;
@@ -3884,6 +3938,7 @@ namespace menuhook {
                 }
                 // char events: swallowed silently
             }
+            ioLk.unlock();        // release before the engine passthrough (never hold across func)
             *a_events = nullptr;  // the game sees no input while the menu is open
             func(a_source, a_events);
         }
@@ -4470,7 +4525,10 @@ void MaybeStampNPCGear(RE::Actor* a_actor) {
     const int gemIdx = pool[HashU32(h ^ 0xBEEF5A5Au) % pool.size()];
     const std::uint32_t l2cut = static_cast<std::uint32_t>(g_gemLevel2Chance * 10000.0f);
     const int level = (HashU32(h ^ 0x22222222u) % 10000) < l2cut ? 2 : 1;
-    if (StampInstance(c.base, c.xl, gemIdx, level)) {
+    // build-B1: pass the NPC as owner so the player-only 2-of-a-kind cap does NOT
+    // strip this worn enchant (a nullptr owner made applyCap fire, stripping the
+    // gem and orphaning its record — the m19 "enemies spawn socketed" no-op).
+    if (StampInstance(c.base, c.xl, gemIdx, level, 0, 0.0f, a_actor)) {
         ApplyWornAbility(a_actor, c.base, c.xl, c.left);  // live on the enemy
         static constexpr const char* kArchNames[] = { "warrior", "mage", "rogue", "undead" };
         spdlog::info("[npc] {:08X} '{}' ({}) spawns with {} {} on {}", a_actor->GetFormID(),
@@ -5820,6 +5878,11 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
                 a_intfc->ReadRecordData(slot);
             }
             a_intfc->ReadRecordData(rec.level);
+            // xp/hooks-S4: a corrupt/hand-edited level 0 (or >5) would index
+            // kXPThresholds[level-1] out of bounds in GrantGemXP. Clamp at the
+            // source so every g_sockets record is in [1,5] (StampInstance already
+            // clamps its mint path).
+            rec.level = static_cast<std::uint8_t>(std::clamp<int>(rec.level, 1, 5));
             a_intfc->ReadRecordData(rec.xp);
             a_intfc->ReadRecordData(len);
             rec.gid.resize(len);
