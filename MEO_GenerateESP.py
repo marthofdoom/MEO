@@ -346,7 +346,7 @@ MCM_TUNABLES=[
      'f',1.0,0.0,3.0,0.05,"{2}"),
     ("XP & Balance","XP","fGemXpSkillXP","Enchanting XP from gem kills",
      "Enchanting SKILL experience per point of Gem XP your socketed gems earn from a kill, so combat slowly trains Enchanting. Counted once per kill (more sockets isn't a faster grind). Lower it, or set 0, if Enchanting levels too fast.",
-     'f',0.01,0.0,0.05,0.005,"{3}"),
+     'f',0.001,0.0,0.010,0.001,"{3}"),
     ("XP & Balance","UI","bXPNotify","Show Gem XP notifications",
      "Show a corner message when your gems gain Gem XP on a kill.",
      'b',1,None,None,None,None),

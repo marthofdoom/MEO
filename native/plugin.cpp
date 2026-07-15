@@ -291,6 +291,12 @@ static void RestoreEnchHumMute() {
     if (!g_magMuted.load(std::memory_order_relaxed)) {
         return;
     }
+    // Re-check under the lock: a concurrent OpenEnchHumMuteWindow can bump the deadline
+    // into the future between the render tick's check and here (its ApplyEnchHumMute
+    // early-returns because we're still muted), so don't restore a re-opened window.
+    if (NowMs() < g_soundMuteUntilMs.load(std::memory_order_relaxed)) {
+        return;
+    }
     for (int i = 0; i < 4; ++i) {
         if (g_magDef[i]) {
             g_magDef[i]->soundCharacteristics.staticAttenuation = g_magOrigAtten[i];
@@ -1685,7 +1691,7 @@ float g_enchSkillXPMult = 1.0f;   // [XP] fEnchSkillXP — Enchanting SKILL xp p
 float g_discoverSkillXP = 50.0f;  // [XP] fDiscoverSkillXP — Enchanting SKILL xp for discovering a NEW gem family (one-time each, m37)
 float g_destroySkillXP  = 20.0f;  // [XP] fDestroySkillXP — Enchanting SKILL xp per gem destroyed (× level) (m37)
 float g_levelSkillXP    = 12.0f;  // [XP] fLevelSkillXP — Enchanting SKILL xp per gem level gained (× new level) (m37)
-float g_gemXpSkillXP    = 0.01f;  // [XP] fGemXpSkillXP — Enchanting SKILL xp per point of Gem XP a gem earns from a kill (tiny trickle, m37; nerfed 5x + MCM slider m39, was 0.05 — too fast)
+float g_gemXpSkillXP    = 0.001f; // [XP] fGemXpSkillXP — Enchanting SKILL xp per point of Gem XP a gem earns from a kill (tiny trickle, m37; MCM slider m39; v1.0.6 marth: default 0.001, MCM max 0.010 — was 0.01/0.05, too fast)
 // NB: socketing grants NO skill xp on purpose — socket/unsocket would be a farm loop (marth).
 // g_socketValueMult [Balance] fSocketValueMult is declared up top (RebuildInstanceEnchant uses it)
 bool  g_debugAllPerks = false;    // [Debug] bDebugAllPerks — force every MEO perk ON for testing (m36)
@@ -5767,8 +5773,8 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         // the restore ~4s out so draws shortly after load-in settle hum normally. A
         // MEO rebuild running around here re-extends via OpenEnchHumMuteWindow.
         CacheEnchHumSndr();
-        ApplyEnchHumMute();
-        SetEnchHumMuteDeadline(4000);
+        SetEnchHumMuteDeadline(4000);  // set deadline BEFORE applying, so a present tick
+        ApplyEnchHumMute();            // between the two can't see muted+expired and restore
         // After LoadCallback/Revert — co-save flags are current here.
         SKSE::GetTaskInterface()->AddTask([]() {
             EnsurePlayerSetup();
