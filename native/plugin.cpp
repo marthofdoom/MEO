@@ -2068,37 +2068,6 @@ public:
                     }
                 });
             });
-        } else if (a_event->opening && a_event->menuName == RE::ContainerMenu::MENU_NAME) {
-            // m41 (marth): sweep an opened container the same way the vendor barter
-            // path does. Static/hand-placed enchanted content never fires a
-            // TESContainerChangedEvent (ContainerSink only catches an item LANDING —
-            // leveled generation or pickup), so a never-looted chest shows its
-            // enchanted generics until they're taken. Defer two frames so the
-            // container list is fully built before we mutate it (the m38 barter-break
-            // lesson), convert in place — ConvertInventory opens the enchant-hum mute
-            // window so the batch of conversions is silent — then rebuild the open
-            // list via the engine's OWN inventory-update signal (as a buy/sell does).
-            SKSE::GetTaskInterface()->AddTask([]() {
-                SKSE::GetTaskInterface()->AddTask([]() {
-                    auto ref = RE::TESObjectREFR::LookupByHandle(
-                        RE::ContainerMenu::GetTargetRefHandle());
-                    if (!ref) {
-                        return;
-                    }
-                    const int n = ConvertInventory(ref.get());
-                    if (n > 0) {
-                        // Call the engine's own inventory-update routine (never hand-
-                        // repaint the UI). CommonLibSSE-NG 3.7.0 predates the helper,
-                        // so bind the relocation it uses (SE 51911 / AE 52849).
-                        static REL::Relocation<void(RE::TESObjectREFR*,
-                                                    const RE::TESBoundObject*)>
-                            sendInvUpdate{ RELOCATION_ID(51911, 52849) };
-                        sendInvUpdate(ref.get(), nullptr);
-                        spdlog::info("[chest] container sweep: {} converted in {:08X}",
-                                     n, ref->GetFormID());
-                    }
-                });
-            });
         } else if (!a_event->opening && a_event->menuName == RE::CraftingMenu::MENU_NAME) {
             // Overlay mode only: leaving the vanilla enchanting UI takes the gem
             // menu with it. In takeover mode (m18) the crafting menu closing IS
@@ -4303,7 +4272,6 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
     if (!a_holder || g_convert.empty()) {
         return 0;
     }
-    OpenEnchHumMuteWindow(4000);  // [snd] blanket the convert sweep's stacked enchant hums
     struct Hit {
         RE::TESBoundObject* old;
         const ConvTarget*   tgt;
@@ -4329,6 +4297,15 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
             }
         }
         hits.push_back({ obj, &it->second, data.first, worn, left });
+    }
+    // [snd] m41: open the enchant-hum mute window ONLY when this sweep will
+    // actually convert something — the worn re-equips (and the player instance-
+    // enchant path below) are the hum source. Cell-attach now sweeps every
+    // container in a cell, so an unconditional open muted legitimate weapon draws
+    // for 4s after opening any empty barrel/corpse. Gate it on real work: any hit,
+    // or the player path (which can re-equip an instance-enchant conversion).
+    if (!hits.empty() || (actor && actor->IsPlayerRef())) {
+        OpenEnchHumMuteWindow(4000);
     }
     int converted = 0;
     // m25d (marth's helmet/cuirass): when the PLAYER sweep misses enchanted
@@ -4851,6 +4828,53 @@ public:
                         MaybeStampNPCGear(actor);
                     }
                 }
+            });
+        } else if (a_event->reference->GetBaseObject() &&
+                   a_event->reference->GetBaseObject()->Is(RE::FormType::Container)) {
+            // m41 (marth): convert a container's enchanted generics when its cell
+            // attaches — BEFORE any loot UI reads it. A ContainerMenu-open hook is
+            // bypassed by QuickLoot / iEquip (LoreRim ships QuickLoot IE), which read
+            // the container into their own panel without opening the vanilla menu;
+            // sweeping at cell-attach means EVERY loot UI (vanilla menu, QuickLoot
+            // panel, crosshair) shows already-converted content. Static/hand-placed
+            // content never fires a TESContainerChangedEvent, so this is its only
+            // trigger; lazy/leveled content + pickup stay covered by ContainerSink.
+            // Deferred; the hum-mute window opens only if ConvertInventory actually
+            // converts (gated there), so empty barrels/urns don't over-mute.
+            const RE::ObjectRefHandle handle = a_event->reference->GetHandle();
+            SKSE::GetTaskInterface()->AddTask([handle]() {
+                auto ref = handle.get();
+                if (!ref) {
+                    return;
+                }
+                // Don't force-init InventoryChanges on every container: a bare
+                // GetInventory() on a never-opened container makes the engine roll
+                // its leveled loot early (a boss chest would lock to the player's
+                // level at first CELL ENTRY, not first open) and persists a changes
+                // record per barrel/urn in every visited cell. Only pay that when
+                // there's actually a hand-placed convertible to catch — the sole
+                // content this branch exists for (leveled/lazy + pickup are
+                // ContainerSink's job). If the container already has changes (opened
+                // before, or a mid-save install), sweep normally — no init cost.
+                if (!ref->extraList.HasType(RE::ExtraDataType::kContainerChanges)) {
+                    auto* cont = ref->GetBaseObject()
+                                     ? ref->GetBaseObject()->As<RE::TESObjectCONT>()
+                                     : nullptr;
+                    bool staticConvertible = false;
+                    if (cont) {
+                        cont->ForEachContainerObject([&](RE::ContainerObject& o) {
+                            if (o.obj && g_convert.contains(o.obj->GetFormID())) {
+                                staticConvertible = true;
+                                return RE::BSContainer::ForEachResult::kStop;
+                            }
+                            return RE::BSContainer::ForEachResult::kContinue;
+                        });
+                    }
+                    if (!staticConvertible) {
+                        return;  // nothing static to convert — leave it uninitialized
+                    }
+                }
+                ConvertInventory(ref.get());
             });
         }
         // M3d: the Mentor Gem waits in the Soul Cairn (mid-Dawnguard, between
