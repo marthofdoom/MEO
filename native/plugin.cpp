@@ -120,6 +120,34 @@ std::unordered_map<InstKey, SocketRecord> g_sockets;
 std::uint16_t g_nextUID = 0x9000;  // our range, clear of engine-assigned ids
 bool          g_starterGranted = false;
 
+// S3: mint a fresh instance uid in MEO's reserved range [0x9000, 0xFFFF]. Never
+// re-enters the engine-assigned low range on a uint16 wrap, and never returns a
+// (base,uid) that already has a live record — so a wrapped uid can't clobber a
+// real socket via operator[] (a long playthrough can mint tens of thousands of
+// uids through ConvertInventory/NPC stamping and reach the wrap).
+std::uint16_t MintUID(RE::FormID a_base) {
+    for (int scanned = 0; scanned <= (0xFFFF - 0x9000); ++scanned) {
+        if (g_nextUID < 0x9000) {
+            g_nextUID = 0x9000;  // uint16 wrap (or a stray value) -> back to our floor
+        }
+        const std::uint16_t uid = g_nextUID++;  // always >= 0x9000; wraps 0xFFFF->0
+        bool collide = false;
+        for (int s = 0; s < kMaxSockets; ++s) {
+            if (g_sockets.contains(MakeKey(a_base, uid, static_cast<std::uint8_t>(s)))) {
+                collide = true;
+                break;
+            }
+        }
+        if (!collide) {
+            return uid;
+        }
+    }
+    // Every uid in our range is live for this base (practically impossible). Return a
+    // reserved-range value rather than 0 (which is an engine uid) and log loudly.
+    spdlog::error("[uid] mint exhausted MEO range for base {:08X}", a_base);
+    return g_nextUID < 0x9000 ? 0x9000 : g_nextUID;
+}
+
 constexpr std::uint32_t kSerID = 'MEO1';
 constexpr std::uint32_t kRecGems = 'GEMS';
 constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPlacedMask. v9: supportScaffold.
@@ -379,7 +407,8 @@ void EnsurePouchRef() {
 // m32c: when the pouch had to be recreated, its contents died with the old
 // ref — but the RECORDS live in the co-save. Any loose-gem record whose uid
 // exists in neither the player nor the pouch is re-minted with its banked
-// level and XP. Runs only on pouch creation; healthy loads never trigger it.
+// level and XP. m32d: runs on EVERY load (not just pouch creation) to catch a
+// looted-but-alive pouch; a healthy load strands nothing and this no-ops.
 void GiveGemInstance(int a_gemIdx, int a_level, float a_xp);
 void Notify(const std::string& a_msg);
 void RecoverStrandedGems() {
@@ -1507,7 +1536,7 @@ std::uint16_t StampInstance(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     if (auto* xid = a_xList->GetByType<RE::ExtraUniqueID>()) {
         uid = xid->uniqueID;  // engine-assigned is fine: key includes baseID
     } else {
-        uid = g_nextUID++;
+        uid = MintUID(a_base->GetFormID());
         a_xList->Add(new RE::ExtraUniqueID(a_base->GetFormID(), uid));
     }
     const int lvIdx = std::clamp(a_level, 1, 5) - 1;
@@ -1627,6 +1656,14 @@ void ApplyWornAbility(RE::Actor* a_owner, RE::TESBoundObject* a_base,
 // left its constant effect active until a real unequip. The engine's own
 // complete teardown is the equip cycle (m16-proven, m17b field-validated),
 // and behind the open menu its one-frame blink is invisible.
+// S4: bases with an equip cycle IN FLIGHT (main-thread only). Between this
+// function's unequip and equip the item is transiently unworn; DispelStaleGem-
+// Effects consults this set so that item's own live enchant still vouches for
+// its active effect mid-cycle (keeps the m26e race closed) without letting a
+// genuinely unworn backpack spare vouch (which reopened the m24b escalated-skill
+// bug when allowance was counted inventory-wide).
+std::unordered_map<RE::FormID, int> g_equipCyclingBases;
+
 void EquipCycleWorn(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList) {
     auto* em = RE::ActorEquipManager::GetSingleton();
     if (!em || !a_owner || !a_base || !a_xList) {
@@ -1641,8 +1678,14 @@ void EquipCycleWorn(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDat
                     : RE::DEFAULT_OBJECT::kRightHandEquip);
         }
     }
+    const RE::FormID base = a_base->GetFormID();
+    ++g_equipCyclingBases[base];
     em->UnequipObject(a_owner, a_base, a_xList, 1, slot, false, false, false, true);
     em->EquipObject(a_owner, a_base, a_xList, 1, slot, false, false, false, true);
+    if (auto it = g_equipCyclingBases.find(base);
+        it != g_equipCyclingBases.end() && --it->second <= 0) {
+        g_equipCyclingBases.erase(it);
+    }
     OpenEnchHumMuteWindow(3000);  // [snd] silence the re-equip's enchant hum this burst
 }
 
@@ -1894,7 +1937,7 @@ void DispelStaleGemEffects();              // m24b/c — defined with the load-r
 void StockVendorGems();                    // m19b — defined with the loot rolls below
 int  ConvertInventory(RE::TESObjectREFR* a_holder);  // m38 — defined with conversion below
 void CloseGemMenu();
-extern std::atomic<bool> g_pendingReapply;  // m19e — defined with the load reapply below
+extern std::atomic<std::uint32_t> g_reapplyPending;  // m19e/S2 — defined with the load reapply below
 void RunDeferredReapply(int a_delayMs);
 void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag);  // m35c cap redistribution
 
@@ -1922,10 +1965,14 @@ public:
             // m19e: gameplay just resumed after a load — NOW the worn-socket
             // re-equip can take (a blind post-load timer fired during long
             // loading screens and was swallowed; see ScheduleReapplyWornSockets).
-            if (g_pendingReapply.exchange(false)) {
-                // Two passes: the refresh is blinkless (strip/restamp, no
-                // equip cycle), so a late second pass is free insurance —
-                // +1.5s was field-swallowed during the fade (2026-07-09).
+            // S2: consume the pending generation (0 = none / already consumed by
+            // the fallback). exchange(0) claims it so the fallback thread for this
+            // same generation then no-ops.
+            if (g_reapplyPending.exchange(0) != 0) {
+                // Two equip-cycle passes (m35d retired the old blinkless refresh —
+                // both passes now run the idempotent unequip/re-equip, which cannot
+                // accumulate). A late 2nd pass is insurance: +1.5s was field-
+                // swallowed during the post-load fade (2026-07-09).
                 RunDeferredReapply(5000);
                 RunDeferredReapply(12000);
             }
@@ -2316,7 +2363,7 @@ void GiveGemInstance(int a_gemIdx, int a_level, float a_xp) {
     // cell/location owner — picking it up in town, witnessed, was THEFT
     // (marth's 100g bounty on gem swaps near guards, m17b). Own it first.
     xl.SetOwner(player->GetActorBase());
-    const std::uint16_t uid = g_nextUID++;
+    const std::uint16_t uid = MintUID(gemForm->GetFormID());
     xl.Add(new RE::ExtraUniqueID(gemForm->GetFormID(), uid));
     const std::string name = std::format("{} ({:.0f}/{:.0f})", gemForm->GetName(), a_xp,
                                           NextThreshold(rg.def, a_level));
@@ -2465,7 +2512,7 @@ void BuildMenuSnapshot() {
                         }
                         instances += cnt;  // a genuine singleton instance
                         if (!xid) {
-                            xid = new RE::ExtraUniqueID(obj->GetFormID(), g_nextUID++);
+                            xid = new RE::ExtraUniqueID(obj->GetFormID(), MintUID(obj->GetFormID()));
                             xl->Add(xid);
                         }
                     }
@@ -2703,7 +2750,7 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
                                                 nullptr, nullptr);
         if (auto ref = dropped.get()) {
             ref->extraList.SetOwner(player->GetActorBase());  // never theft (m17b)
-            const std::uint16_t uid = g_nextUID++;
+            const std::uint16_t uid = MintUID(a_itemBase);
             ref->extraList.Add(new RE::ExtraUniqueID(a_itemBase, uid));
             player->PickUpObject(ref.get(), 1, false, false);
             xl = FindInstanceXList(player, itemForm, uid);
@@ -5259,22 +5306,31 @@ void DispelStaleGemEffects() {
     // the effect stayed MISSING. An orphan is an enchant attached to
     // NOTHING, not one attached to something momentarily unequipped.
     // m38e: allowance per (enchant form, MGEF) = how many worn ActiveEffects that
-    // pair may legitimately produce = (inventory items carrying the enchant) ×
-    // (that MGEF's occurrences in the enchant's effects). Counted inventory-wide
-    // (worn or not) so the m26e equip-cycle race stays closed. Replaces the old
+    // pair may legitimately produce = (vouching items carrying the enchant) ×
+    // (that MGEF's occurrences in the enchant's effects). Replaces the old
     // orphan-set + first-wins `seen` dedup, which silently killed the 2-of-a-kind
     // cap's legitimate 2nd copy: the engine dedupes identical created enchants to
     // ONE FF form (ENGINE_NOTES), so two worn pieces of the same family+level
     // share (form, MGEF) and the 2nd looked like a duplicate. Allowance permits
     // exactly as many copies as items+effects vouch for.
+    // S4: only a WORN item vouches (a constant enchant produces an active effect
+    // ONLY when worn), plus an item whose base is mid-equip-cycle (transiently
+    // unworn but its effect legitimately live — closes the m26e race). An unworn
+    // backpack spare of the same family no longer inflates the allowance, which
+    // was letting a save-carried orphan copy survive the sweep (the m24b
+    // escalated-skill bug) — the m26e-era inventory-wide count over-vouched.
     std::unordered_map<std::uint64_t, int> allowance;
     for (auto* entry : *changes->entryList) {
         if (!entry || !entry->object || !entry->extraLists) {
             continue;
         }
+        const bool cycling = g_equipCyclingBases.contains(entry->object->GetFormID());
         for (auto* xl : *entry->extraLists) {
             if (!xl) {
                 continue;
+            }
+            if (!IsWornXList(xl) && !cycling) {
+                continue;  // unworn and not mid-cycle -> produces no active effect
             }
             auto* xe = xl->GetByType<RE::ExtraEnchantment>();
             if (!xe || !xe->enchantment) {
@@ -5367,7 +5423,14 @@ void ReapplyFollowerSockets() {
     if (!lists) {
         return;
     }
-    int done = 0;
+    // B2: EquipCycleWorn dispatches synchronous equip events that follower AI /
+    // third-party sinks can use to mutate follower inventory — collect every
+    // target across ALL followers FIRST, then cycle, so no cycle fires while a
+    // live entryList/extraLists is still being iterated (mirrors the player path,
+    // ReapplyWornSockets). The actor is held by handle and re-resolved at cycle
+    // time in case it changed.
+    struct FTarget { RE::ActorHandle handle; RE::TESBoundObject* base; RE::ExtraDataList* xl; };
+    std::vector<FTarget> targets;
     for (auto& h : lists->highActorHandles) {
         auto a = h.get();
         if (!a || a->IsPlayerRef() || !a->IsPlayerTeammate() || a->IsDead()) {
@@ -5400,11 +5463,19 @@ void ReapplyFollowerSockets() {
                     }
                 }
                 if (ours) {
-                    EquipCycleWorn(a.get(), entry->object, xl);
-                    ++done;
+                    targets.push_back({ h, entry->object, xl });
                 }
             }
         }
+    }
+    int done = 0;
+    for (auto& t : targets) {
+        auto a = t.handle.get();
+        if (!a) {
+            continue;  // follower unloaded between collection and cycle
+        }
+        EquipCycleWorn(a.get(), t.base, t.xl);
+        ++done;
     }
     if (done > 0) {
         spdlog::info("[load] reactivated {} follower worn socket(s)", done);
@@ -5549,10 +5620,17 @@ void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag = false) {
 // timer; on a heavy-area load (Solitude, 2026-07-09) it fired while the
 // loading screen was still up and the equip cycle was swallowed — worn gems
 // stayed FX/delivery-dead until a manual socket action. The reliable anchor
-// is the Loading Menu CLOSING (gameplay resumed): MenuSink consumes
-// g_pendingReapply on that close (+1.5s of fade margin). A 15s fallback
-// timer covers loads that never show a loading menu.
-std::atomic<bool> g_pendingReapply{ false };
+// is the Loading Menu CLOSING (gameplay resumed): MenuSink consumes the pending
+// reapply generation on that close (+1.5s of fade margin). A 15s fallback timer
+// covers loads that never show a loading menu.
+// S2: generation-tagged pending flag. A single bool let a first load's 15s
+// fallback thread steal (or a late MenuSink miss) the reapply belonging to a
+// SECOND load started inside that window — the 2nd load then reactivated no worn
+// gems. Each schedule bumps g_reapplyGen and stores it as the pending token; the
+// fallback consumes only if its own generation is still the pending one, and the
+// MenuSink consumes whatever the current pending token is (0 = already consumed).
+std::atomic<std::uint32_t> g_reapplyGen{ 0 };      // increments once per load schedule
+std::atomic<std::uint32_t> g_reapplyPending{ 0 };  // generation awaiting consumption; 0 = none
 
 void RunDeferredReapply(int a_delayMs) {
     std::thread([a_delayMs]() {
@@ -5567,10 +5645,14 @@ void ScheduleReapplyWornSockets() {
     SKSE::GetTaskInterface()->AddTask([]() {
         ReapplyWornSockets(/*rebuild=*/true, /*reequip=*/false, /*diag=*/true);
     });
-    g_pendingReapply = true;
-    std::thread([]() {  // fallback: if no Loading Menu close consumes the flag
+    const std::uint32_t gen = ++g_reapplyGen;
+    g_reapplyPending.store(gen);
+    std::thread([gen]() {  // fallback: if no Loading Menu close consumes this generation
         std::this_thread::sleep_for(std::chrono::milliseconds(15000));
-        if (g_pendingReapply.exchange(false)) {
+        std::uint32_t expected = gen;
+        // Only fire if OUR generation is still the pending one — a later load
+        // supersedes us (its own schedule/MenuSink owns the reapply now).
+        if (g_reapplyPending.compare_exchange_strong(expected, 0)) {
             SKSE::GetTaskInterface()->AddTask([]() {
                 ReapplyWornSockets(/*rebuild=*/false, /*reequip=*/true);
             });
@@ -5578,7 +5660,7 @@ void ScheduleReapplyWornSockets() {
     }).detach();
 }
 
-// ── SKSE co-save (schema v3 — see save-safety rules in the header) ────
+// ── SKSE co-save (schema v11 — see save-safety rules in the header) ───
 void SaveCallback(SKSE::SerializationInterface* a_intfc) {
     if (!a_intfc->OpenRecord(kRecGems, kSerVersion)) {
         spdlog::error("SaveCallback: OpenRecord('GEMS') failed");
@@ -5646,8 +5728,23 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
             continue;
         }
         if (version > kSerVersion) {
-            spdlog::error("[load] 'GEMS' v{} is from a NEWER MEO — records preserved as unread, "
-                          "sockets inert this session (downgrade unsupported)", version);
+            // S1: SKSE does NOT round-trip unread co-save records — the next save
+            // runs SaveCallback and writes the now-empty g_sockets, DESTROYING every
+            // record. The old "preserved as unread" log was actively misleading. Warn
+            // in the log and once on screen; the only real protection is not to save.
+            spdlog::error("[load] 'GEMS' v{} is from a NEWER MEO than this build (v{}). This build "
+                          "cannot read those records, and SKSE does not preserve unread co-save "
+                          "data — SAVING NOW PERMANENTLY LOSES every gem/socket record. Do not save "
+                          "with this version; reinstall the newer MEO to keep them.",
+                          version, kSerVersion);
+            static bool warnedDowngrade = false;
+            if (!warnedDowngrade) {
+                warnedDowngrade = true;
+                RE::DebugMessageBox(
+                    "Marth's Enchanting Overhaul: this save was made with a NEWER version of the "
+                    "mod.\n\nThis older version cannot read your gems. If you SAVE with this version "
+                    "they will be permanently lost.\n\nReinstall the newer MEO before saving.");
+            }
             continue;
         }
         a_intfc->ReadRecordData(g_nextUID);
@@ -5665,7 +5762,14 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
             g_armorStarterGranted = armorStarter != 0;
         }
         if (version >= 7) {  // v7: pouch container ref (recreated when absent)
-            a_intfc->ReadRecordData(g_pouchRefID);
+            // B1: the pouch ref is a dynamic FF-form REFR, but its id must still pass
+            // through the co-save handle map — resolve it; an unresolved id means the
+            // ref is gone, so EnsurePouchRef recreates it and RecoverStrandedGems reclaims.
+            RE::FormID rawPouch = 0;
+            a_intfc->ReadRecordData(rawPouch);
+            if (!a_intfc->ResolveFormID(rawPouch, g_pouchRefID)) {
+                g_pouchRefID = 0;
+            }
         }
         if (version >= 8) {  // v8: MEO-granted Arcane Blacksmith flag
             std::uint8_t grantedArcane = 0;
@@ -5696,7 +5800,14 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
             g_needSeedDiscoveries = true;
         }
         std::uint32_t count = 0;
-        a_intfc->ReadRecordData(count);
+        if (!a_intfc->ReadRecordData(count)) {
+            // N2: a truncated/corrupt record — bail rather than fabricate keys from
+            // garbage. Whatever resolved before this point stays; nothing is invented.
+            spdlog::error("[load] 'GEMS' v{} truncated before socket count — stopping read",
+                          version);
+            continue;
+        }
+        int resolved = 0, dropped = 0;
         for (std::uint32_t i = 0; i < count; ++i) {
             std::uint32_t baseID = 0;
             std::uint16_t uid = 0;
@@ -5713,8 +5824,25 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
             a_intfc->ReadRecordData(len);
             rec.gid.resize(len);
             a_intfc->ReadRecordData(rec.gid.data(), len);
-            g_sockets[MakeKey(baseID, uid, slot)] = std::move(rec);
+            // B1: the co-save stores the raw runtime FormID (mod-index byte and all).
+            // A changed load order remaps plugin indices; SKSE's co-save plugin-list
+            // map turns the stored id into the current one. WITHOUT this, every key
+            // points into the wrong plugin's FormID space after ANY load-order change
+            // — worn gems read as record-less (dead), banked XP lost, and a stale id
+            // can even collide onto an unrelated item. A record whose plugin left the
+            // load order fails to resolve → drop it (its item is gone with the plugin).
+            RE::FormID resolvedBase = 0;
+            if (!a_intfc->ResolveFormID(baseID, resolvedBase)) {
+                ++dropped;
+                spdlog::warn("[load]   dropped base={:08X} uid={} slot={} gid={} — form left the "
+                             "load order", baseID, uid, static_cast<int>(slot), rec.gid);
+                continue;
+            }
+            g_sockets[MakeKey(resolvedBase, uid, slot)] = std::move(rec);
+            ++resolved;
         }
+        spdlog::info("[load] socket records: {} resolved, {} dropped (unresolved form)",
+                     resolved, dropped);
     }
     spdlog::info("[load] {} socket record(s), nextUID=0x{:X}, starter={}, mentor={}",
                  g_sockets.size(), g_nextUID, g_starterGranted, g_mentorGranted);
