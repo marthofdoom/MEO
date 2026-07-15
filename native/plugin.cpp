@@ -4243,7 +4243,10 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
     a_xList->RemoveByType(RE::ExtraDataType::kTextDisplayData);  // forge rename dies with it
     std::string what;
     for (std::size_t s = 0; s < picks.size(); ++s) {
-        StampInstance(a_base, a_xList, picks[s], 1, static_cast<std::uint8_t>(s));
+        // Forward a_owner (build-B1 future-proof): identical today (this path is
+        // player-only, so owner==player == the nullptr behavior), but if follower/
+        // NPC conversion is ever enabled it prevents the worn-cap strip returning.
+        StampInstance(a_base, a_xList, picks[s], 1, static_cast<std::uint8_t>(s), 0.0f, a_owner);
         if (!what.empty()) {
             what += " + ";
         }
