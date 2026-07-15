@@ -5881,40 +5881,42 @@ namespace sndhook {
             sndrID = form->GetFormID();
         }
 
-        // Only the enchant-unsheathe ambients are candidates; everything else
-        // (spell/cloak/candlelight shader ambients) is never touched.
-        if (!IsEnchHumSndr(sndrID)) {
-            return g_buildSound(a_self, a_handle, a_desc, a_flags);
-        }
-
         // Resolve the controller vtable (never deref it — just identify the class).
         std::uintptr_t ctrlVt = 0;
         if (auto* ctrl = fx ? fx->controller : nullptr) {
             ctrlVt = *reinterpret_cast<std::uintptr_t*>(ctrl);
         }
-        const bool isArmor  = g_ownedCtrlVtable && ctrlVt == g_ownedCtrlVtable;
-        const bool isWeapon = g_weapCtrlVtable && ctrlVt == g_weapCtrlVtable;
-        const bool suppress = isArmor;   // armor shimmer = load/area noise
+        const bool isArmor   = g_ownedCtrlVtable && ctrlVt == g_ownedCtrlVtable;
+        const bool isWeapon  = g_weapCtrlVtable && ctrlVt == g_weapCtrlVtable;
+        const bool isEnchSnd = IsEnchHumSndr(sndrID);
+        // Gate UNCHANGED: mute only the vanilla enchant-unsheathe SNDRs on an armor
+        // (OwnedController) shimmer. v20 only widens LOGGING, not suppression.
+        const bool suppress  = isEnchSnd && isArmor;
 
-        // ── DIAG v17: split-budget census. Armor path (the flood) logs first 10;
-        // every non-armor init logs up to 300 so weapon draws are always captured.
-        const bool doLog = isArmor ? (g_armorLog.fetch_add(1, std::memory_order_relaxed) < 10)
-                                   : (g_otherLog.fetch_add(1, std::memory_order_relaxed) < 300);
-        if (doLog) {
-            const int           n         = g_diag.fetch_add(1, std::memory_order_relaxed) + 1;
-            const RE::FormID    efshID    = (fx && fx->effectData) ? fx->effectData->GetFormID() : 0;
-            const std::uint32_t tgtHandle = fx ? fx->target.native_handle() : 0;
-            RE::TESObjectREFR*  tgtRef    = fx ? fx->target.get().get() : nullptr;
-            const bool          isPlayer  = tgtRef && tgtRef == RE::PlayerCharacter::GetSingleton();
-            const std::uintptr_t vtOff    = ctrlVt ? (ctrlVt - REL::Module::get().base()) : 0;
-            const char* cls = isArmor ? "OwnedController(armor)"
-                            : isWeapon ? "WeaponEnchantmentController"
-                            : ctrlVt   ? "other"
-                                       : "null";
-            spdlog::info("[diag-init #{}] SNDR={:08X} EFSH={:08X} target={:08X} plr={} "
-                         "ctrl={} ctrlVt=+0x{:X} -> {}",
-                         n, sndrID, efshID, tgtHandle, isPlayer ? 1 : 0, cls, vtOff,
-                         suppress ? "MUTE" : "PLAY");
+        // ── DIAG v20: log EVERY sound built at Init+0x113 (ALL SNDRs, ALL controller
+        // classes), not just the 4 vanilla enchant ones. This is the bisect: if the
+        // stacked load hum is an enchant-shader ambient we currently let PLAY (a non-
+        // OwnedController controller, or a SNDR outside the 4), it WILL show here as a
+        // burst of PLAY lines. If load shows only the muted armor + player weapon
+        // (nothing new), the hum does NOT pass through Init+0x113 at all → it's the
+        // Play-path/cached-replay case (see PlayProbe below).
+        {
+            const int n = g_diag.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (n <= 200) {
+                const RE::FormID    efshID    = (fx && fx->effectData) ? fx->effectData->GetFormID() : 0;
+                const std::uint32_t tgtHandle = fx ? fx->target.native_handle() : 0;
+                RE::TESObjectREFR*  tgtRef    = fx ? fx->target.get().get() : nullptr;
+                const bool          isPlayer  = tgtRef && tgtRef == RE::PlayerCharacter::GetSingleton();
+                const std::uintptr_t vtOff    = ctrlVt ? (ctrlVt - REL::Module::get().base()) : 0;
+                const char* cls = isArmor ? "Owned(armor)"
+                                : isWeapon ? "WeapEnch"
+                                : ctrlVt   ? "other"
+                                           : "null";
+                spdlog::info("[diag-init #{}] SNDR={:08X} EFSH={:08X} target={:08X} plr={} "
+                             "ench4={} ctrl={} ctrlVt=+0x{:X} -> {}",
+                             n, sndrID, efshID, tgtHandle, isPlayer ? 1 : 0, isEnchSnd ? 1 : 0,
+                             cls, vtOff, suppress ? "MUTE" : "PLAY");
+            }
         }
 
         if (suppress) {
@@ -5972,8 +5974,9 @@ namespace sndhook {
         g_weapCtrlVtable  = REL::ID(206025).address();  // VTABLE_WeaponEnchantmentController
 
         g_buildSound = SKSE::GetTrampoline().write_call<5>(site, BuildSoundThunk);
-        spdlog::info("[snd] v18 enchant-hum gate installed (ShaderReferenceEffect::Init->BuildSound) — "
-                     "OwnedController(armor)=mute UNCAPPED, weapon/other=keep; ownedVt=0x{:X} weapVt=0x{:X}",
+        spdlog::info("[snd] v20 enchant-hum gate installed (Init->BuildSound) — mute UNCHANGED "
+                     "(4-SNDR & OwnedController); LOG-ALL-SNDR census on to find the load hum; "
+                     "ownedVt=0x{:X} weapVt=0x{:X}",
                      g_ownedCtrlVtable, g_weapCtrlVtable);
     }
 
@@ -6074,7 +6077,9 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SetupLog();
     menuhook::Install();     // must be written before the renderer initializes
     sndhook::Install();      // [snd] enchant-hum gate (Init+0x113 OwnedController mute)
-    sndhook::ProbeInstall(); // [snd] v19 diag: wide BuildSound-site probe (find 2nd emitter)
+    // sndhook::ProbeInstall(); // v19 39-site BuildSound net done its job (0 hits) — disabled
+    //   v20: log-all-SNDR at Init+0x113 (in BuildSoundThunk) tests whether the load
+    //   hum is an EnchantmentArtExtender/Vibrant-Weapons custom-SNDR shimmer we PLAY.
 
     const auto gameVersion = REL::Module::get().version();
     spdlog::info("MEO native v1.0.6 loading; runtime {}", gameVersion.string());
