@@ -43,6 +43,14 @@ support. Remaining for 1.0.0: docs/portability audit + release engineering.
 6. **P0_TESTING.md** (HISTORICAL) — the pre-native Papyrus prototype gate.
    Passed 2026-07-05; kept for the record.
 
+## Forward plans (designed, not yet built)
+
+- **ROADMAP-1.0.7-tally-cap.md** — replaces the build-time 2-of-a-kind stacking
+  cap with a runtime tally over the active-effect list (edge-triggered reconcile
+  on cell-change + optional guarded equip sink). Closes the equip-swap over/
+  under-apply gap and retires the `applyCap`/owner-gating machinery that caused
+  v1.0.6's `StampInstance` NPC-strip blocker. Ships after Phase 3 deck-testing.
+
 ## Archived (Docs/archive/ — superseded, kept for history)
 
 - **NATIVE_REWRITE_PLAN.md** — the plan the native layer was built from

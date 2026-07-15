@@ -593,6 +593,22 @@ the socket layout adds build *breadth*, not single-stat runaway. It also keeps
 resists sane — 2× elemental-resist V (30%) = 60%, under the ~85% cap. Enforced
 at socket/rebuild time.
 
+**Known limitation as of v1.0.6 — the cap settles at the next socket-action or
+load, not on a plain equip swap.** The cap is baked into each item's built
+enchant during a *rebuild* (socket / unsocket / level-up / load). A plain
+equip/unequip of an already-socketed item fires no rebuild (there is no
+`TESEquipEvent` sink), so two edge transitions are transiently wrong until the
+next rebuild: (1) an item socketed while **unworn** builds full-strength, so
+equipping it as a 3rd copy mid-session over-applies (a `2×V → 3×V` balance
+bypass) until a socket action or reload; (2) unequipping one of the top-2 leaves
+a capped 3rd copy inert (under-applied) until the same. Both self-correct on the
+next socket action or load. The over-apply is a knowable-but-obscure balance
+exploit (socket-unworn, then equip), not a crash or data-loss issue. The proper
+fix is the **1.0.7 runtime tally-cap** — see
+[ROADMAP-1.0.7-tally-cap.md](ROADMAP-1.0.7-tally-cap.md) — which moves cap
+enforcement off the build path onto the active-effect list and also retires the
+`applyCap`/owner-gating machinery that caused v1.0.6's worst blocker.
+
 ## 5. Support gems (dual-slot linked only) — SHIPPED (m36 series, v0.47–v0.49)
 
 **Focus, Conduit, and Echo ship and work in-game.** Support gems are inert

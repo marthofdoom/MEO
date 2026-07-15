@@ -1123,6 +1123,12 @@ bool IsWornXList(const RE::ExtraDataList* a_xl);  // defined below
 // is fully inert. Returns the worn instance-keys that ARE active (top 2 per
 // gid). Rebuilds consult this so a single stat caps at 2 x V regardless of
 // how many pieces carry it — socket layout adds breadth, not runaway.
+// LIMITATION (v1.0.6): enforced at REBUILD time only (socket/unsocket/level/
+// load) — a plain equip swap fires no rebuild, so a 3rd copy can transiently
+// over-apply until the next socket action/load. This player-inventory scan is
+// also why the cap needs applyCap/owner-gating (its absence caused build-B1's
+// NPC-gear strip). Both go away in the v1.0.7 runtime tally-cap — see
+// Docs/ROADMAP-1.0.7-tally-cap.md (reconcile over the active-effect list).
 std::unordered_set<InstKey> WornActiveEffectKeys() {
     std::unordered_set<InstKey> active;
     auto* player = RE::PlayerCharacter::GetSingleton();
