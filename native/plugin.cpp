@@ -628,7 +628,7 @@ std::unordered_set<std::string> g_discoveredGems;  // co-save v11: gem gids the 
 bool g_needSeedDiscoveries = false;             // m37: pre-v11 save loaded — seed held gems silently, no XP burst
 bool g_treeMode = false;  // MEO - Patch.esp installed: perks come from the tree, not auto-grant
 // Cached from the player's perks (refreshed on load + menu close).
-int  g_attuneRank = 0;      // 0..5 → +8% gem magnitude per rank
+int  g_attuneRank = 0;      // 0..5 → +5% gem magnitude per rank (v1.0.6 marth: was +8%, top-end too high)
 bool g_hasGemCutter = false;  // +50% Gem XP
 bool g_hasSoulFeeder = false; // soul feeding is twice as potent
 bool g_hasTwinned = false;    // chest armor holds 2 linked gems
@@ -1381,11 +1381,11 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         const ResolvedGem* eg = conduitTarget ? conduitTarget : filled[i].rg;
         const int          lvIdx = filled[i].lvIdx;
         premiumGold += kSocketTierValue[std::clamp(lvIdx, 0, 4)];
-        // Master power scale (MCM) × Gem Attunement (+8%/rank) × affinity/
+        // Master power scale (MCM) × Gem Attunement (+5%/rank) × affinity/
         // Facet Insight (+25% each, DESIGN §6); × Focus boost or Conduit ratio.
         const float baseMag =
             GemBaseMag(eg->def, lvIdx) * g_magnitudeMult *
-            (1.0f + 0.08f * g_attuneRank) * GemPerkMult(eg->def);
+            (1.0f + 0.05f * g_attuneRank) * GemPerkMult(eg->def);
         const float primaryMag = conduitTarget ? baseMag * conduitRatio : baseMag * supportMag;
         auto& eff = effects[e++];
         eff.effectItem.magnitude = primaryMag;
@@ -1402,7 +1402,7 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
                 auto& reff = effects[e++];
                 reff.effectItem.magnitude =
                     rd.absMag > 0.0f
-                        ? rd.absMag * g_magnitudeMult * (1.0f + 0.08f * g_attuneRank) *
+                        ? rd.absMag * g_magnitudeMult * (1.0f + 0.05f * g_attuneRank) *
                               GemPerkMult(filled[i].rg->def) * supportMag  // m32/m34; m36 Focus
 
                         : primaryMag * rd.ratio;
@@ -1687,11 +1687,16 @@ bool  g_enableLogging = true;     // [Debug] bEnableLogging — write MEO.log (d
 bool  g_stationTakeover = true;   // [UI] bStationTakeover — gem menu REPLACES the vanilla enchanting menu
 int   g_menuStyle = 0;            // [UI] iMenuStyle — gem menu skin 0..3 (m24 MCM dropdown)
 bool  g_temperNoPerk = true;      // [UI] bTemperNoPerk — socketed gear tempers w/o Arcane Blacksmith (m33)
-float g_enchSkillXPMult = 1.0f;   // [XP] fEnchSkillXP — Enchanting SKILL xp per soul fed (m25)
-float g_discoverSkillXP = 50.0f;  // [XP] fDiscoverSkillXP — Enchanting SKILL xp for discovering a NEW gem family (one-time each, m37)
-float g_destroySkillXP  = 20.0f;  // [XP] fDestroySkillXP — Enchanting SKILL xp per gem destroyed (× level) (m37)
-float g_levelSkillXP    = 12.0f;  // [XP] fLevelSkillXP — Enchanting SKILL xp per gem level gained (× new level) (m37)
-float g_gemXpSkillXP    = 0.001f; // [XP] fGemXpSkillXP — Enchanting SKILL xp per point of Gem XP a gem earns from a kill (tiny trickle, m37; MCM slider m39; v1.0.6 marth: default 0.001, MCM max 0.010 — was 0.01/0.05, too fast)
+// v1.0.6 (marth): every XP MCM slider is a MULTIPLIER that READS 1.0 = intended
+// balance; the real per-event rate is baked into a k* constant below and scaled by
+// the 1.0-default multiplier. So the slider is a clean "×N from tuned", not a raw rate.
+float g_enchSkillXPMult = 1.0f;   // [XP] fEnchSkillXP — ×mult on kSoulSkillXP (soul-fed skill xp) (m25)
+float g_discoverSkillXP = 1.0f;   // [XP] fDiscoverSkillXP — ×mult on kDiscoverSkillXP (v1.0.6 marth: slider reads 1.0)
+float g_destroySkillXP  = 20.0f;  // [XP] fDestroySkillXP — Enchanting SKILL xp per gem destroyed (× level) (m37, dev ini)
+float g_levelSkillXP    = 12.0f;  // [XP] fLevelSkillXP — Enchanting SKILL xp per gem level gained (× new level) (m37, dev ini)
+float g_gemXpSkillXP    = 1.0f;   // [XP] fGemXpSkillXP — ×mult on kGemKillSkillXP (v1.0.6 marth: slider reads 1.0, up to 10×)
+constexpr float kDiscoverSkillXP = 10.0f;  // baked base: Enchanting SKILL xp per NEW gem family discovered (v1.0.6, was 50 — batched too hot)
+constexpr float kGemKillSkillXP  = 0.001f; // baked base: Enchanting SKILL xp per point of Gem XP earned from a kill (v1.0.6, was 0.01/0.05)
 // NB: socketing grants NO skill xp on purpose — socket/unsocket would be a farm loop (marth).
 // g_socketValueMult [Balance] fSocketValueMult is declared up top (RebuildInstanceEnchant uses it)
 bool  g_debugAllPerks = false;    // [Debug] bDebugAllPerks — force every MEO perk ON for testing (m36)
@@ -2051,9 +2056,10 @@ void DiscoverGem(const ResolvedGem& a_rg) {
         return;
     }
     g_discoveredGems.insert(gid);
-    GrantEnchantingXP(g_discoverSkillXP);
+    GrantEnchantingXP(kDiscoverSkillXP * g_discoverSkillXP);
     Notify(std::format("You study a new gem: {}. (Enchanting rises.)", GemName(a_rg)));
-    spdlog::info("[discover] '{}' — +{:.0f} Enchanting xp", gid, g_discoverSkillXP * g_enchSkillXPMult);
+    spdlog::info("[discover] '{}' — +{:.1f} Enchanting xp", gid,
+                 kDiscoverSkillXP * g_discoverSkillXP * g_enchSkillXPMult);
 }
 
 // Scan the player's inventory + pouch and discover any new gem family.
@@ -2239,7 +2245,7 @@ void AwardKillXP(RE::Actor* a_owner, float a_ap) {
     // your gems is enchanting practice. Once per kill (not × gem count, so more
     // sockets isn't a faster grind); accumulates over normal combat.
     if (awarded > 0 && a_owner->IsPlayerRef()) {
-        GrantEnchantingXP(xp * g_gemXpSkillXP);
+        GrantEnchantingXP(xp * kGemKillSkillXP * g_gemXpSkillXP);
     }
     // "Gem XP +N" HUD feedback (player only; bXPNotify, MCM toggle later).
     if (awarded > 0 && g_xpNotify && a_owner->IsPlayerRef()) {
@@ -2954,7 +2960,7 @@ void FeedSoulToGem(RE::FormID a_itemBase, std::uint16_t a_uid, std::uint8_t a_sl
     // enchanting practice — MEO replaced the vanilla table flow that used to
     // train the skill, so the skill trains here. Roughly a vanilla enchant's
     // worth per soul of the same size, MCM-scalable.
-    static constexpr float kSoulSkillXP[5] = { 15.0f, 35.0f, 75.0f, 125.0f, 200.0f };
+    static constexpr float kSoulSkillXP[5] = { 11.0f, 26.0f, 56.0f, 94.0f, 150.0f };  // v1.0.6 marth: -25% from 15/35/75/125/200 (feeding was leveling Enchanting too fast)
     if (g_enchSkillXPMult > 0.0f) {
         player->AddSkillExperience(RE::ActorValue::kEnchanting,
                                    kSoulSkillXP[idx] * g_enchSkillXPMult);
@@ -3200,7 +3206,7 @@ namespace menuhook {
             const int   li = std::clamp(a_level, 1, 5) - 1;
             auto*       m = rg.mgefLv[li] ? rg.mgefLv[li] : rg.mgef;
             const float mag = GemBaseMag(rg.def, li) * g_magnitudeMult *
-                              (1.0f + 0.08f * g_attuneRank) * GemPerkMult(rg.def);
+                              (1.0f + 0.05f * g_attuneRank) * GemPerkMult(rg.def);
             const char* d = m ? m->magicItemDescription.c_str() : nullptr;
             if (d && *d) {
                 std::string s(d);
@@ -4857,7 +4863,7 @@ void EchoFollowerShareTick() {
     }
     // Rewrite the share spell's single effect to this gem's, scaled by tier.
     const float mag = GemBaseMag(shareGem->def, shareLvIdx) * g_magnitudeMult *
-                      (1.0f + 0.08f * g_attuneRank) * GemPerkMult(shareGem->def) * echoFrac;
+                      (1.0f + 0.05f * g_attuneRank) * GemPerkMult(shareGem->def) * echoFrac;
     auto* eff = g_echoShareSpell->effects[0];
     if (!eff) {
         return;
