@@ -4,22 +4,65 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
-## v1.0.6 — shorter socketed-item names + Summermyst weakness gems (m40, 2026-07-14)
+## v1.0.6 — enchant-sound fix + XP/attunement rebalance + shorter names + Summermyst weakness gems (m40, 2026-07-15)
+
+Audio
+- **The enchant/unsheathe "hum" is silenced.** Socketed weapons no longer play
+  the looping magic-enchant unsheathe sound on load, vendor open, or re-equip.
+  Fixed by a windowed attenuation-mute of the four `MAGEnchantedUnsheathe` sound
+  descriptors around MEO's own enchant builds and the post-load restore — global
+  audio (ambience, music, dialogue) and genuine combat weapon draws are
+  untouched. (The long-standing racket; "must solve or the mod fails.")
+
+Balance
+- **XP economy rebalanced, and every XP slider now reads 1.0 as the tuned
+  default** (a ×multiplier on a baked base, not a raw rate):
+  - Gem-kill Enchanting XP base cut 0.01 → **0.001**. The MCM key was renamed
+    `fGemXpSkillXP` → **`fGemKillXpMult`** (0–10×) so a stale saved value can't be
+    misread as a multiplier.
+  - New-gem discovery XP cut 50 → **10** per family, with a new
+    `fDiscoverSkillXP` slider; discovering a big haul no longer spikes Enchanting.
+  - Soul-feed Enchanting XP **−25%** (per soul-size ladder).
+- **Attunement perk reduced +8% → +5% magnitude per rank** (max +40% → +25%), so
+  a fully-attuned level-5 gem no longer runs away past vanilla; perk-tree tooltips
+  corrected to match.
+
+Content / UX
 - Added 4 gem families for **Summermyst - Enchantments of Skyrim**'s weakness-to-
   fire/frost/shock/poison WEAPON enchantments. On a load order with Summermyst,
-  those weapons now convert to a socketed weakness gem (magnitudes calibrated to
-  the list); on any list without Summermyst the families auto-disable (the MGEF's
-  plugin is absent), so nothing changes. New gem MISC forms are pure additions —
-  no existing FormID moved. (First hand-authored families toward general
-  auto-minting of unknown enchantment mods.)
+  those weapons convert to a socketed weakness gem (magnitudes calibrated to the
+  list); without Summermyst the families auto-disable (MGEF plugin absent), so
+  nothing changes. New gem MISC forms are pure additions — no existing FormID
+  moved. (First hand-authored families toward general auto-minting.)
 - Socketed-item titles are now shorthand so multi-gem names stay readable: drops
   "Fortify", trims a trailing " Damage" (Fire II, not Fire Damage II), and
-  abbreviates "Resist" to "Res". The gem-joining "+" and support "·" are
-  unchanged; loose gems in the pouch keep their full names. New MCM toggle
-  `bFullGemNames` (XP & Balance page, default off) restores the full effect
-  names. Worn gear updates on the next rebuild (reload / re-equip). (Fortify
-  Magicka/Stamina keep the "Fortify" so they stay distinct from the Magicka/
-  Stamina Damage gems.)
+  abbreviates "Resist" → "Res". The gem-joining "+" and support "·" are unchanged;
+  loose pouch gems keep full names. New MCM toggle `bFullGemNames` (XP & Balance
+  page, default off) restores the full scheme. Fortify Magicka/Stamina keep
+  "Fortify" so they stay distinct from the Magicka/Stamina Damage gems.
+
+Stability & save safety (from a four-part pre-release code review)
+- **Sockets now survive a load-order change.** Co-save records (and the gem pouch
+  ref) are resolved through SKSE's `ResolveFormID` on load, so adding/removing/
+  ESL-flipping a plugin no longer silently orphans every socketed item's gems and
+  banked XP. Co-save reads are bounded (a truncated save can't fabricate garbage
+  records), and loading a save from a *newer* MEO now warns loudly that saving
+  would destroy its records instead of silently doing so.
+- **Enemies actually spawn with socketed gear again.** The 2-of-a-kind stacking
+  cap (a player-only limit) was wrongly stripping NPC-spawned socketed enchants
+  and leaking a co-save record each time; NPC gear now keeps its gem.
+- Per-kill Gem XP no longer double-counts on a mastered-gem level-up; follower
+  gear reactivation hardened; the stacking-cap cleanup now vouches only for worn
+  copies; instance UID minting is wrap/collision-safe; the in-game menu's input
+  handling is thread-safe.
+- **Installer / Synthesis robustness:** a dangling enchantment (missing master)
+  no longer crashes the whole patch run; a self-referential perk chain can't hang
+  it; and the generated ESP no longer attaches VMAD scripts it doesn't ship (was
+  spamming a Papyrus error every load).
+
+Upgrade note: the two renamed/new XP sliders default to 1.0 from the shipped
+settings file. MCM per-save values carry over; the old `fGemXpSkillXP` key is
+retired and ignored.
 
 ## v1.0.5 — Synthesis-only install (no exe) (2026-07-14)
 - **The install-time patcher is now a Synthesis patcher, not a bundled exe.**
