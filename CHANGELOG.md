@@ -40,6 +40,12 @@ Content / UX
   loose pouch gems keep full names. New MCM toggle `bFullGemNames` (XP & Balance
   page, default off) restores the full scheme. Fortify Magicka/Stamina keep
   "Fortify" so they stay distinct from the Magicka/Stamina Damage gems.
+- Enchanted loot in **containers/chests** now converts to socketed gems the same
+  as world/vendor/corpse loot — swept when the container's cell loads, so it
+  reads converted in every loot UI (vanilla menu, and QuickLoot/iEquip panels,
+  which bypass the vanilla container menu). Static/hand-placed enchanted chest
+  content that never triggered a pickup event is now caught; empty containers are
+  left untouched (no early leveled-loot rolls, no save bloat).
 
 Stability & save safety (from a four-part pre-release code review)
 - **Sockets now survive a load-order change.** Co-save records (and the gem pouch
