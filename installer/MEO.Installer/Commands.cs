@@ -995,6 +995,140 @@ static class Commands
         $"{(int)(m.Flags & (MagicEffect.Flag.Hostile | MagicEffect.Flag.Detrimental))}|" +
         $"{m.ResistValue}|{m.SecondActorValue}";
 
+    // ── Phase 2: uncovered-family candidate detector (REPORT ONLY) ──────
+    // Census the load order for enchanted generic loot whose enchantment
+    // matches NO catalog family — the exact `best is null` drop the conversion
+    // makes at WriteCalibration — cluster the misses by their primary MGEF, and
+    // emit proposed catalog stubs for marth to review + hand-add (the phase-1
+    // flow, formalized). This NEVER mutates the catalog, ESP, or frozen forms;
+    // it only reads the load order and writes a candidates report.
+    sealed class Candidate
+    {
+        public IMagicEffectGetter? Primary;
+        public int ItemCount, EnchCount, Weapon, Armor;
+        public List<float> Mags = [];
+        public Dictionary<FormKey, IMagicEffectGetter> Refs = [];  // union of effect refs (the recipe)
+        public List<string> Samples = [];
+    }
+
+    public static int DetectCandidates(
+        ILoadOrderGetter<IModListingGetter<ISkyrimModGetter>> lo, ILinkCache cache,
+        string catalogPath, string outPath)
+    {
+        if (BuildCensus(lo, cache, catalogPath) is not { } data) return 1;
+
+        var clsByItem = data.Items.ToDictionary(i => i.Key, i => i.Cls);
+        // The same generic-loot population the conversion considers (strip* or
+        // keep-generic-multifx): count carrying items per ENCH and keep their
+        // Raw rows for the domain tally + sample names.
+        var enchWeight = new Dictionary<FormKey, int>();
+        var rawByEnch = new Dictionary<FormKey, List<(FormKey Key, FormKey Ench, string? Name,
+            string? BaseName, FormKey? Root, ModKey Mod, string? Edid)>>();
+        foreach (var r in data.Raw)
+        {
+            if (!clsByItem.TryGetValue(r.Key, out var cls)) continue;
+            if (!(cls.StartsWith("strip") || cls == "keep-generic-multifx")) continue;
+            enchWeight[r.Ench] = enchWeight.GetValueOrDefault(r.Ench) + 1;
+            if (!rawByEnch.TryGetValue(r.Ench, out var rows)) rawByEnch[r.Ench] = rows = [];
+            rows.Add(r);
+        }
+
+        var clusters = new Dictionary<FormKey, Candidate>();  // keyed by primary MGEF
+        int uncoveredEnch = 0, coveredSkipped = 0, castSkipped = 0;
+        foreach (var (ench, weight) in enchWeight)
+        {
+            if (!data.EnchInfo.TryGetValue(ench, out var einfo)) continue;
+            if (einfo.CastLike) { castSkipped++; continue; }  // staff/concentration — never a gem
+            var fx = einfo.Fx.Where(t => t.Sig is not null && t.M is not null).ToList();
+            if (fx.Count == 0) continue;
+
+            // The identical family match the conversion runs — best is null =>
+            // no catalog family covers this enchant => an uncovered candidate.
+            string? best = null;
+            int bestN = 0;
+            bool bestFirst = false;
+            foreach (var (famKey, refs) in data.FamilyRefs)
+            {
+                var pool = fx.Select(t => t.Sig!).ToList();
+                if (!refs.All(r => pool.Remove(r.Sig))) continue;
+                var firstMatch = refs[0].Sig == fx[0].Sig;
+                if (refs.Count > bestN || (refs.Count == bestN && firstMatch && !bestFirst))
+                    (best, bestN, bestFirst) = (famKey, refs.Count, firstMatch);
+            }
+            if (best is not null) { coveredSkipped++; continue; }
+            uncoveredEnch++;
+
+            var prim = fx[0];  // first effect is the primary, as the match loop treats it
+            if (!clusters.TryGetValue(prim.M!.FormKey, out var c))
+                clusters[prim.M!.FormKey] = c = new Candidate { Primary = prim.M };
+            c.ItemCount += weight;
+            c.EnchCount++;
+            if (prim.Mag > 0) for (int w = 0; w < weight; w++) c.Mags.Add(prim.Mag);
+            foreach (var t in fx) c.Refs[t.M!.FormKey] = t.M!;  // union of the recipe's effects
+            if (rawByEnch.TryGetValue(ench, out var rows))
+                foreach (var row in rows)
+                {
+                    if (cache.TryResolve<IWeaponGetter>(row.Key, out _)) c.Weapon++;
+                    else if (cache.TryResolve<IArmorGetter>(row.Key, out _)) c.Armor++;
+                    if (c.Samples.Count < 6 && row.Name is { } nm && !c.Samples.Contains(nm))
+                        c.Samples.Add(nm);
+                }
+        }
+
+        static float Pct(List<float> v, double p)
+        {
+            if (v.Count == 0) return 0f;
+            var s = v.OrderBy(x => x).ToList();
+            return s[(int)Math.Clamp(Math.Round(p * (s.Count - 1)), 0, s.Count - 1)];
+        }
+        var outList = new List<object>();
+        foreach (var c in clusters.Values.OrderByDescending(c => c.ItemCount))
+            outList.Add(new Dictionary<string, object?>
+            {
+                ["name"] = c.Primary?.Name?.String ?? c.Primary?.EditorID ?? "?",
+                ["domain"] = c.Weapon == 0 && c.Armor == 0 ? "unknown"
+                           : c.Weapon >= c.Armor ? "weapon" : "armor",
+                ["class"] = "LINEAR",   // default — marth adjusts on hand-add
+                ["tier"] = "C",         // default — marth adjusts
+                ["item_count"] = c.ItemCount,
+                ["ench_variants"] = c.EnchCount,
+                ["magnitude"] = new Dictionary<string, object>
+                {
+                    ["min"] = c.Mags.Count > 0 ? c.Mags[0] : 0f,
+                    ["p50"] = Pct(c.Mags, 0.50),
+                    ["p90_anchor"] = Pct(c.Mags, 0.90),  // suggested level-V anchor (as WriteCalibration)
+                    ["max"] = c.Mags.Count > 0 ? c.Mags[^1] : 0f,
+                },
+                ["mgef_refs"] = c.Refs.Select(kv => new Dictionary<string, string>
+                {
+                    ["plugin"] = kv.Key.ModKey.FileName.String,
+                    ["fid"] = $"0x{kv.Key.ID:X6}",
+                    ["mgef"] = kv.Value.EditorID ?? kv.Value.Name?.String ?? "?",
+                }).ToList(),
+                ["samples"] = c.Samples,
+            });
+
+        var json = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            generated = "MEO detect-candidates (report only)",
+            uncovered_families = outList.Count,
+            uncovered_ench_records = uncoveredEnch,
+            items_affected = clusters.Values.Sum(c => c.ItemCount),
+            candidates = outList,
+        }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(outPath, json);
+
+        Console.WriteLine($"detect-candidates: {clusters.Count} uncovered family/families " +
+            $"({uncoveredEnch} ENCH records, {clusters.Values.Sum(c => c.ItemCount)} generic items) " +
+            $"— {coveredSkipped} covered, {castSkipped} cast-like skipped");
+        foreach (var c in clusters.Values.OrderByDescending(c => c.ItemCount).Take(25))
+            Console.WriteLine($"  {c.ItemCount,4} items  {(c.Weapon >= c.Armor ? "W" : "A")}  " +
+                $"{c.Primary?.Name?.String ?? c.Primary?.EditorID}  " +
+                $"[{string.Join(", ", c.Samples.Take(3))}]");
+        Console.WriteLine($"written: {outPath}");
+        return 0;
+    }
+
     // Shared loot census: what every winning ENCH does (resolved effects with
     // magnitudes), which effects the gem catalog mirrors, and the per-item
     // strip/keep classification. strip-report prints it; write-calibration

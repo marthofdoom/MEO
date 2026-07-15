@@ -192,6 +192,9 @@ try
         "write-calibration" => Commands.WriteCalibration(loadOrder, cache,
             positional.ElementAtOrDefault(0) ?? "data/gem_catalog.json",
             positional.ElementAtOrDefault(1) ?? "meo_calibration.json"),
+        "detect-candidates" => Commands.DetectCandidates(loadOrder, cache,
+            positional.ElementAtOrDefault(0) ?? "data/gem_catalog.json",
+            positional.ElementAtOrDefault(1) ?? "meo_candidates.json"),
         _ => Commands.Fail($"unknown command {cmd}"),
     };
 }
