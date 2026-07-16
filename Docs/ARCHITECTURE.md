@@ -379,6 +379,22 @@ exactly. Protocol:
   it self-excludes `MEO - Patch.esp`/`MEO - Strip.esp` from calibration.
   Contract: DESIGN §2 "Installer prime directive" — nothing baked from the
   dev machine's load order ships.
+  Phase 3 S2 (`MintFamilies`, inside `WriteCalibration`): the census loop's
+  `best is null` drops are clustered by primary MGEF, filtered (archetype
+  whitelist Value/PeakValue/DualValue-Modifier/Absorb; magnitude > 0; ≥4
+  generic items or ≥2 tiers; cast-shape guards — weapon FF+Touch/TargetActor,
+  armor ConstantEffect+Self non-hostile), assigned pool slots from
+  `pool_forms.frozen.json` (resolved BESIDE `gem_catalog.json` — the
+  Synthesis csproj links it and `release_native.sh` ships it into
+  `SKSE/Plugins/MEO/`), and emitted as the additive top-level `"minted"`
+  calibration section (pre-phase-3 DLLs skip its gids at lookup, so the
+  calibration is safe on every shipped DLL). Members re-enter
+  `enchFamily`/`enchLeftover` and ride the ordinary lossless gate — minted
+  v1 is single-effect, no adopted riders; wrong-domain carriers are excluded
+  from conversion (the cast-shape guard covers only the majority domain).
+  Slot state: `meo_pool_assignments.json` beside the calibration
+  (INVARIANTS 26). Overflow past 32 slots = leave uncovered + report;
+  minted gems are conversion-only (marth 2026-07-16).
 - **Release**: `tools/release_native.sh` / `tools/release.sh` are the only
   path to the game; `releases/<ver>/` is immutable (the script refuses an
   existing dir). Cut zips only AFTER the version's last generator/DLL

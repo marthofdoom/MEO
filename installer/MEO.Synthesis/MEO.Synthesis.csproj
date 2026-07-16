@@ -31,6 +31,10 @@
          there at runtime (rider recipes / conversion table are derived from it).
          Linked from the single source (data/) — no duplicate to drift. -->
     <None Include="..\..\data\gem_catalog.json" Link="gem_catalog.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Phase 3 pool contract: the reserved 0xB00-0xB9F MISC band the auto-mint
+         step assigns detected families to. Same single-source rule as the
+         catalog; MintFamilies resolves it beside gem_catalog.json. -->
+    <None Include="..\..\data\pool_forms.frozen.json" Link="pool_forms.frozen.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -78,6 +78,11 @@ sibling project can audit itself against the list in one sitting.
   edge instead. And freeze guards must trip BOTH directions — shrinking a
   reserved pool passes a base/drift check silently while dropping shipped
   forms out of users' saves.
+- **Per-user append-only identity state must fail LOUD when unreadable,
+  never fall back to empty.** An empty fallback re-runs first-time
+  assignment and silently re-keys everything downstream (MEO pool slots →
+  saved gems change species). And a raw parse exception that names the file
+  invites the user to delete it — same reset. Catch, explain, refuse.
 
 ## Player-relative logic
 

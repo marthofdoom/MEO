@@ -639,6 +639,13 @@ static class Commands
         var fams = new Dictionary<string, Dictionary<string, RecipeAgg>>();
         var enchFamily = new Dictionary<FormKey, string>();
         var famMags = new Dictionary<string, List<float>>();  // m35b: per-list observed magnitudes
+        // Phase 3: generic-loot enchants NO catalog family matches — the
+        // auto-mint candidates. Collected here (this loop already walks
+        // exactly the strip-class census), promoted after the curated
+        // families are done so minted conversions ride the same lossless
+        // gate + conversion loop as everything else.
+        var unmatched = new List<(FormKey Ench, int Weight,
+            List<(string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds)> Fx)>();
         var enchLeftover =
             new Dictionary<FormKey, List<(string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds)>>();
         var noteWeight = new Dictionary<string, int>();
@@ -667,7 +674,7 @@ static class Commands
             if (Environment.GetEnvironmentVariable("MEO_CAL_DEBUG") == "1")
                 Console.WriteLine($"DBG\t{best ?? "NO-FAMILY"}\tw={weight}\t" +
                     string.Join(" | ", fx.Select(t => $"{t.M!.EditorID}={t.Sig}")));
-            if (best is null) continue;
+            if (best is null) { unmatched.Add((ench, weight, fx)); continue; }
             enchFamily[ench] = best;
 
             // Consume the family's own components in catalog order; the first
@@ -882,6 +889,13 @@ static class Commands
             .Select(kv => $"{kv.Key} — {kv.Value} item(s)").ToList();
         foreach (var n in notes) Console.WriteLine("  note: " + n);
 
+        // Phase 3: promote uncovered clusters onto the reserved pool BEFORE
+        // the conversion table is built — minted members enter enchFamily/
+        // enchLeftover here and ride the ordinary lossless gate below.
+        var (mintedFams, mintedDomain) = MintFamilies(unmatched, data, cache,
+                                                      catalogPath, outPath,
+                                                      enchFamily, enchLeftover);
+
         // Loot conversion (marth's ruling): a covered enchanted generic never
         // leaves the world — at spawn the DLL swaps it for its unenchanted
         // base with the matching family's gem socketed and ACTIVE (level I/II
@@ -894,11 +908,19 @@ static class Commands
         int noFamily = 0, pinned = 0, partial = 0, machineryWaived = 0;
         var pinnedByEnch = new Dictionary<FormKey, string>();
         var waivedFx = new Dictionary<string, int>();
+        int mintedDomainSkip = 0;
         foreach (var r in data.Raw)
         {
             if (!honored.Contains(clsByItem[r.Key])) continue;
             if (!data.StripBase.TryGetValue(r.Key, out var baseKey)) continue;
             if (!enchFamily.TryGetValue(r.Ench, out var famKey)) { noFamily++; continue; }
+            // Minted families: only same-domain items convert — the cast-
+            // shape guard validated the majority domain only, and a weapon
+            // gem stamped onto armor (or vice-versa) misfires in the DLL.
+            // Wrong-domain carriers fall back to uncovered (the safe side).
+            if (mintedDomain.TryGetValue(famKey, out var mdom) &&
+                (mdom == "weapon") != cache.TryResolve<IWeaponGetter>(r.Key, out _))
+            { mintedDomainSkip++; continue; }
             // Lossless gate (marth's ruling, 2026-07-10): convert ONLY when
             // every UNCOVERED companion is either carried by the family's
             // adopted riders or is hidden framework machinery (HideInUI —
@@ -949,6 +971,7 @@ static class Commands
         Console.WriteLine($"conversions: {conversions.Count} enchanted generic(s) -> socketed base " +
                           $"({partial} partial-recipe, {machineryWaived} machinery-waived, " +
                           $"{pinned} PINNED lossy" +
+                          (mintedDomainSkip > 0 ? $", {mintedDomainSkip} minted-domain-mismatch" : "") +
                           (noFamily > 0 ? $", {noFamily} no-family)" : ")"));
         foreach (var (ench, lostFx) in pinnedByEnch.OrderBy(kv => kv.Value))
             Console.WriteLine($"  pinned: ench {ench} would lose [{lostFx}]");
@@ -963,6 +986,10 @@ static class Commands
             ["conversions"] = conversions,
             ["notes"] = notes,
         };
+        // "minted" is additive: a pre-phase-3 DLL ignores the key entirely and
+        // skips its conversions at family lookup (gid not in g_gemByGid) — so
+        // this calibration stays safe on every shipped DLL.
+        if (mintedFams.Count > 0) doc["minted"] = mintedFams;
         File.WriteAllText(outPath, System.Text.Json.JsonSerializer.Serialize(doc,
             new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
         Console.WriteLine($"wrote {outPath} ({outFams.Count} matched famil(ies), " +
@@ -977,6 +1004,291 @@ static class Commands
         public int Enchs;
         public List<IMagicEffectGetter> Mgefs = [];
         public List<List<(float Ratio, int Dur)>> Obs = [];
+    }
+
+    // ── Phase 3: auto-mint uncovered families onto the reserved pool ─────
+    // marth 2026-07-16: MEO.esp pre-mints 32 slots x 5 levels of MISC gem
+    // forms at 0xB00-0xB9F (data/pool_forms.frozen.json is the contract this
+    // reads — shipped beside gem_catalog.json). Uncovered strip-class enchant
+    // clusters that pass the filters below become "minted" families in
+    // meo_calibration.json; the DLL registers them at load as runtime gem
+    // families. Rules (marth's rulings): overflow = leave uncovered + report;
+    // minted gems are CONVERSION-ONLY (no spawn/vendor pools); a gid keeps
+    // its pool slot FOREVER (meo_pool_assignments.json, append-only — loose
+    // pool gems in saves must never change species, so a vanished family's
+    // slot stays burned too). Minted v1 families are single-effect: no
+    // adopted riders; a multi-effect ench converts only if its companions
+    // pass the same lossless gate as everything else.
+    static readonly string[] kMintArchetypes =
+        ["ValueModifier", "PeakValueModifier", "DualValueModifier", "Absorb"];
+    // Canonical LINEAR ramp = firedamage's normalized curated curve; level V
+    // is the p90 anchor (same definition as curated curve derivation), I-IV
+    // keep the house shape so minted gems level like native ones.
+    static readonly float[] kMintRamp = [0.285f, 0.455f, 0.63f, 0.825f, 1f];
+
+    sealed class MintAgg
+    {
+        public IMagicEffectGetter? Primary;
+        public int Items, Enchs, Weapon, Armor;
+        public List<float> Mags = [];
+        public List<int> Durs = [];
+        public List<(FormKey Ench,
+            List<(string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds)> Fx)> Members = [];
+    }
+
+    // Deterministic 32-bit FNV-1a — NOT string.GetHashCode (randomized per
+    // process, would re-key every gid every run).
+    static string StableHash8(string s)
+    {
+        uint h = 2166136261;
+        foreach (var ch in s) { h ^= ch; h *= 16777619; }
+        return h.ToString("x8");
+    }
+
+    // Stable minted identity: survives re-patching, catalog growth, and load-
+    // order reshuffles — derived from the primary MGEF's own FormKey. This
+    // string is what co-saves store, so its shape must NEVER change. The hash
+    // of the FULL filename makes it injective where the readable stem is
+    // lossy (extension dropped, alnum-stripped, truncated — and ESL plugins
+    // share a 12-bit fid space, so cross-plugin fid collisions are routine).
+    static string MintGid(IMagicEffectGetter m)
+    {
+        var file = m.FormKey.ModKey.FileName.String.ToLowerInvariant();
+        var stem = new string(Path.GetFileNameWithoutExtension(file)
+            .Where(char.IsLetterOrDigit).ToArray());
+        if (stem.Length > 16) stem = stem[..16];
+        return $"x_{stem}_{StableHash8(file)}_{m.FormKey.ID:x6}";
+    }
+
+    // INVARIANT 4 (M2i): no brackets in anything that can become an item
+    // name — Lorerim-class UI mods strip [tags] and the name collapses.
+    static string MintName(IMagicEffectGetter m, string gid)
+    {
+        var raw = m.Name?.String ?? m.EditorID ?? gid;
+        var name = System.Text.RegularExpressions.Regex
+            .Replace(raw, @"\[[^\]]*\]", "").Trim();
+        return name.Length > 0 ? name : gid;
+    }
+
+    // Theme drives only the elemental-affinity perk multiplier for minted
+    // gems (they join no spawn pools), so map the three elements and drains;
+    // everything else is ARCANE. Strings follow the generator's THEME names.
+    static string MintTheme(IMagicEffectGetter m)
+    {
+        var s = $"{m.Archetype.ActorValue}|{m.ResistValue}|{m.SecondActorValue}";
+        if (s.Contains("Fire")) return "FIRE";
+        if (s.Contains("Frost")) return "FROST";
+        if (s.Contains("Shock") || s.Contains("Electric")) return "SHOCK";
+        if (m.Archetype.Type == MagicEffectArchetype.TypeEnum.Absorb) return "DRAIN";
+        return "ARCANE";
+    }
+
+    static (Dictionary<string, object> Minted, Dictionary<string, string> Domains) MintFamilies(
+        List<(FormKey Ench, int Weight,
+            List<(string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds)> Fx)> unmatched,
+        CensusData data, ILinkCache cache, string catalogPath, string outPath,
+        Dictionary<FormKey, string> enchFamily,
+        Dictionary<FormKey, List<(string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds)>> enchLeftover)
+    {
+        var minted = new Dictionary<string, object>();
+        // gid -> domain, for the conversion loop's wrong-domain filter: the
+        // cast-shape guard validates only the MAJORITY domain, so minority-
+        // domain carriers must not convert against an unguarded shape (F5).
+        var domains = new Dictionary<string, string>();
+        if (unmatched.Count == 0) return (minted, domains);
+
+        var poolPath = Path.Combine(
+            Path.GetDirectoryName(Path.GetFullPath(catalogPath)) ?? ".", "pool_forms.frozen.json");
+        if (!File.Exists(poolPath))
+        {
+            Console.WriteLine($"mint: pool manifest not found ({poolPath}) — auto-minting disabled, " +
+                              $"{unmatched.Count} uncovered ench(s) left as-is");
+            return (minted, domains);
+        }
+        var pool = new SortedDictionary<int, Dictionary<int, string>>();  // slot -> level -> "0xNNNNNN"
+        using (var pdoc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(poolPath)))
+            foreach (var sp in pdoc.RootElement.EnumerateObject())
+                pool[int.Parse(sp.Name[4..])] = sp.Value.EnumerateObject()
+                    .ToDictionary(l => int.Parse(l.Name), l => l.Value.GetString()!);
+
+        // Append-only slot assignments, persisted next to the calibration
+        // (same home as meo_calibration.rulings.json — per-user state).
+        // Exists-but-unreadable must FAIL LOUD, never default to empty: an
+        // empty read re-runs first-time assignment in current-evidence order
+        // and every loose pool gem in the user's save changes species.
+        var asgPath = Path.Combine(
+            Path.GetDirectoryName(Path.GetFullPath(outPath)) ?? ".", "meo_pool_assignments.json");
+        var assignments = new Dictionary<string, (int Slot, string Mgef)>();
+        if (File.Exists(asgPath))
+        {
+            try
+            {
+                using var adoc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(asgPath));
+                if (!adoc.RootElement.TryGetProperty("assignments", out var arr))
+                    throw new InvalidDataException("no 'assignments' object at the root");
+                foreach (var p in arr.EnumerateObject())
+                    assignments[p.Name] = (p.Value.GetProperty("slot").GetInt32(),
+                                           p.Value.GetProperty("mgef").GetString() ?? "");
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidDataException(
+                    $"{asgPath} exists but is unreadable ({ex.Message}). This file is " +
+                    "APPEND-ONLY save-safety state (minted gid -> pool slot). DO NOT delete " +
+                    "or hand-edit it — a reset file reassigns every slot and changes saved " +
+                    "gems' species. Restore it from a backup, then re-run.");
+            }
+            if (assignments.Values.Select(v => v.Slot).Distinct().Count() != assignments.Count)
+                throw new InvalidDataException(
+                    $"{asgPath} maps two gids to one pool slot (hand-edited?). Two families " +
+                    "on one slot puts two species on the same gem forms. Restore from backup.");
+        }
+
+        // Cluster by primary MGEF — the same anchor DetectCandidates uses,
+        // so the phase-2 report predicts exactly what this promotes.
+        var clusters = new Dictionary<FormKey, MintAgg>();
+        var enchCluster = new Dictionary<FormKey, FormKey>();
+        foreach (var u in unmatched)
+        {
+            var prim = u.Fx[0];
+            if (prim.M is null) continue;
+            if (!clusters.TryGetValue(prim.M.FormKey, out var c))
+                clusters[prim.M.FormKey] = c = new MintAgg { Primary = prim.M };
+            c.Items += u.Weight;
+            c.Enchs++;
+            if (prim.Mag > 0) for (int w = 0; w < u.Weight; w++) c.Mags.Add(prim.Mag);
+            c.Durs.Add(prim.Dur);
+            c.Members.Add((u.Ench, u.Fx));
+            enchCluster[u.Ench] = prim.M.FormKey;
+        }
+        foreach (var r in data.Raw)  // domain tally over the carrying items
+            if (enchCluster.TryGetValue(r.Ench, out var ck))
+            {
+                var c = clusters[ck];
+                if (cache.TryResolve<IWeaponGetter>(r.Key, out _)) c.Weapon++;
+                else if (cache.TryResolve<IArmorGetter>(r.Key, out _)) c.Armor++;
+            }
+
+        var skip = new Dictionary<string, int>();
+        void Skip(string why) => skip[why] = skip.GetValueOrDefault(why) + 1;
+        int newAssign = 0;
+        // Deterministic promotion order: strongest evidence first, gid tie-
+        // break — slot assignment must not depend on dictionary iteration.
+        foreach (var c in clusters.Values
+                     .OrderByDescending(c => c.Items).ThenBy(c => MintGid(c.Primary!)))
+        {
+            var m = c.Primary!;
+            var gid = MintGid(m);
+            var arch = m.Archetype.Type.ToString();
+            if (!kMintArchetypes.Contains(arch)) { Skip($"archetype {arch}"); continue; }
+            if (c.Mags.Count == 0) { Skip("zero-magnitude primary"); continue; }
+            if (c.Items < 4 && c.Mags.Distinct().Count() < 2)
+            { Skip("thin evidence (<4 items, <2 tiers)"); continue; }
+            var domain = c.Weapon >= c.Armor ? "weapon" : "armor";
+            bool hostile = m.Flags.HasFlag(MagicEffect.Flag.Hostile) ||
+                           m.Flags.HasFlag(MagicEffect.Flag.Detrimental);
+            // Cast-shape guards: the DLL builds the socket enchant from the
+            // live MGEF, so a weapon family needs an on-hit shape and an
+            // armor family a worn-ability shape — anything else misfires.
+            if (domain == "weapon" &&
+                !(m.CastType == CastType.FireAndForget &&
+                  m.TargetType is TargetType.Touch or TargetType.TargetActor))
+            { Skip("weapon family without fire-and-forget/touch shape"); continue; }
+            if (domain == "armor")
+            {
+                if (hostile) { Skip("hostile-on-armor"); continue; }
+                if (!(m.CastType == CastType.ConstantEffect && m.TargetType == TargetType.Self))
+                { Skip("armor family without constant/self shape"); continue; }
+            }
+
+            // The mgef echo makes a gid collision (two MGEFs hashing to one
+            // gid — in-run or across runs) detectable instead of silently
+            // merging two families onto one slot: first owner keeps it, the
+            // later cluster is skipped LOUDLY (same posture as overflow).
+            // Lowercase-normalized like MintGid — a case-only plugin rename
+            // must NOT read as a collision (same gid, different echo would
+            // silently stop the family minting forever). R1, Fable review.
+            var mgefEcho = $"{m.FormKey.ModKey.FileName.String.ToLowerInvariant()}|0x{m.FormKey.ID:X6}";
+            int slot;
+            if (assignments.TryGetValue(gid, out var got))
+            {
+                if (got.Mgef != mgefEcho)
+                { Skip($"gid collision: {gid} already owned by {got.Mgef}"); continue; }
+                slot = got.Slot;
+            }
+            else
+            {
+                var free = pool.Keys.Except(assignments.Values.Select(v => v.Slot))
+                    .OrderBy(s => s).ToList();
+                if (free.Count == 0) { Skip("pool overflow (no free slot)"); continue; }
+                slot = free[0];
+                assignments[gid] = (slot, mgefEcho);
+                newAssign++;
+            }
+            if (!pool.TryGetValue(slot, out var forms))
+            { Skip($"assigned slot {slot} missing from pool manifest"); continue; }
+
+            var anchor = Pct(c.Mags, 0.90);
+            var durs = c.Durs.OrderBy(d => d).ToList();
+            minted[gid] = new Dictionary<string, object?>
+            {
+                ["name"] = MintName(m, gid),
+                ["slot"] = slot,
+                ["forms"] = forms.OrderBy(kv => kv.Key)
+                    .ToDictionary(kv => kv.Key.ToString(), kv => kv.Value),
+                ["plugin"] = m.FormKey.ModKey.FileName.String,
+                ["mgef"] = $"0x{m.FormKey.ID:X6}",
+                ["domain"] = domain,
+                // Floor 0.1: unlike curated families there is no compiled
+                // default behind a minted curve, so a level rounding to 0.0
+                // would be a permanently dead effect (F8).
+                ["curve"] = kMintRamp.Select(f =>
+                    Math.Max(0.1f, (float)Math.Round(anchor * f, 1))).ToArray(),
+                ["duration"] = durs[durs.Count / 2],
+                ["xp_mult"] = 1.0f,
+                ["theme"] = MintTheme(m),
+                ["gclass"] = arch == "Absorb" ? "ABSORB" : "LINEAR",
+                ["from"] = $"{c.Items} item(s), {c.Enchs} ench(s)",
+            };
+            domains[gid] = domain;
+            // Hand the members to the ordinary conversion loop: leftover =
+            // everything but ONE instance of the primary; the lossless gate
+            // then pins any item whose companions the mint can't express.
+            foreach (var (ench, fx) in c.Members)
+            {
+                enchFamily[ench] = gid;
+                var left = new List<(string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds)>(fx);
+                var pi = left.FindIndex(t => t.M?.FormKey == m.FormKey);
+                if (pi < 0) pi = left.FindIndex(t => t.Sig == fx[0].Sig);
+                if (pi >= 0) left.RemoveAt(pi);
+                enchLeftover[ench] = left;
+            }
+        }
+
+        if (newAssign > 0)
+        {
+            // Atomic: a crash mid-write must not leave truncated JSON — the
+            // loud-fail loader above would then block the user's next run.
+            var tmp = asgPath + ".tmp";
+            File.WriteAllText(tmp, System.Text.Json.JsonSerializer.Serialize(new
+            {
+                version = 1,
+                note = "APPEND-ONLY: a gid keeps its pool slot forever (co-save safety). Never edit.",
+                assignments = assignments.OrderBy(kv => kv.Key)
+                    .ToDictionary(kv => kv.Key, kv => new { slot = kv.Value.Slot, mgef = kv.Value.Mgef }),
+            }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+            File.Move(tmp, asgPath, true);
+        }
+
+        Console.WriteLine($"mint: {minted.Count} famil(ies) on pool slots " +
+            $"({newAssign} newly assigned, " +
+            $"{pool.Count - assignments.Count} slot(s) free) — {asgPath}");
+        foreach (var (why, n) in skip.OrderByDescending(kv => kv.Value))
+            Console.WriteLine($"  mint-skip x{n}: {why}");
+        // NB: minted sigs are deliberately NOT added to data.Covered — a
+        // companion expressible only by ANOTHER minted family still pins its
+        // item (conservative; revisit if minted riders ever land).
+        return (minted, domains);
     }
 
     // A magic effect's mechanical identity, independent of which plugin last

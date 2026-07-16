@@ -81,6 +81,9 @@ cp out/SKSE/Plugins/MEO/meo_runtime.json "$STAGE/SKSE/Plugins/MEO/"
 # The installer derives per-list rider calibration from this catalog at
 # post-install time (write-calibration); it must ship next to the exe.
 cp data/gem_catalog.json "$STAGE/SKSE/Plugins/MEO/"
+# Phase 3 pool contract: MintFamilies resolves it BESIDE the catalog —
+# without it the standalone-exe path silently skips auto-minting.
+cp data/pool_forms.frozen.json "$STAGE/SKSE/Plugins/MEO/"
 # m24 menu skins: three OFL typefaces (Cinzel head / EB Garamond body /
 # Inter sans) + their licenses; the DLL bakes them at init, skins pick.
 mkdir -p "$STAGE/SKSE/Plugins/MEO/fonts"
@@ -163,6 +166,7 @@ EOF
 for req in "SKSE/Plugins/MEO.dll" "MEO.esp" "Scripts/MEO_MCM.pex" \
            "MCM/Config/MEO/config.json" "MCM/Settings/MEO.ini" \
            "SKSE/Plugins/MEO/meo_runtime.json" "SKSE/Plugins/MEO/gem_catalog.json" \
+           "SKSE/Plugins/MEO/pool_forms.frozen.json" \
            "SKSE/Plugins/MEO/fonts/head.ttf" "SKSE/Plugins/MEO/fonts/body.ttf" \
            "SKSE/Plugins/MEO/fonts/sans.ttf" \
            "MEO.Installer.exe" "fomod/info.xml" "MEO-README.txt"; do

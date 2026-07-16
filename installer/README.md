@@ -94,6 +94,33 @@ never through Synthesis's clone-and-build. Rules learned:
   the solution exactly as Synthesis does. Don't remove it — building only
   `MEO.Installer` (the legacy exe) is what let this ship unnoticed.
 
+## Phase 3 auto-minting (`MintFamilies`, inside `WriteCalibration`)
+
+Generic-loot enchant clusters that match NO catalog family are promoted to
+**minted** gem families on MEO.esp's reserved pool (32 slots × 5 MISC forms at
+0xB00–0xB9F; `data/pool_forms.frozen.json` is the contract, linked into the
+Synthesis build beside `gem_catalog.json`). Emitted as a top-level `"minted"`
+section in `meo_calibration.json` — additive: a pre-phase-3 DLL ignores the key
+and skips its conversions at gid lookup, so the calibration is safe on every
+shipped DLL.
+
+Rules (marth 2026-07-16): overflow = leave uncovered + report; minted gems are
+CONVERSION-ONLY (no spawn/vendor pools); filters = archetype whitelist
+(Value/PeakValue/DualValue-Modifier, Absorb), magnitude > 0, ≥4 generic items
+or ≥2 tiers, cast-shape guards (weapon needs FF + touch/target-actor, armor
+needs constant+self and non-hostile; minority-domain carriers are excluded
+from conversion). Curve = p90 anchor on the canonical LINEAR ramp, floored at
+0.1/level; identity gid = `x_<stem≤16>_<fnv1a-hex8 of full filename>_<mgef-fid
+hex6>` (derived from the primary MGEF's own FormKey — NEVER change its shape,
+co-saves store it; INVARIANTS 26).
+
+**`meo_pool_assignments.json`** (next to the calibration) is APPEND-ONLY
+per-user state: a gid keeps its pool slot forever, and a vanished family's
+slot stays burned — loose pool gems in an old save must never change species
+when the list is re-patched. Verified on LoreRim+Summermyst(+Thaumaturgy):
+re-run byte-identical; Summermyst removed → slots stay burned, minted section
+empties; Thaumaturgy added → appends at the next free slots.
+
 ## Creation Club — must read `Skyrim.ccc` yourself
 
 Synthesis's `state.LoadOrder` (and the raw `plugins.txt`) OMITS Creation Club

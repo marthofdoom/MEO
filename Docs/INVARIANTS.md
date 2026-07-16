@@ -157,3 +157,18 @@ the portable "never again" digest for sibling projects.
 25. **`TESDataHandler::LookupForm<T>` takes CONCRETE record classes only**
     (ENGINE_NOTES §9): abstract intermediates fail `Is(FORMTYPE)` 100% at
     runtime — the v0.31.0 dead conversion table.
+26. **The minted-gid string and the pool-slot assignment are both forever.**
+    `MintGid` (`installer/MEO.Installer/Commands.cs`) emits
+    `x_<alnum-lowercase plugin stem, ≤16>_<FNV-1a hex8 of the full lowercase
+    filename>_<primary MGEF fid hex6>` — co-saves store this string, so its
+    shape for any given input may NEVER change, and the hash + the mgef echo
+    in the assignments file (lowercase-normalized like the gid, so a
+    case-only plugin rename never reads as a collision) keep it
+    collision-guarded (extension-stripped +
+    truncated stems plus 12-bit ESL fid spaces make cross-plugin collisions
+    realistic; a silent collision merges two families onto one slot).
+    Catalog gids must never start with `x_` — the gid namespace is shared.
+    `meo_pool_assignments.json` is APPEND-ONLY per-user state: a gid keeps
+    its slot forever, vanished gids stay burned. **Exists-but-unreadable must
+    hard-fail, never default to empty** — an empty read silently reassigns
+    every slot by current-evidence order = loose pool gems change species.
