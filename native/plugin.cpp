@@ -4406,6 +4406,15 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
                 // convert a corpse safely; the engine PickUpObject that crashed only
                 // ever ran on a LIVING actor. (else = a container holder OR a corpse.)
                 a_holder->AddObjectToContainer(hit.tgt->base, &xl, 1, ref.get());
+                // m44 (marth: socketed weapons spawned UNDER the Warmaiden's counter):
+                // unlike PickUpObject above (which consumes the world ref), the engine's
+                // AddObjectToContainer copies the stamped item into the container's
+                // inventory but LEAVES the PlaceObjectAtMe placeholder in the world at
+                // the container's position — invisible inside a closed chest, but a
+                // visible loose weapon under a merchant counter. The container already
+                // holds its own copy (+ extraList), so delete the orphaned placeholder.
+                ref->Disable();
+                ref->SetDelete(true);
             }
             ++converted;
         }

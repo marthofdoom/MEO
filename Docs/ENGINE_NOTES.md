@@ -310,8 +310,21 @@ installed in `SKSEPluginLoad` — before the renderer exists):
   sweeps container holders too. Non-actor holders can't `PickUpObject`
   (actor-only) — instead use the engine flow `holder->PlaceObjectAtMe(base,false)`
   → `StampInstance` → `holder->AddObjectToContainer(base, &xl, 1, fromRefr=tempRef)`,
-  where a non-null `fromRefr` MOVES the stamped instance in and the engine
-  consumes the temp world ref (same path as Papyrus `AddItem(ObjectReference)`).
+  where a non-null `fromRefr` copies the stamped instance (its `&xl`) into the
+  container's inventory. **TRAP (corrected 2026-07-15, m44 — the deck log DISPROVED
+  the old claim that the engine consumes `fromRefr`): `AddObjectToContainer` does
+  NOT delete the temp world ref.** The stamped item lands in the container's
+  inventory (which owns its extra-data independently — it serializes into the
+  `.ess` and survives saves, see §1), but the `PlaceObjectAtMe` placeholder LINGERS
+  in the world at the holder's position. Invisible inside a closed chest; a visible
+  loose weapon (and a real lootable DUPLICATE) under a merchant counter — this was
+  the Warmaiden's "socketed weapons under the counter" bug. **You MUST reap it
+  yourself: `tempRef->Disable(); tempRef->SetDelete(true);` right after
+  `AddObjectToContainer`** (the live-actor `PickUpObject` branch consumes its ref;
+  only this container/corpse branch needs the manual delete). Deleting the
+  placeholder never touches the container entry (independent storage). NOT the same
+  as Papyrus `AddItem(ObjectReference)`, which DOES delete the source ref — the raw
+  native does not. Mirror this to ../Linux-Native-Tools instance-data notes.
   Guard the actor-only steps (`worn` equip, player ownership/theft-guard,
   player convert-miss diag) behind `if (actor…)`. Log container sweeps with a
   count so this failure class self-diagnoses.
