@@ -4,10 +4,46 @@ on:
   push:
     paths:
       - "installer/**"
+      - "MEO.sln"
       - ".github/workflows/installer.yml"
   workflow_dispatch:
 
 jobs:
+  # Guards the USER-FACING install path. Synthesis clones this repo, locates a
+  # SOLUTION, and builds the project named by assets/MEO.synth's SelectedProject.
+  # Nothing here used to cover that: CI only built MEO.Installer (the standalone
+  # exe we stopped shipping at v1.0.5), so when the repo turned out to have no
+  # .sln at all, every user adding the patcher hit a blocking "could not locate
+  # solution to run" and it shipped unnoticed through v1.0.5/1.0.6/1.0.6b.
+  # Build it the way Synthesis does, so the patcher can never be dead on arrival.
+  synthesis-patcher:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      # Synthesis needs a solution AND the project MEO.synth points at. Assert
+      # both explicitly so a rename/move fails here with a readable reason
+      # instead of silently breaking the patcher for users.
+      - name: Solution + selected project present
+        shell: pwsh
+        run: |
+          if (-not (Test-Path MEO.sln)) {
+            throw "MEO.sln missing at repo root — Synthesis would fail with 'could not locate solution to run'"
+          }
+          $sel = (Get-Content assets/MEO.synth | ConvertFrom-Json).AddGitPatcher.SelectedProject
+          if (-not (Test-Path $sel)) { throw "MEO.synth SelectedProject not found: $sel" }
+          if (-not (Select-String -Path MEO.sln -SimpleMatch $sel -Quiet)) {
+            throw "MEO.sln does not contain MEO.synth's SelectedProject: $sel"
+          }
+          Write-Host "OK: MEO.sln contains $sel"
+
+      - name: Build the patcher through the solution (as Synthesis does)
+        run: dotnet build MEO.sln -c Release
+
   build:
     runs-on: windows-latest
     defaults:
