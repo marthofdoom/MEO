@@ -71,6 +71,13 @@ sibling project can audit itself against the list in one sitting.
   engine to REWRITE uids on container transfer.** The pouch-container menu
   orphaned every banked-XP record in one day (v0.11.0); the rekey sink is
   the only cure.
+- **Two sequential ID allocators must never share one freeze anchor.** A
+  `max+1` scan that can see a reserved band's fids leapfrogs the band on the
+  next regen; MEO keeps `pool_forms.frozen.json` separate from
+  `gem_forms.frozen.json` and hard-fails the curated allocator at the band
+  edge instead. And freeze guards must trip BOTH directions — shrinking a
+  reserved pool passes a base/drift check silently while dropping shipped
+  forms out of users' saves.
 
 ## Player-relative logic
 

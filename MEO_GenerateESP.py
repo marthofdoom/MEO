@@ -55,6 +55,14 @@ FID_PERK_BASE      = OWN | 0x810   # MEO perks 0x810.. (DESIGN §6); FROZEN
 FID_POUCH_CONT     = OWN | 0x8FE   # hidden Gem Pouch container (M5 ContainerMenu UI); FROZEN
 FID_MENTOR_GEM     = OWN | 0x8FF   # unique support gem (M3d); FROZEN, outside the sequential range
 FID_GEM_BASE       = OWN | 0x900   # MISC gems allocated sequentially from here
+# Phase 3 auto-minting (marth 2026-07-16): a RESERVED pool of pre-minted MISC
+# gem forms the installer assigns to load-order-detected enchant families at
+# patch time. Band 0xB00-0xB9F (32 slots x 5 levels), FROZEN once shipped.
+# Curated-catalog growth stays BELOW 0xB00 (0xA11-0xAFF headroom, ~47 more
+# families); allocate_gems() hard-fails before it can ever enter the pool band.
+FID_POOL_BASE      = OWN | 0xB00
+POOL_SLOTS         = 32
+POOL_LEVELS        = 5
 RUNTIME_REL = "MEO/meo_runtime.json"   # under Data/SKSE/Plugins (JsonUtil root)
 
 ROMAN = {1:"I",2:"II",3:"III",4:"IV",5:"V"}
@@ -205,7 +213,68 @@ def allocate_gems():
             # not these lists. Bucketing them under armor was a mis-classification.
             if g['domain']=='weapon': weapon_fids.append(fid)
             elif g['domain']=='armor': armor_fids.append(fid)
+    # Curated growth must NEVER reach the reserved pool band — pool fids are
+    # frozen contracts with installer assignments on users' machines. If this
+    # ever fires, the pool band has to move (a breaking change): stop and think.
+    if next_fid >= FID_POOL_BASE:
+        raise SystemExit(f"FATAL: curated gem allocation reached 0x{next_fid & 0xFFFFFF:06X} — "
+                         f"collides with the reserved pool band at 0x{FID_POOL_BASE & 0xFFFFFF:06X}")
     return out.getvalue(), gem_form_map, weapon_fids, armor_fids, next_fid
+
+POOL_FREEZE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'pool_forms.frozen.json')
+
+def allocate_pool():
+    """Phase 3 reserved pool: 32 slots x 5 levels of placeholder MISC gems at
+    0xB00-0xB9F. Fids are pure arithmetic (base + slot*5 + level-1) but the
+    committed anchor data/pool_forms.frozen.json is the CONTRACT both this
+    generator and the installer's slot-assignment step read — one source of
+    truth, no duplicated constant. Append-only, same discipline as
+    gem_forms.frozen.json. Pool forms join NO FLST (economy: conversion-only,
+    marth 2026-07-16) and the DLL renames them at runtime, so the baked name
+    is only what a user sees if a minted family's calibration goes missing."""
+    out=BytesIO(); pool_map={}
+    for slot in range(POOL_SLOTS):
+        sid=f"pool{slot:02d}"; pool_map[sid]={}
+        for lvl in range(1,POOL_LEVELS+1):
+            fid=FID_POOL_BASE + slot*POOL_LEVELS + (lvl-1)
+            body =subrec('EDID',zstr(f"MEO_Pool{slot:02d}_{lvl}"))
+            body+=subrec('OBND',b'\x00'*12)+subrec('FULL',zstr("Uncut Gem"))
+            # Neutral mesh; a minted family's real theme arrives at patch time
+            # and only names change at runtime — mesh stays cosmetic-neutral.
+            mesh="Clutter\\Gemstones\\Amethyst.nif" if lvl>=4 \
+                 else "Clutter\\Gemstones\\AmethystFlawed.nif"
+            body+=subrec('MODL',zstr(mesh))
+            body+=subrec('DATA',struct.pack('<If',0,0.1))
+            out.write(record('MISC',fid,0,body))
+            pool_map[sid][lvl]=fid
+    # Committed anchor: union-write like write_frozen_forms (kept separate so
+    # allocate_gems' max-scan never sees pool fids and leapfrogs the band).
+    existing={}
+    if os.path.exists(POOL_FREEZE_PATH):
+        existing=json.load(open(POOL_FREEZE_PATH))
+        for sid,levels in existing.items():
+            for lvl,f in levels.items():
+                want=pool_map.get(sid,{}).get(int(lvl))
+                if want is not None and (OWN|int(f,16))!=want:
+                    raise SystemExit(f"FATAL: pool anchor mismatch {sid} L{lvl}: "
+                                     f"frozen {f} vs computed 0x{want & 0xFFFFFF:06X}")
+    for sid,levels in pool_map.items():
+        existing.setdefault(sid,{})
+        for lvl,fid in levels.items():
+            existing[sid][str(lvl)]=f"0x{fid & 0xFFFFFF:06X}"
+    # Pool slots are APPEND-ONLY: a POOL_SLOTS reduction changes no computed
+    # fid (arithmetic doesn't depend on the count), so without this tripwire
+    # shrinking would silently drop shipped slots — and users whose installer
+    # assigned a family to a dropped slot would lose those gems on load
+    # (unresolvable base fid -> co-save record dropped). Fable review S1.
+    for sid,levels in existing.items():
+        for lvl in levels:
+            if pool_map.get(sid,{}).get(int(lvl)) is None:
+                raise SystemExit(f"FATAL: frozen pool entry {sid} L{lvl} no longer emitted — "
+                                 f"pool slots are append-only; never shrink POOL_SLOTS/POOL_LEVELS")
+    os.makedirs(os.path.dirname(POOL_FREEZE_PATH),exist_ok=True)
+    json.dump(existing,open(POOL_FREEZE_PATH,'w'),indent=1,sort_keys=True)
+    return out.getvalue(), pool_map
 
 def make_flst(fid,edid,member_fids):
     body=subrec('EDID',zstr(edid))
@@ -451,6 +520,11 @@ def main():
     mentor=subrec('EDID',zstr("MEO_Gem_mentor"))+subrec('OBND',b'\x00'*12)
     mentor+=subrec('FULL',zstr("Mentor Gem"))+subrec('DATA',struct.pack('<If',750,0.1))
     misc_bytes=record('MISC',FID_MENTOR_GEM,0,mentor)+misc_bytes
+    # Phase 3 reserved pool (after curated gems so the MISC group stays in
+    # ascending-fid order); HEDR next-id must clear the pool band too.
+    pool_bytes, pool_map = allocate_pool()
+    misc_bytes+=pool_bytes
+    next_local=max(next_local, FID_POOL_BASE + POOL_SLOTS*POOL_LEVELS)
     esp=BytesIO()
     esp.write(make_tes4(next_local & 0xFFFFFF))
     esp.write(make_mgefs())
@@ -473,6 +547,9 @@ def main():
     print(f"  MGEF x3  (marker contact+self, pouch)   CONT x1  SPEL x1  QUST x2 (startup+MCM)  FLST x3")
     print(f"  MCM: {out_dir}/MCM/Config/MEO/config.json + {out_dir}/MCM/Settings/MEO.ini ({len(MCM_TUNABLES)} tunables)")
     print(f"  MISC x{nmisc}  ({ngems} gems: {len(weapon_fids)} weapon-domain + {len(armor_fids)} armor-domain forms)")
+    print(f"  Reserved pool: {POOL_SLOTS} slots x {POOL_LEVELS} = {POOL_SLOTS*POOL_LEVELS} MISC "
+          f"(0x{FID_POOL_BASE & 0xFFFFFF:06X}-0x{(FID_POOL_BASE + POOL_SLOTS*POOL_LEVELS - 1) & 0xFFFFFF:06X}, "
+          f"anchor data/pool_forms.frozen.json)")
     print(f"Written: {out_dir}/SKSE/Plugins/{RUNTIME_REL} ({ngems} gems)")
 
 if __name__=="__main__": main()

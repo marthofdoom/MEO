@@ -352,7 +352,15 @@ exactly. Protocol:
   0x8FF Mentor MISC; gem MISCs from 0x900, allocation anchored by
   `data/gem_forms.frozen.json` — regen only unions new gid×level pairs,
   `next_fid = max+1`, never recycles. Support gems belong to NEITHER FLST
-  (the DLL keys off the catalog's `isSupport`).
+  (the DLL keys off the catalog's `isSupport`). Phase 3 reserved pool: 160
+  placeholder MISC "Uncut Gem" forms at **0xB00–0xB9F** (32 slots × 5 levels,
+  EDID `MEO_PoolNN_L`, neutral amethyst mesh, value 0, in NO FLST —
+  conversion-only per marth 2026-07-16), anchored by
+  `data/pool_forms.frozen.json` (second frozen anchor, kept separate from
+  `gem_forms.frozen.json` so `allocate_gems`' max-scan never sees pool fids).
+  The installer's slot-assignment step (Phase 3 later stages) reads this
+  anchor and appends assignments per user machine; curated catalog growth
+  caps at 0xAFF (~47 more families of headroom).
 - **Catalog header** `tools/gen_catalog_header.py` → `native/GemCatalog.h`
   (`kGems[]`, 58 entries; `GemRider[2]` fixed arrays; `kXPThresholds`
   {500,1000,3000,8000}). Hard-exits on a gid missing from its THEME map or
