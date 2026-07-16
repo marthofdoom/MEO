@@ -973,6 +973,14 @@ void ResolveCatalog() {
         spdlog::error("Gem Pouch power not found in {} — is the ESP enabled?", kPluginName);
     }
     int ok = 0;
+    // m46: compiled family names, lowercased — the relabel guard below must
+    // never let a family relabel INTO a name another curated family owns.
+    std::unordered_set<std::string> famNames;
+    for (const auto& d : meo::kGems) {
+        std::string n(d.name);
+        for (auto& c : n) c = static_cast<char>(std::tolower(c));
+        famNames.insert(std::move(n));
+    }
     for (const auto& def : meo::kGems) {
         ResolvedGem rg;
         rg.def = &def;
@@ -1022,9 +1030,26 @@ void ResolveCatalog() {
                 };
                 a = lower(a); b = lower(b);
                 if (a.find(b) == std::string::npos && b.find(a) == std::string::npos) {
-                    rg.liveName = live;
-                    spdlog::info("[catalog] '{}' relabeled '{}' — the list renamed its effect",
-                                 def.name, live);
+                    // m46 (marth's deck: chaos presented as a second 'Fire
+                    // Damage'): the m27 relabel is for single-effect identity
+                    // swaps (the validated armor-pen case). A COMPONENT rename
+                    // must not rebrand a multi-component recipe (chaos's fire
+                    // primary got renamed; the family is still tri-element),
+                    // and a relabel must never LAND ON a name another curated
+                    // family owns — that's two families with one face.
+                    if (def.nRiders > 0) {
+                        spdlog::info("[catalog] '{}' relabel to '{}' suppressed: "
+                                     "multi-component recipe keeps its family name",
+                                     def.name, live);
+                    } else if (famNames.contains(a)) {
+                        spdlog::info("[catalog] '{}' relabel to '{}' suppressed: "
+                                     "collides with another family's name",
+                                     def.name, live);
+                    } else {
+                        rg.liveName = live;
+                        spdlog::info("[catalog] '{}' relabeled '{}' — the list renamed its effect",
+                                     def.name, live);
+                    }
                 }
             }
         }

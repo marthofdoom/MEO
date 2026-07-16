@@ -53,6 +53,12 @@ the database; it travels through drop/pickup/containers/saves with no script:
    `[Tag] Name` re-trips this trap, so the minted registration strips a
    leading `[...]` group before composing gem item names (installer-side
    MintName strips ALL bracket groups from the calibration name too).
+   m46 relabel guards: the m27 follow-the-winning-record relabel is for
+   single-effect identity swaps ONLY — a multi-component family (compiled
+   riders > 0) keeps its family name when one COMPONENT is renamed (marth's
+   deck: a list renamed chaos's fire-component MGEF "Fire Damage" and the
+   tri-element gem presented as a second Fire Damage family), and no family
+   may relabel INTO a name another curated family owns.
 4. **`ExtraDataList::GetDisplayName` resolves through `ExtraReferenceHandle`
    (0x1C)** to the ORIGINAL reference's name data when present. An inventory
    entry that kept the handle from its pickup can read a *stale* name from
