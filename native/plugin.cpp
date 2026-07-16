@@ -152,10 +152,10 @@ constexpr std::uint32_t kSerID = 'MEO1';
 constexpr std::uint32_t kRecGems = 'GEMS';
 constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPlacedMask. v9: supportScaffold.
 
-// Single source of truth for the plugin version — surfaced in the load log AND
-// live in the MCM (Debug page) via the MEO_MCM.GetDLLVersion() Papyrus native, so
-// the menu always reflects the ACTUALLY LOADED dll (a stale/mismatched plugin
-// under a freshly-updated config shows the old number here).
+// Single source of truth for the plugin version — surfaced in the load log and
+// the console print, exposed to Papyrus via GetDLLVersion() below, and read by
+// MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
+// (so DLL, log, console, and menu can never disagree).
 constexpr const char* kMEOVersion = "1.0.6b";
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
@@ -6180,9 +6180,10 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
     }
 }
 
-// Papyrus: MEO_MCM.GetDLLVersion() -> the loaded plugin's version string. The MCM
-// (MEO_MCM.OnConfigOpen) pushes this into the sDLLVersion:Debug ModSetting so the
-// Debug page displays the live DLL version — no INI/co-save round-trip to go stale.
+// Papyrus: MEO_MCM.GetDLLVersion() -> the loaded plugin's version string. Kept as
+// a Papyrus/console-accessible accessor for the LIVE dll version (debugging a
+// stale-DLL mismatch). The MCM Debug-page readout itself is build-stamped from
+// kMEOVersion in config.json (MRO's style — no ModSetting round-trip to go blank).
 RE::BSFixedString GetDLLVersion(RE::StaticFunctionTag*) { return kMEOVersion; }
 
 bool RegisterPapyrus(RE::BSScript::IVirtualMachine* a_vm) {

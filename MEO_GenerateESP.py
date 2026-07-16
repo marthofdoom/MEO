@@ -23,6 +23,19 @@ from io import BytesIO
 
 CATALOG = json.load(open(os.path.join(os.path.dirname(__file__), 'data/gem_catalog.json')))
 
+def read_meo_version(default="0.0.0"):
+    """The single source of truth for the version is kMEOVersion in
+    native/plugin.cpp; read it so the build-stamped MCM readout can never drift
+    from the DLL/log/console string. Falls back to a placeholder if unreadable."""
+    try:
+        src = open(os.path.join(os.path.dirname(__file__), 'native', 'plugin.cpp')).read()
+        m = re.search(r'kMEOVersion\s*=\s*"([^"]+)"', src)
+        if m:
+            return m.group(1)
+    except OSError:
+        pass
+    return default
+
 # ── FormIDs (single master Skyrim.esm -> own file index 0x01; 0x800-0xFFF = ESL-able) ──
 OWN = 0x01000000
 FREF_PLAYER     = 0x00000014
@@ -402,15 +415,15 @@ def write_mcm_files(out_dir):
             ctrl={"id":f"{key}:{section}","text":label,"type":"toggle","help":help_,
                   "valueOptions":{"sourceType":"ModSettingBool","defaultValue":bool(dflt)}}
         pages[page].append(ctrl)
-    # Live DLL-version readout at the top of the Debug page: a read-only text
-    # control bound to the sDLLVersion:Debug string ModSetting, which
-    # MEO_MCM.OnConfigOpen refreshes from the DLL's own GetDLLVersion() native
-    # each time the menu opens — so it always shows the ACTUALLY LOADED MEO.dll
-    # (a stale/mismatched plugin under a freshly-updated config surfaces here).
+    # Version readout at the top of the Debug page (MRO-style: stamped at build
+    # time, shown as plain static text — no ModSetting/Papyrus round-trip to render
+    # blank). Sourced from kMEOVersion in native/plugin.cpp, so the DLL load log,
+    # the console print, and this display all share one constant.
+    ver = read_meo_version()
     pages.setdefault("Debug",[]).insert(0,
-        {"id":"sDLLVersion:Debug","text":"DLL version","type":"text",
-         "help":"Version of the loaded MEO.dll, read live from the plugin. If this does not match the release you installed, the DLL did not update.",
-         "valueOptions":{"sourceType":"ModSettingString","defaultValue":""}})
+        {"text":"Version","type":"text",
+         "help":"MEO version, stamped from the build. Matches the MEO.dll built from the same commit.",
+         "valueOptions":{"value":f"v{ver}"}})
     config={"modName":"MEO","displayName":"marth Enchanting Overhaul",
             "minMcmVersion":9,"cursorFillMode":"topToBottom",
             "pages":[{"pageDisplayName":p,"cursorFillMode":"topToBottom",
