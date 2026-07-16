@@ -609,7 +609,16 @@ static class Commands
         var clsByItem = data.Items.ToDictionary(i => i.Key, i => i.Cls);
         var enchWeight = new Dictionary<FormKey, int>();
         foreach (var r in data.Raw)
-            if (clsByItem[r.Key].StartsWith("strip") || clsByItem[r.Key] == "keep-generic-multifx")
+            // Phase 3: "keep-generic-uncovered" IS the auto-mint class (a
+            // generic whose single effect has no catalog family — by
+            // construction it can never sig-match a curated family, so
+            // including it here changes nothing curated; it only reaches
+            // MintFamilies via the best-is-null drop). Excluding it hid the
+            // single-effect MAJORITY of mint candidates (Slay Living x249,
+            // Requiem armor-pen x78...) — marth caught it on the deck: same
+            // mints before/after multi-effect, which was 'unlikely' indeed.
+            if (clsByItem[r.Key].StartsWith("strip") ||
+                clsByItem[r.Key] is "keep-generic-multifx" or "keep-generic-uncovered")
                 enchWeight[r.Ench] = enchWeight.GetValueOrDefault(r.Ench) + 1;
 
         // Human-curated rulings (marth's tuning loop): effects HE has ruled
@@ -904,7 +913,8 @@ static class Commands
         // recipes the gems can't express yet (duration-anchored) are absent,
         // so those items keep spawning enchanted.
         var honored = new HashSet<string> { "strip-1fx", "strip-2fx-recipe", "strip-3fx-recipe",
-                                            "strip-2fx-uncovered", "keep-generic-multifx" };
+                                            "strip-2fx-uncovered", "keep-generic-multifx",
+                                            "keep-generic-uncovered" };  // phase 3: minted single-fx
         var conversions = new List<object>();
         int noFamily = 0, pinned = 0, partial = 0, machineryWaived = 0;
         var pinnedByEnch = new Dictionary<FormKey, string>();
@@ -1182,7 +1192,8 @@ static class Commands
         // could actually convert, not effect shapes (Fable review, finding A).
         var clsByKey = data.Items.ToDictionary(i => i.Key, i => i.Cls);
         var honoredCls = new HashSet<string> { "strip-1fx", "strip-2fx-recipe",
-            "strip-3fx-recipe", "strip-2fx-uncovered", "keep-generic-multifx" };
+            "strip-3fx-recipe", "strip-2fx-uncovered", "keep-generic-multifx",
+            "keep-generic-uncovered" };  // phase 3: minted single-fx
         var convRows = new Dictionary<FormKey, List<bool>>();  // ench -> carriers' isWeapon
         foreach (var r in data.Raw)
             if (enchCluster.TryGetValue(r.Ench, out var ck))
@@ -1860,8 +1871,9 @@ static class Commands
             // m25: partial generics (family + companions we don't cover) are
             // conversion candidates too — record their base (marth's Squire
             // cuirass blockade: Fortify Light Armor + 3 armor-pen companions).
-            if ((cls.StartsWith("strip") || cls == "keep-generic-multifx") && baseKey is { } bk)
-                data.StripBase[r.Key] = bk;
+            if ((cls.StartsWith("strip") ||
+                 cls is "keep-generic-multifx" or "keep-generic-uncovered") && baseKey is { } bk)
+                data.StripBase[r.Key] = bk;  // uncovered: base recorded for phase-3 minting
             data.Items.Add((r.Key, cls, r.Name, r.Mod, r.Edid));
         }
         if (renamedBase > 0)

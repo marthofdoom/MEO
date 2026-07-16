@@ -57,11 +57,14 @@ FID_MENTOR_GEM     = OWN | 0x8FF   # unique support gem (M3d); FROZEN, outside t
 FID_GEM_BASE       = OWN | 0x900   # MISC gems allocated sequentially from here
 # Phase 3 auto-minting (marth 2026-07-16): a RESERVED pool of pre-minted MISC
 # gem forms the installer assigns to load-order-detected enchant families at
-# patch time. Band 0xB00-0xB9F (32 slots x 5 levels), FROZEN once shipped.
+# patch time. Band 0xB00-0xC3F (64 slots x 5 levels — grown from 32 the same
+# day, pre-ship, after the keep-generic-uncovered class fix revealed Authoria
+# alone has 54 viable candidates), FROZEN once shipped. Growth is append-only
+# legal (new slots at the end); shrinking never is (allocate_pool trips).
 # Curated-catalog growth stays BELOW 0xB00 (0xA11-0xAFF headroom, ~47 more
 # families); allocate_gems() hard-fails before it can ever enter the pool band.
 FID_POOL_BASE      = OWN | 0xB00
-POOL_SLOTS         = 32
+POOL_SLOTS         = 64
 POOL_LEVELS        = 5
 RUNTIME_REL = "MEO/meo_runtime.json"   # under Data/SKSE/Plugins (JsonUtil root)
 
@@ -224,8 +227,9 @@ def allocate_gems():
 POOL_FREEZE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'pool_forms.frozen.json')
 
 def allocate_pool():
-    """Phase 3 reserved pool: 32 slots x 5 levels of placeholder MISC gems at
-    0xB00-0xB9F. Fids are pure arithmetic (base + slot*5 + level-1) but the
+    """Phase 3 reserved pool: POOL_SLOTS x 5 levels of placeholder MISC gems
+    from 0xB00 (64 slots -> 0xB00-0xC3F). Fids are pure arithmetic
+    (base + slot*5 + level-1) but the
     committed anchor data/pool_forms.frozen.json is the CONTRACT both this
     generator and the installer's slot-assignment step read — one source of
     truth, no duplicated constant. Append-only, same discipline as

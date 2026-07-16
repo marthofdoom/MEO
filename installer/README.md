@@ -97,8 +97,8 @@ never through Synthesis's clone-and-build. Rules learned:
 ## Phase 3 auto-minting (`MintFamilies`, inside `WriteCalibration`)
 
 Generic-loot enchant clusters that match NO catalog family are promoted to
-**minted** gem families on MEO.esp's reserved pool (32 slots × 5 MISC forms at
-0xB00–0xB9F; `data/pool_forms.frozen.json` is the contract, linked into the
+**minted** gem families on MEO.esp's reserved pool (64 slots × 5 MISC forms at
+0xB00–0xC3F; `data/pool_forms.frozen.json` is the contract, linked into the
 Synthesis build beside `gem_catalog.json`). Emitted as a top-level `"minted"`
 section in `meo_calibration.json` — additive: a pre-phase-3 DLL ignores the key
 and skips its conversions at gid lookup, so the calibration is safe on every
@@ -130,8 +130,10 @@ Surfaced as the Synthesis setting "Mint multi-effect recipes (BETA)" (default
 ON) / standalone `--no-mint-riders`. Known beta caveats: rider sets are the
 UNION across the cluster's recipes (a low-rank item can carry a high-rank
 recipe's procs), and riders apply unconditionally (a vs-player-shaped helper
-rides all hits). Authoria validation: 9/9 minted families convert (1,321
-items; was 805 with 5 dead slots), PINNED 708 → 24.
+rides all hits). Authoria validation (with the keep-generic-uncovered class fix + 64 slots):
+54/54 minted families convert, 6,470 items (single-effect uncovered generics
+were the hidden majority — Slay Living ×249, Requiem Fortify Sneak Attack
+×78, Spell Absorption ×60), PINNED 708 → 24, 10 slots free.
 
 **`meo_pool_assignments.json`** (next to the calibration) is APPEND-ONLY
 per-user state: a gid keeps its pool slot forever, and a vanished family's

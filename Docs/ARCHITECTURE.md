@@ -369,8 +369,9 @@ exactly. Protocol:
   0x8FF Mentor MISC; gem MISCs from 0x900, allocation anchored by
   `data/gem_forms.frozen.json` — regen only unions new gid×level pairs,
   `next_fid = max+1`, never recycles. Support gems belong to NEITHER FLST
-  (the DLL keys off the catalog's `isSupport`). Phase 3 reserved pool: 160
-  placeholder MISC "Uncut Gem" forms at **0xB00–0xB9F** (32 slots × 5 levels,
+  (the DLL keys off the catalog's `isSupport`). Phase 3 reserved pool: 320
+  placeholder MISC "Uncut Gem" forms at **0xB00–0xC3F** (64 slots × 5 levels
+  — grown from 32 pre-ship, append-only,
   EDID `MEO_PoolNN_L`, neutral amethyst mesh, value 0, in NO FLST —
   conversion-only per marth 2026-07-16), anchored by
   `data/pool_forms.frozen.json` (second frozen anchor, kept separate from
@@ -406,11 +407,11 @@ exactly. Protocol:
   `SKSE/Plugins/MEO/`), and emitted as the additive top-level `"minted"`
   calibration section (pre-phase-3 DLLs skip its gids at lookup, so the
   calibration is safe on every shipped DLL). Members re-enter
-  `enchFamily`/`enchLeftover` and ride the ordinary lossless gate — minted
-  v1 is single-effect, no adopted riders; wrong-domain carriers are excluded
-  from conversion (the cast-shape guard covers only the majority domain).
+  `enchFamily`/`enchLeftover` (desc-pruned) and ride the ordinary lossless
+  gate; wrong-domain carriers are excluded from conversion (the cast-shape
+  guard covers only the majority domain).
   Slot state: `meo_pool_assignments.json` beside the calibration
-  (INVARIANTS 26). Overflow past 32 slots = leave uncovered + report;
+  (INVARIANTS 26). Overflow past 64 slots = leave uncovered + report;
   minted gems are conversion-only (marth 2026-07-16).
   Multi-effect recipes (BETA, default ON — Synthesis setting / standalone
   `--no-mint-riders`): companions classified mechanically — desc-inert
