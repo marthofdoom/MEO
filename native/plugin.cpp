@@ -4674,7 +4674,11 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
             }
             const std::uint32_t hi =
                 HashU32(seed ^ hit.old->GetFormID() ^ static_cast<std::uint32_t>(i));
-            const int level = (hi % 10000) < l2cut ? 2 : 1;
+            // singleLevel families have no level II — rolling one minted a
+            // record whose gem form doesn't exist (the F1b destruction class)
+            // and a "Waterbreathing II" name lie.
+            const int level = g_gems[hit.tgt->gemIdx].def->singleLevel
+                                  ? 1 : ((hi % 10000) < l2cut ? 2 : 1);
             StampInstance(hit.tgt->base, &xl, hit.tgt->gemIdx, level);
             if (actor && !actor->IsDead()) {
                 actor->PickUpObject(ref.get(), 1, false, false);
@@ -4796,8 +4800,10 @@ void ConvertWorldRef(RE::TESObjectREFR* a_ref) {
         newRef->extraList.SetOwner(owner);  // pickup keeps the same theft semantics
     }
     const std::uint32_t h = HashU32(srcID ^ 0x4D454F57u);
-    const int level =
-        (h % 10000) < static_cast<std::uint32_t>(g_gemLevel2Chance * 10000.0f) ? 2 : 1;
+    const int level =  // singleLevel: no level II exists (see ConvertInventory note)
+        g_gems[it->second.gemIdx].def->singleLevel
+            ? 1
+            : ((h % 10000) < static_cast<std::uint32_t>(g_gemLevel2Chance * 10000.0f) ? 2 : 1);
     StampInstance(it->second.base, &newRef->extraList, it->second.gemIdx, level);
     newRef->data.angle = shelfAngle;  // keep the shelf pose
     newRef->SetPosition(visiblePos);  // land where the player saw it, into now-vacated space
