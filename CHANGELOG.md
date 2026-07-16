@@ -4,6 +4,39 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.6b — NPC-border hardening + loose-spawn placement fixes + MCM version + leveling nudge (m42–m44, 2026-07-15)
+
+Point release over v1.0.6. Same feature set; stability, placement, and pacing fixes.
+
+Stability
+- **MEO no longer touches a living NPC's existing enchanted gear** (m42). Existing
+  enchants convert to socketed gems only when the NPC actually **dies** (the corpse
+  is handled like a container — a plain inventory swap, no equip) or when **you loot
+  them**. MEO still adds its own gem to an enemy's *unenchanted* gear as before, now
+  gated on the actor being fully loaded. Removes a crash class where a mod that
+  force-equips an enchanted weapon onto a mid-loading NPC could fault the engine
+  during conversion.
+
+Loot placement
+- **Converted world weapons now sit where the original was** (m43). A socketed
+  replacement for a loose weapon on a shelf/rack was spawning at the item's
+  authored spot (often embedded in the surface) and sinking **under the floor**;
+  it now lands at the weapon's actual on-shelf position.
+- **No more duplicate socketed weapons under merchant counters** (m44). Converting
+  a merchant's stock left a stray copy of each socketed weapon in the world at the
+  chest's position — invisible inside a closed chest, but a visible (and lootable)
+  duplicate under an open counter like Warmaiden's. The stray placeholder is now
+  cleaned up; the merchant's converted stock is unaffected.
+
+Balance
+- **Gem leveling slowed ~10%.** The Gem-XP ladder to reach II/III/IV/V rose from
+  400/900/2,800/7,000 to **500/1,000/3,000/8,000** (kept on multiples of 20 so the
+  "XP required" always shows clean whole numbers across all gem tiers).
+
+UI
+- **The MCM now shows the MEO version** (Debug page → *Version*), stamped from the
+  build so it always matches the release you installed.
+
 ## v1.0.6 — enchant-sound fix + XP/attunement rebalance + shorter names + Summermyst weakness gems (m40, 2026-07-15)
 
 Audio
