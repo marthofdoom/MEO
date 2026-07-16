@@ -48,6 +48,11 @@ the database; it travels through drop/pickup/containers/saves with no script:
    strip a leading `[...]` as an icon/categorization tag. `[MEO] Glass
    Dagger` rollover-rendered as "Glass Dagger" — indistinguishable from a
    failed rename; proven with a table-renamed control (`[pookie] X` → "X").
+   Phase 3 widens this surface: minted item names are composed from
+   *arbitrary modded MGEF names* at runtime — a list that tags effects
+   `[Tag] Name` re-trips this trap, so the minted registration strips a
+   leading `[...]` group before composing gem item names (installer-side
+   MintName strips ALL bracket groups from the calibration name too).
 4. **`ExtraDataList::GetDisplayName` resolves through `ExtraReferenceHandle`
    (0x1C)** to the ORIGINAL reference's name data when present. An inventory
    entry that kept the handle from its pickup can read a *stale* name from

@@ -172,3 +172,16 @@ the portable "never again" digest for sibling projects.
     its slot forever, vanished gids stay burned. **Exists-but-unreadable must
     hard-fail, never default to empty** — an empty read silently reassigns
     every slot by current-evidence order = loose pool gems change species.
+27. **Minted families are conversion-only, pool-guarded, and fail dormant.**
+    Every spawn-pool builder (corpse/lootable, themed NPC, `ConduitSibling`)
+    must skip `.minted`. A minted family may bind only MISC fids ≥
+    `kPoolFloor` (0xB00) — the floor keeps a corrupt calibration from
+    capturing curated forms. The `"minted"` parse is PER ENTRY: one bad
+    family costs only itself, never the section (deliberately not the
+    families block's all-or-nothing posture). A minted family whose MGEF
+    **or any pool form** fails to resolve registers DISABLED — never skipped
+    from `g_gemByGid`, never live — so co-save records keyed by its gid go
+    dormant; a record must never be erased before its gem hand-back is known
+    to resolve (the `GiveGemInstance` null-item silent no-op is a destruction
+    path, not a fallback — `MenuUnsocket` and the swap-evict both check the
+    level's item form BEFORE erasing).

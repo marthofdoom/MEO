@@ -37,6 +37,23 @@ InstKey = (baseFormID << 24) | (uniqueID << 8) | slot   (MakeKey :116)
   (`g_calLevels`), per-list magnitude curves (`g_calCurves`), and the
   conversion table (`g_calConversions` → `g_convert`). Lookups: `g_gemByItem`
   (MISC FormID → {gemIdx, level}), `g_gemByGid` (:190-191).
+  **Phase 3 minted families**: the calibration's additive `"minted"` section
+  is parsed PER ENTRY (one bad family costs only itself — never the brittle
+  all-or-nothing families block) into `g_calMinted`, then a second
+  `ResolveCatalog` pass registers each as a full runtime family:
+  `GemDef` owned by `g_mintedDefs` (a `std::deque` — addresses stable, so
+  `ResolvedGem::def` and `g_gemByGid` string_view keys can alias it), items
+  = the ESP's reserved pool MISCs (`kPoolFloor` 0xB00 guard: a corrupt
+  calibration can never capture curated forms; forms already bound to
+  another family are rejected loudly), names forced at runtime from the
+  live MGEF (the baked "Uncut Gem" is only the no-calibration face).
+  `ResolvedGem.minted` = conversion-only: every spawn/vendor/NPC pool loop
+  and `ConduitSibling` skip it. Missing MGEF (stale calibration after mod
+  removal) **or any unresolved pool form (stale ESP)** registers DISABLED —
+  the curated missing-master posture; co-save records keyed by the minted
+  gid go dormant, never destroyed. `MenuUnsocket` and the swap-evict check
+  the level's item form BEFORE erasing a record (INVARIANTS 27) so a
+  dormant family's gem is refused, not silently destroyed.
 
 ## 1. The enchant-build pipeline
 

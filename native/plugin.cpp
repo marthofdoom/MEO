@@ -86,9 +86,11 @@
 #include <cstring>
 #include <cctype>
 #include <cstdlib>
+#include <deque>
 #include <format>
 #include <fstream>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -182,6 +184,9 @@ struct ResolvedGem {
     std::array<RtRider, 4>              riders{};  // m25: Squire-style recipes carry 3
     int                                 nRiders = 0;
     std::array<RE::TESObjectMISC*, 5>   items{};
+    bool                                minted = false;  // Phase 3: runtime family from the
+                                                         // calibration "minted" section —
+                                                         // CONVERSION-ONLY, never in spawn pools
 };
 std::vector<ResolvedGem>                          g_gems;
 // m27 (marth confirmed the 'pen' in game): Requiem-style lists REPURPOSE
@@ -727,6 +732,39 @@ struct ConvTarget {
 };
 std::unordered_map<RE::FormID, ConvTarget> g_convert;  // runtime item id -> target
 
+// ── Phase 3: minted (runtime) gem families ────────────────────────────
+// The installer's MintFamilies promotes uncovered enchant clusters onto the
+// ESP's reserved pool (MISC 0xB00+, INVARIANTS 23/26) and describes them in
+// the calibration's additive "minted" section. The DLL registers each as a
+// full gem family at data-load: same leveling/socket/convert machinery,
+// but CONVERSION-ONLY (never pushed into spawn/vendor pools — marth
+// 2026-07-16). Co-saves store the minted gid string, so a family that
+// vanishes (mod removed, calibration regenerated) leaves dormant records —
+// exactly the curated missing-master behavior.
+struct CalMinted {
+    std::string gid, name, plugin, domain, theme, gclass;
+    RE::FormID  mgefID = 0;
+    std::array<float, 5>      curve{};
+    std::array<RE::FormID, 5> forms{};
+    float dur = 0.0f;
+    float xpMult = 1.0f;
+};
+std::vector<CalMinted> g_calMinted;
+// Owned, ADDRESS-STABLE backing for runtime GemDefs: kGems entries are
+// static and ResolvedGem::def / g_gemByGid string_views alias them; minted
+// defs get the same lifetime guarantee from a deque (elements never move)
+// + strings that are never touched after registration.
+struct MintedDef {
+    meo::GemDef def{};
+    std::string gid, name, plugin;
+};
+std::deque<MintedDef> g_mintedDefs;
+
+// Reserved pool floor: minted families may only bind MISC forms at/above
+// this — anything below is curated/frozen space a corrupt calibration must
+// never be able to capture.
+constexpr RE::FormID kPoolFloor = 0xB00;
+
 static void LoadCalibration() {
     constexpr const char* kPath = "Data/SKSE/Plugins/MEO/meo_calibration.json";
     std::ifstream f(kPath);
@@ -739,6 +777,7 @@ static void LoadCalibration() {
     g_calLevels.clear();
     g_calCurves.clear();
     g_calConversions.clear();
+    g_calMinted.clear();
     nlohmann::json j;
     try {
         f >> j;
@@ -818,8 +857,85 @@ static void LoadCalibration() {
                       kPath, ex.what());
         g_calConversions.clear();
     }
+    // Phase 3 "minted" section — parsed PER ENTRY, unlike the families block
+    // above: one malformed minted family must cost only itself, never the
+    // whole section (and never riders/ladders/conversions — those blocks
+    // already parsed). Absent section = nothing minted, zero-cost.
+    if (j.contains("minted")) {
+        int bad = 0;
+        for (const auto& [gid, v] : j.at("minted").items()) {
+            try {
+                CalMinted cm;
+                cm.gid = gid;
+                // Namespace guard (INVARIANTS 26): the co-save gid space is
+                // shared with curated gids; only the installer's x_ shape may
+                // arrive here.
+                if (cm.gid.rfind("x_", 0) != 0) {
+                    throw std::runtime_error("gid not in the minted x_ namespace");
+                }
+                cm.name = v.at("name").get<std::string>();
+                cm.plugin = v.at("plugin").get<std::string>();
+                cm.domain = v.at("domain").get<std::string>();
+                if (cm.domain != "weapon" && cm.domain != "armor") {
+                    throw std::runtime_error("domain must be weapon|armor");
+                }
+                cm.theme = v.value("theme", std::string("ARCANE"));
+                cm.gclass = v.value("gclass", std::string("LINEAR"));
+                cm.mgefID = static_cast<RE::FormID>(
+                    std::stoul(v.at("mgef").get<std::string>(), nullptr, 16));
+                int i = 0;
+                for (const auto& m : v.at("curve")) {
+                    if (i >= 5) break;
+                    cm.curve[i++] = m.get<float>();
+                }
+                if (i != 5) {
+                    throw std::runtime_error("curve must be 5 positive floats");
+                }
+                for (int k = 0; k < 5; ++k) {  // ALL five, not just L1 (F2)
+                    if (cm.curve[k] <= 0.0f) {
+                        throw std::runtime_error("curve must be 5 positive floats");
+                    }
+                }
+                const auto& forms = v.at("forms");
+                for (int lv = 1; lv <= 5; ++lv) {
+                    auto fid = static_cast<RE::FormID>(std::stoul(
+                        forms.at(std::to_string(lv)).get<std::string>(), nullptr, 16));
+                    // Pool-floor guard: a corrupt/hand-edited calibration must
+                    // never bind a minted family onto curated/frozen forms.
+                    if (fid < kPoolFloor) {
+                        throw std::runtime_error("form below the reserved pool floor");
+                    }
+                    cm.forms[lv - 1] = fid;
+                }
+                cm.dur = v.value("duration", 0.0f);
+                cm.xpMult = v.value("xp_mult", 1.0f);
+                g_calMinted.push_back(std::move(cm));
+            } catch (const std::exception& ex) {
+                ++bad;
+                spdlog::warn("minted '{}' rejected: {} — family skipped", gid, ex.what());
+            }
+        }
+        if (!g_calMinted.empty() || bad) {
+            spdlog::info("calibration: {} minted famil(ies) parsed, {} rejected",
+                         g_calMinted.size(), bad);
+        }
+    }
     spdlog::info("calibration: {} family recipe(s), {} conversion(s) loaded from {}",
                  g_calibration.size(), g_calConversions.size(), kPath);
+}
+
+// Phase 3: minted-family enum mapping. Theme only drives the elemental-
+// affinity perk multiplier for minted gems (they join no spawn pools);
+// unknown strings land on Arcane, the neutral bucket.
+meo::Theme MintedTheme(const std::string& s) {
+    if (s == "FIRE")  return meo::Theme::kFire;
+    if (s == "FROST") return meo::Theme::kFrost;
+    if (s == "SHOCK") return meo::Theme::kShock;
+    if (s == "DRAIN") return meo::Theme::kDrain;
+    return meo::Theme::kArcane;
+}
+meo::GemClass MintedClass(const std::string& s) {
+    return s == "ABSORB" ? meo::GemClass::kAbsorb : meo::GemClass::kLinear;
 }
 
 void ResolveCatalog() {
@@ -955,10 +1071,133 @@ void ResolveCatalog() {
         }
         g_gems.push_back(rg);
     }
+    // ── Phase 3 second pass: register minted families from the calibration ──
+    // Same machinery as compiled families (socket, level, convert, perks),
+    // with three differences: the GemDef lives in g_mintedDefs (owned,
+    // address-stable — g_gemByGid string_views and ResolvedGem::def alias
+    // it), items are the ESP's reserved pool forms (renamed at runtime, the
+    // baked "Uncut Gem" is only the no-calibration fallback face), and the
+    // family NEVER enters spawn/vendor pools (rg.minted, marth 2026-07-16).
+    int mintedOk = 0;
+    for (const auto& cm : g_calMinted) {
+        if (g_gemByGid.contains(cm.gid)) {
+            spdlog::warn("minted '{}' skipped: gid already registered", cm.gid);
+            continue;
+        }
+        bool formClash = false;
+        for (int lv = 0; lv < 5; ++lv) {
+            auto* it = dh->LookupForm<RE::TESObjectMISC>(cm.forms[lv], kPluginName);
+            if (it && g_gemByItem.contains(it->GetFormID())) {
+                formClash = true;
+            }
+        }
+        if (formClash) {  // two families on one slot = two species on one form
+            spdlog::warn("minted '{}' skipped: pool form already bound to another family "
+                         "(corrupt assignments/calibration?)", cm.gid);
+            continue;
+        }
+        auto& md = g_mintedDefs.emplace_back();
+        md.gid = cm.gid;
+        md.name = cm.name;
+        md.plugin = cm.plugin;
+        auto& d = md.def;
+        d.gid = md.gid.c_str();
+        d.name = md.name.c_str();
+        d.plugin = md.plugin.c_str();
+        d.mgefID = cm.mgefID;
+        for (int lv = 0; lv < 5; ++lv) {
+            d.magnitude[lv] = cm.curve[lv];
+            d.gemItem[lv] = cm.forms[lv];
+        }
+        d.duration = cm.dur;
+        d.xpMult = cm.xpMult;
+        d.singleLevel = false;
+        d.spawnWeight = 0;  // belt-and-suspenders: pools also skip rg.minted
+        d.isArmor = (cm.domain == "armor");
+        d.theme = MintedTheme(cm.theme);
+        d.gclass = MintedClass(cm.gclass);
+        d.isSupport = false;
+        d.nRiders = 0;
+
+        ResolvedGem rg;
+        rg.def = &d;
+        rg.minted = true;
+        rg.mgef = dh->LookupForm<RE::EffectSetting>(d.mgefID, d.plugin);
+        // F1 (Fable review): resolve ALL 5 pool forms BEFORE going live. A
+        // family with a live MGEF but missing forms would convert and socket,
+        // then destroy gem+XP on unsocket (GiveGemInstance null-form no-op
+        // AFTER the record is erased). Stale-ESP-vs-newer-calibration is the
+        // exact drift class that ships in the field — register DISABLED.
+        std::array<RE::TESObjectMISC*, 5> its{};
+        bool formsOk = true;
+        for (int lv = 0; lv < 5; ++lv) {
+            its[lv] = dh->LookupForm<RE::TESObjectMISC>(d.gemItem[lv], kPluginName);
+            formsOk = formsOk && its[lv] != nullptr;
+        }
+        if (!formsOk && rg.mgef) {
+            spdlog::warn("minted '{}' disabled: pool form(s) missing — MEO.esp older "
+                         "than the calibration?", d.gid);
+            rg.mgef = nullptr;
+        } else if (!rg.mgef) {
+            // Enchant mod removed but calibration is stale: register disabled
+            // (dense indexes, conversions skip it, StampInstance refuses it) —
+            // the curated missing-master posture exactly.
+            spdlog::warn("minted '{}' disabled: MGEF {:06X} not found in {}",
+                         d.gid, d.mgefID, d.plugin);
+        }
+        rg.mgefLv.fill(rg.mgef);
+        // Minted pool forms ALWAYS need their runtime name (the ESP bakes the
+        // placeholder). Prefer the live MGEF name — the calibration name was
+        // sampled at patch time and the list may have renamed since (m27).
+        const char* live = rg.mgef ? rg.mgef->GetName() : nullptr;
+        rg.liveName = (live && *live) ? live : md.name;
+        // F4: strip a leading [Tag] group — minted deliberately targets
+        // un-curated modded effects where bracket tags are common, and
+        // Lorerim-class UI suites strip them from names (rename trap 3 /
+        // INVARIANT 4, the M2i lesson).
+        if (!rg.liveName.empty() && rg.liveName.front() == '[') {
+            if (auto e = rg.liveName.find(']'); e != std::string::npos) {
+                std::size_t s = e + 1;
+                while (s < rg.liveName.size() && rg.liveName[s] == ' ') {
+                    ++s;
+                }
+                if (s < rg.liveName.size()) {
+                    rg.liveName = rg.liveName.substr(s);
+                }
+            }
+        }
+        RE::TESObjectMISC* prev = nullptr;
+        for (int lv = 0; lv < 5; ++lv) {
+            rg.items[lv] = its[lv];
+            if (rg.items[lv]) {
+                rg.items[lv]->value = 0;  // same not-sellable rule as curated gems
+            }
+            if (rg.items[lv] && rg.mgef && rg.items[lv] != prev) {
+                g_gemByItem[rg.items[lv]->GetFormID()] = { static_cast<int>(g_gems.size()), lv + 1 };
+                rg.items[lv]->fullName = RE::BSFixedString(
+                    std::format("{} {}", rg.liveName, meo::kRoman[lv]));
+            }
+            prev = rg.items[lv];
+        }
+        g_gemByGid[d.gid] = static_cast<int>(g_gems.size());
+        if (rg.mgef) {
+            ++mintedOk;
+            spdlog::info("[catalog] minted '{}' live: '{}' {} slot forms {:06X}..{:06X}",
+                         d.gid, rg.liveName, cm.domain, d.gemItem[0], d.gemItem[4]);
+        }
+        g_gems.push_back(std::move(rg));
+    }
+    if (!g_calMinted.empty()) {
+        spdlog::info("[catalog] minted families: {} live of {} parsed",
+                     mintedOk, g_calMinted.size());
+    }
     // Weighted spawn pools: each gem is pushed spawnWeight times so a uniform
     // pick becomes a tier rarity curve (S rarest — see SPAWN_WEIGHT). Corpse
     // drops pull weapon+armor; world-weapon stamps pull weapon-domain only.
     for (std::size_t i = 0; i < g_gems.size(); ++i) {
+        if (g_gems[i].minted) {
+            continue;  // Phase 3: minted = conversion-only, never a world/corpse drop
+        }
         if (g_gems[i].def->isSupport) {
             g_supportGems.push_back(static_cast<int>(i));  // m36h: boss-loot pool (tier I)
             continue;
@@ -978,6 +1217,9 @@ void ResolveCatalog() {
     for (int a = 0; a < static_cast<int>(Arch::kCount); ++a) {
         for (std::size_t i = 0; i < g_gems.size(); ++i) {
             const auto* def = g_gems[i].def;
+            if (g_gems[i].minted) {
+                continue;  // Phase 3: conversion-only (spawnWeight 0 would zero copies anyway)
+            }
             if (!g_gems[i].mgef || def->singleLevel) {
                 continue;
             }
@@ -1063,9 +1305,9 @@ void ResolveCatalog() {
                      convOk, convItemMiss + convBaseMiss + convGemMiss,
                      convItemMiss, convBaseMiss, convGemMiss);
     }
-    spdlog::info("catalog resolved: {}/{} gems live (weapon+armor), {} socketable gem items, pouch={}, "
+    spdlog::info("catalog resolved: {}/{} gems live (+{} minted), {} socketable gem items, pouch={}, "
                  "mentor={}, soulCairn={}, bossType={}",
-                 ok, std::size(meo::kGems), g_gemByItem.size(),
+                 ok, std::size(meo::kGems), mintedOk, g_gemByItem.size(),
                  g_pouchSpell ? "ok" : "MISSING", g_mentorGem ? "ok" : "MISSING",
                  g_soulCairn ? "ok" : "absent", g_bossRefType ? "ok" : "MISSING");
 }
@@ -1268,7 +1510,11 @@ const ResolvedGem* ConduitSibling(const ResolvedGem* a_normal, bool a_itemIsArmo
         return nullptr;
     }
     for (const auto& g : g_gems) {
-        if (g.def->isSupport || !g.mgef) {
+        if (g.def->isSupport || !g.mgef || g.minted) {
+            // minted: conversion-only — auto-derived curves stay out of the
+            // Conduit's implicit cross-domain mapping (curated families cover
+            // every theme in both domains anyway, so this is unreachable in
+            // practice; the guard makes it policy).
             continue;
         }
         if (g.def->isArmor == a_itemIsArmor && g.def->theme == a_normal->def->theme) {
@@ -2401,7 +2647,12 @@ RE::ExtraDataList* FindInstanceXList(RE::TESObjectREFR* a_owner, RE::TESBoundObj
 void GiveGemInstance(int a_gemIdx, int a_level, float a_xp) {
     auto*       player = RE::PlayerCharacter::GetSingleton();
     const auto& rg = g_gems[a_gemIdx];
-    const int   lvIdx = std::clamp(a_level, 1, 5) - 1;
+    int         lvIdx = std::clamp(a_level, 1, 5) - 1;
+    while (lvIdx > 0 && !rg.items[lvIdx]) {
+        --lvIdx;  // singleLevel curated gems only populate items[0] (F1b) —
+                  // a converted L2 Soul Trap/Waterbreathing record hands back
+                  // the highest populated form instead of a null no-op
+    }
     auto*       gemForm = rg.items[lvIdx];
     if (!player || !gemForm) {
         return;
@@ -2720,7 +2971,18 @@ void MenuUnsocket(RE::FormID a_base, std::uint16_t a_uid, std::uint8_t a_slot) {
     }
     const SocketRecord rec = it->second;
     auto gemIt = g_gemByGid.find(rec.gid);
-    if (gemIt == g_gemByGid.end()) {
+    // A gem form for this record must resolve (Phase 3 F1: disabled minted /
+    // stale-ESP families) — otherwise GiveGemInstance below would silently
+    // no-op AFTER the erase and the gem+XP would be destroyed, not returned.
+    // Walk down like GiveGemInstance does (F1b): singleLevel curated gems
+    // only populate items[0], and converted records can legitimately be L2.
+    int li = std::clamp<int>(rec.level, 1, 5) - 1;
+    if (gemIt != g_gemByGid.end()) {
+        while (li > 0 && !g_gems[gemIt->second].items[li]) {
+            --li;
+        }
+    }
+    if (gemIt == g_gemByGid.end() || !g_gems[gemIt->second].items[li]) {
         Notify("That gem's essence is missing from this load order.");
         return;
     }
@@ -2963,13 +3225,30 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
         occ != g_sockets.end()) {
         const SocketRecord oldRec = occ->second;
         auto               oldIt = g_gemByGid.find(oldRec.gid);
-        g_sockets.erase(occ);
+        // Guard BEFORE erasing (Phase 3 F1): an evicted gem whose family or
+        // gem form can't resolve on THIS load order would be destroyed,
+        // not returned — abort the whole swap instead; the incoming gem
+        // stays safe in the pouch (restore its loose record like the other
+        // abort paths do). Same F1b walk-down as GiveGemInstance for
+        // singleLevel curated gems whose records can legitimately be L2.
+        int oli = std::clamp<int>(oldRec.level, 1, 5) - 1;
         if (oldIt != g_gemByGid.end()) {
-            GiveGemInstance(oldIt->second, oldRec.level, oldRec.xp);
-            const auto& oldRg = g_gems[oldIt->second];
-            Notify(std::format("{} {} returned to your pouch.", GemName(oldRg),
-                               meo::kRoman[std::clamp<int>(oldRec.level, 1, 5) - 1]));
+            while (oli > 0 && !g_gems[oldIt->second].items[oli]) {
+                --oli;
+            }
         }
+        if (oldIt == g_gemByGid.end() || !g_gems[oldIt->second].items[oli]) {
+            Notify("The socketed gem's essence is missing from this load order.");
+            if (hadRec) {
+                g_sockets[MakeKey(a_gemBase, useUid)] = saved;
+            }
+            return;
+        }
+        g_sockets.erase(occ);
+        GiveGemInstance(oldIt->second, oldRec.level, oldRec.xp);
+        const auto& oldRg = g_gems[oldIt->second];
+        Notify(std::format("{} {} returned to your pouch.", GemName(oldRg),
+                           meo::kRoman[std::clamp<int>(oldRec.level, 1, 5) - 1]));
         spdlog::info("[menu] swap: evicted '{}' L{} from {:08X}/{}[{}]", oldRec.gid,
                      oldRec.level, a_itemBase, uid, freeSlot);
     }
