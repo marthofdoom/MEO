@@ -894,7 +894,8 @@ static class Commands
         // enchLeftover here and ride the ordinary lossless gate below.
         var (mintedFams, mintedDomain) = MintFamilies(unmatched, data, cache,
                                                       catalogPath, outPath,
-                                                      enchFamily, enchLeftover);
+                                                      enchFamily, enchLeftover,
+                                                      ruledWaived, adopted);
 
         // Loot conversion (marth's ruling): a covered enchanted generic never
         // leaves the world — at spawn the DLL swaps it for its unenchanted
@@ -1021,6 +1022,12 @@ static class Commands
     // pass the same lossless gate as everything else.
     static readonly string[] kMintArchetypes =
         ["ValueModifier", "PeakValueModifier", "DualValueModifier", "Absorb"];
+    // marth 2026-07-16 ("as close to parity as possible"): multi-effect
+    // recipes mint with their REAL companions adopted as riders (the same
+    // machinery curated families use). Surfaced as a Synthesis patcher
+    // setting + standalone flag; ON by default. OFF = single-effect minting
+    // only (companions pin their items via the lossless gate).
+    public static bool MintMultiEffect = true;
     // Canonical LINEAR ramp = firedamage's normalized curated curve; level V
     // is the p90 anchor (same definition as curated curve derivation), I-IV
     // keep the house shape so minted gems level like native ones.
@@ -1032,9 +1039,15 @@ static class Commands
         public int Items, Enchs, Weapon, Armor;
         public List<float> Mags = [];
         public List<int> Durs = [];
-        public List<(FormKey Ench,
+        public List<(FormKey Ench, int Weight,
             List<(string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds)> Fx)> Members = [];
     }
+
+    // Nearest-rank medians for rider derivation (deterministic, no interpolation).
+    static float MedF(List<float> v)
+    { var s = v.OrderBy(x => x).ToList(); return s.Count == 0 ? 0f : s[s.Count / 2]; }
+    static int MedI(List<int> v)
+    { var s = v.OrderBy(x => x).ToList(); return s.Count == 0 ? 0 : s[s.Count / 2]; }
 
     // Deterministic 32-bit FNV-1a — NOT string.GetHashCode (randomized per
     // process, would re-key every gid every run).
@@ -1088,7 +1101,9 @@ static class Commands
             List<(string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds)> Fx)> unmatched,
         CensusData data, ILinkCache cache, string catalogPath, string outPath,
         Dictionary<FormKey, string> enchFamily,
-        Dictionary<FormKey, List<(string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds)>> enchLeftover)
+        Dictionary<FormKey, List<(string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds)>> enchLeftover,
+        HashSet<FormKey> ruledWaived,
+        Dictionary<string, HashSet<FormKey>> adopted)
     {
         var minted = new Dictionary<string, object>();
         // gid -> domain, for the conversion loop's wrong-domain filter: the
@@ -1158,15 +1173,29 @@ static class Commands
             c.Enchs++;
             if (prim.Mag > 0) for (int w = 0; w < u.Weight; w++) c.Mags.Add(prim.Mag);
             c.Durs.Add(prim.Dur);
-            c.Members.Add((u.Ench, u.Fx));
+            c.Members.Add((u.Ench, u.Weight, u.Fx));
             enchCluster[u.Ench] = prim.M.FormKey;
         }
-        foreach (var r in data.Raw)  // domain tally over the carrying items
+        // One pass over the census rows: domain tally AND the per-item facts
+        // the real conversion loop will test (honored class, strip base,
+        // weapon/armor-ness) — the pre-slot gate must count only items that
+        // could actually convert, not effect shapes (Fable review, finding A).
+        var clsByKey = data.Items.ToDictionary(i => i.Key, i => i.Cls);
+        var honoredCls = new HashSet<string> { "strip-1fx", "strip-2fx-recipe",
+            "strip-3fx-recipe", "strip-2fx-uncovered", "keep-generic-multifx" };
+        var convRows = new Dictionary<FormKey, List<bool>>();  // ench -> carriers' isWeapon
+        foreach (var r in data.Raw)
             if (enchCluster.TryGetValue(r.Ench, out var ck))
             {
                 var c = clusters[ck];
-                if (cache.TryResolve<IWeaponGetter>(r.Key, out _)) c.Weapon++;
+                bool isWeap = cache.TryResolve<IWeaponGetter>(r.Key, out _);
+                if (isWeap) c.Weapon++;
                 else if (cache.TryResolve<IArmorGetter>(r.Key, out _)) c.Armor++;
+                if (honoredCls.Contains(clsByKey[r.Key]) && data.StripBase.ContainsKey(r.Key))
+                {
+                    if (!convRows.TryGetValue(r.Ench, out var rows)) convRows[r.Ench] = rows = [];
+                    rows.Add(isWeap);
+                }
             }
 
         var skip = new Dictionary<string, int>();
@@ -1200,6 +1229,87 @@ static class Commands
                 if (!(m.CastType == CastType.ConstantEffect && m.TargetType == TargetType.Self))
                 { Skip("armor family without constant/self shape"); continue; }
             }
+
+            // ── Companion analysis (marth: many multi-effect enchants are ONE
+            // conceptual effect — a primary plus text/marker helpers and real
+            // sub-effects; parity means carrying them). Mechanical classes,
+            // no name matching:
+            //   desc-inert  = zero-mag, unconditional, and inert without
+            //                 magnitude (ValueModifier-family archetype, or
+            //                 Script archetype with no attached scripts) —
+            //                 pure description/marker, waived outright
+            //   conditional = never carried (gem riders carry no conditions;
+            //                 stays in leftover, pins unless ruled/hidden)
+            //   real        = rider candidate — adopted like curated riders
+            //                 (MintMultiEffect setting; ratio vs primary, or
+            //                 ratio 0 for scripted zero-mag procs)
+            var riderCand = new Dictionary<FormKey,
+                (IMagicEffectGetter M, int Weight, List<float> Ratios, List<int> RDurs)>();
+            var memberLeft = new List<(FormKey Ench, int Weight,
+                List<(string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds)> Left)>();
+            int descWaivedItems = 0;
+            foreach (var (ench, w, fx) in c.Members)
+            {
+                var left = new List<(string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds)>(fx);
+                var pi = left.FindIndex(t => t.M?.FormKey == m.FormKey);
+                if (pi < 0) pi = left.FindIndex(t => t.Sig == fx[0].Sig);
+                var primMag = pi >= 0 ? left[pi].Mag : 0f;
+                if (pi >= 0) left.RemoveAt(pi);
+                foreach (var t in left.ToList())
+                {
+                    if (t.M is null || t.Conds > 0) continue;
+                    bool inertArch = t.M.Archetype.Type
+                        is MagicEffectArchetype.TypeEnum.ValueModifier
+                        or MagicEffectArchetype.TypeEnum.PeakValueModifier
+                        or MagicEffectArchetype.TypeEnum.DualValueModifier;
+                    bool scriptless = t.M.Archetype.Type == MagicEffectArchetype.TypeEnum.Script &&
+                                      (t.M.VirtualMachineAdapter?.Scripts.Count ?? 0) == 0;
+                    // Keyword carriers are NOT inert (Fable review, finding B):
+                    // a zero-mag effect can exist purely as condition fodder
+                    // for other mods' HasMagicEffectKeyword checks. Those fall
+                    // through to rider candidacy — a ratio-0 rider preserves
+                    // the keyword's presence at runtime. Only keyword-free
+                    // zero-mags are pure description.
+                    if (t.Mag <= 0 && (inertArch || scriptless) &&
+                        (t.M.Keywords?.Count ?? 0) == 0)
+                    {
+                        left.Remove(t);
+                        descWaivedItems += w;
+                        continue;
+                    }
+                    if (MintMultiEffect)
+                    {
+                        if (!riderCand.TryGetValue(t.M.FormKey, out var rc))
+                            rc = (t.M, 0, [], []);
+                        rc.Ratios.Add(primMag > 0 ? t.Mag / primMag : 0f);
+                        rc.RDurs.Add(t.Dur);
+                        riderCand[t.M.FormKey] = (rc.M, rc.Weight + w, rc.Ratios, rc.RDurs);
+                    }
+                }
+                memberLeft.Add((ench, w, left));
+            }
+            // Riders: top 4 by carrying weight (RtRider cap), deterministic
+            // tie-break. Members whose real companions exceed the adopted set
+            // pin naturally in the conversion gate below.
+            var riderPick = riderCand.OrderByDescending(kv => kv.Value.Weight)
+                .ThenBy(kv => kv.Key.ToString()).Take(4).ToList();
+            var adoptedSet = riderPick.Select(kv => kv.Key).ToHashSet();
+            // Gate BEFORE the slot burns (append-only!): mirror the conversion
+            // loop's FULL test — effect shape AND the per-item preconditions
+            // (honored strip class + StripBase via convRows, domain match) —
+            // or a family whose carriers all fail item-level checks would
+            // hold a pool slot forever for nothing (Fable review, finding A).
+            bool Passes((string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds) l) =>
+                (l.Sig is not null && data.Covered.Contains(l.Sig)) ||
+                (l.M is not null && (adoptedSet.Contains(l.M.FormKey) ||
+                                     ruledWaived.Contains(l.M.FormKey) ||
+                                     (l.Mag <= 0 && l.M.Flags.HasFlag(MagicEffect.Flag.HideInUI))));
+            var convertibleItems = memberLeft
+                .Where(ml => ml.Left.All(Passes))
+                .Sum(ml => convRows.GetValueOrDefault(ml.Ench)
+                    ?.Count(isWeap => (domain == "weapon") == isWeap) ?? 0);
+            if (convertibleItems == 0)
+            { Skip("no convertible carrier (companions beyond rider cap, conditional, or item-level)"); continue; }
 
             // The mgef echo makes a gid collision (two MGEFs hashing to one
             // gid — in-run or across runs) detectable instead of silently
@@ -1248,19 +1358,34 @@ static class Commands
                 ["xp_mult"] = 1.0f,
                 ["theme"] = MintTheme(m),
                 ["gclass"] = arch == "Absorb" ? "ABSORB" : "LINEAR",
-                ["from"] = $"{c.Items} item(s), {c.Enchs} ench(s)",
+                // Adopted real companions — same shape as curated calibration
+                // riders (ratio vs primary; ratio 0 = scripted zero-mag proc);
+                // the DLL carries them on the minted gem's enchant.
+                ["riders"] = riderPick.Select(kv => new Dictionary<string, object>
+                {
+                    ["plugin"] = kv.Key.ModKey.FileName.String,
+                    ["fid"] = $"0x{kv.Key.ID:X6}",
+                    ["mgef"] = kv.Value.M.EditorID ?? kv.Value.M.Name?.String ?? "?",
+                    ["ratio"] = MedF(kv.Value.Ratios),
+                    ["dur"] = (float)MedI(kv.Value.RDurs),
+                }).ToList(),
+                ["from"] = $"{c.Items} item(s), {c.Enchs} ench(s), " +
+                           $"{convertibleItems} convertible",
             };
             domains[gid] = domain;
-            // Hand the members to the ordinary conversion loop: leftover =
-            // everything but ONE instance of the primary; the lossless gate
-            // then pins any item whose companions the mint can't express.
-            foreach (var (ench, fx) in c.Members)
+            // The REAL conversion gate consumes riders through `adopted`,
+            // exactly like curated families.
+            adopted[gid] = adoptedSet;
+            if (riderPick.Count > 0 || descWaivedItems > 0)
+                Console.WriteLine($"  mint '{MintName(m, gid)}': {riderPick.Count} rider(s) " +
+                    $"[{string.Join(", ", riderPick.Select(kv => kv.Value.M.EditorID ?? "?"))}]" +
+                    (descWaivedItems > 0 ? $", desc-inert waived on {descWaivedItems} item(s)" : ""));
+            // Hand the members to the ordinary conversion loop with their
+            // desc-pruned leftovers; the gate pins whatever the mint can't
+            // express (companions beyond the rider cap, conditionals).
+            foreach (var (ench, _, left) in memberLeft)
             {
                 enchFamily[ench] = gid;
-                var left = new List<(string? Sig, IMagicEffectGetter? M, float Mag, int Dur, int Conds)>(fx);
-                var pi = left.FindIndex(t => t.M?.FormKey == m.FormKey);
-                if (pi < 0) pi = left.FindIndex(t => t.Sig == fx[0].Sig);
-                if (pi >= 0) left.RemoveAt(pi);
                 enchLeftover[ench] = left;
             }
         }

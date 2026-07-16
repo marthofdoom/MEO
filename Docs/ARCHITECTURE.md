@@ -412,6 +412,15 @@ exactly. Protocol:
   Slot state: `meo_pool_assignments.json` beside the calibration
   (INVARIANTS 26). Overflow past 32 slots = leave uncovered + report;
   minted gems are conversion-only (marth 2026-07-16).
+  Multi-effect recipes (BETA, default ON — Synthesis setting / standalone
+  `--no-mint-riders`): companions classified mechanically — desc-inert
+  (zero-mag + inert-without-magnitude archetype or scriptless Script)
+  waived; conditionals never carried; real companions adopted as ≤4 gem
+  riders (union across the cluster, median ratio vs primary, ratio 0 =
+  scripted proc) emitted in the minted entry and resolved by the DLL like
+  curated calibration riders. A pool slot is assigned only after ≥1
+  carrier passes the full lossless gate — no dead slots on the
+  append-only file.
 - **Release**: `tools/release_native.sh` / `tools/release.sh` are the only
   path to the game; `releases/<ver>/` is immutable (the script refuses an
   existing dir). Cut zips only AFTER the version's last generator/DLL

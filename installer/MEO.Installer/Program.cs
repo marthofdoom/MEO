@@ -102,6 +102,12 @@ else
                 return Commands.Fail($"{args[i]}: expects a following esp path");
             (args[i] == "--sub" ? subs : adds).Add(args[++i]);
         }
+        else if (args[i] == "--no-mint-riders")
+        {
+            // Phase 3: single-effect minting only (the Synthesis patcher's
+            // "Mint multi-effect recipes" setting, standalone spelling).
+            Commands.MintMultiEffect = false;
+        }
         else positional.Add(args[i]);
     }
 }

@@ -185,3 +185,12 @@ the portable "never again" digest for sibling projects.
     to resolve (the `GiveGemInstance` null-item silent no-op is a destruction
     path, not a fallback — `MenuUnsocket` and the swap-evict both check the
     level's item form BEFORE erasing).
+    Minted riders live in the CALIBRATION, never the gid contract: `MintGid`
+    derives from the primary MGEF alone, so a re-patch may change a family's
+    rider set freely — rebuilds pick it up, co-saves are untouched. Rider cap
+    is 4 (`RtRider`); the DLL drops extras loudly at parse. A pool slot is
+    assigned only after the pre-slot gate passes — and that gate must test
+    what the REAL conversion loop tests (per-item: honored class, StripBase,
+    domain), not effect shape alone. Zero-mag companions that carry KEYWORDS
+    are never waived as description — they ride at ratio 0 so the keyword's
+    presence survives conversion.

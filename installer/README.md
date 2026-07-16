@@ -114,6 +114,25 @@ from conversion). Curve = p90 anchor on the canonical LINEAR ramp, floored at
 hex6>` (derived from the primary MGEF's own FormKey — NEVER change its shape,
 co-saves store it; INVARIANTS 26).
 
+**Multi-effect recipes (BETA — marth 2026-07-16 "as close to parity as
+possible")**: many modded enchants are ONE conceptual effect built from
+several MGEFs. Companions are classified mechanically (never by name):
+*desc-inert* (zero-mag, unconditional, inert-without-magnitude archetype —
+ValueModifier family, or Script with no attached scripts) are waived as pure
+text/markers; *conditional* are never carried (pin their items); *real*
+companions are adopted as gem RIDERS (≤4, by carrying weight; median ratio vs
+the primary, ratio 0 for scripted zero-mag procs) — the same rider machinery
+curated families use, emitted per minted entry and resolved by the DLL.
+**A slot is only assigned after ≥1 carrier passes the full lossless gate** —
+a family that would convert nothing never burns an append-only slot (Drain
+Skills' 18 sub-effects bust the rider cap and are skipped pre-slot).
+Surfaced as the Synthesis setting "Mint multi-effect recipes (BETA)" (default
+ON) / standalone `--no-mint-riders`. Known beta caveats: rider sets are the
+UNION across the cluster's recipes (a low-rank item can carry a high-rank
+recipe's procs), and riders apply unconditionally (a vs-player-shaped helper
+rides all hits). Authoria validation: 9/9 minted families convert (1,321
+items; was 805 with 5 dead slots), PINNED 708 → 24.
+
 **`meo_pool_assignments.json`** (next to the calibration) is APPEND-ONLY
 per-user state: a gid keeps its pool slot forever, and a vanished family's
 slot stays burned — loose pool gems in an old save must never change species

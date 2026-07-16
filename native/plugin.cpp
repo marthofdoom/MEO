@@ -748,6 +748,10 @@ struct CalMinted {
     std::array<RE::FormID, 5> forms{};
     float dur = 0.0f;
     float xpMult = 1.0f;
+    // Multi-effect recipes (marth: parity): real companions adopted at mint
+    // time, carried exactly like curated calibration riders (ratio vs the
+    // primary; ratio 0 = scripted zero-magnitude proc).
+    std::vector<CalRider> riders;
 };
 std::vector<CalMinted> g_calMinted;
 // Owned, ADDRESS-STABLE backing for runtime GemDefs: kGems entries are
@@ -909,6 +913,22 @@ static void LoadCalibration() {
                 }
                 cm.dur = v.value("duration", 0.0f);
                 cm.xpMult = v.value("xp_mult", 1.0f);
+                if (v.contains("riders")) {
+                    for (const auto& r : v.at("riders")) {
+                        if (cm.riders.size() >= 4) {
+                            spdlog::warn("minted '{}': >4 riders — extras dropped", gid);
+                            break;
+                        }
+                        CalRider cr;
+                        cr.plugin = r.at("plugin").get<std::string>();
+                        cr.fid = static_cast<RE::FormID>(
+                            std::stoul(r.at("fid").get<std::string>(), nullptr, 16));
+                        cr.ratio = r.value("ratio", 0.0f);
+                        cr.absMag = r.value("mag", 0.0f);
+                        cr.dur = r.value("dur", 0.0f);
+                        cm.riders.push_back(std::move(cr));
+                    }
+                }
                 g_calMinted.push_back(std::move(cm));
             } catch (const std::exception& ex) {
                 ++bad;
@@ -1146,6 +1166,22 @@ void ResolveCatalog() {
                          d.gid, d.mgefID, d.plugin);
         }
         rg.mgefLv.fill(rg.mgef);
+        // Adopted riders (live families only — disabled minted carry none),
+        // resolved exactly like curated calibration riders.
+        if (rg.mgef) {
+            for (const auto& cr : cm.riders) {
+                if (rg.nRiders >= 4) {
+                    break;  // parse already warned
+                }
+                auto* rm = dh->LookupForm<RE::EffectSetting>(cr.fid, cr.plugin);
+                if (!rm) {
+                    spdlog::warn("minted '{}' rider {:06X} not found in {} — rider skipped",
+                                 d.gid, cr.fid, cr.plugin);
+                    continue;
+                }
+                rg.riders[rg.nRiders++] = { rm, cr.ratio, cr.absMag, cr.dur };
+            }
+        }
         // Minted pool forms ALWAYS need their runtime name (the ESP bakes the
         // placeholder). Prefer the live MGEF name — the calibration name was
         // sampled at patch time and the list may have renamed since (m27).
@@ -1182,8 +1218,8 @@ void ResolveCatalog() {
         g_gemByGid[d.gid] = static_cast<int>(g_gems.size());
         if (rg.mgef) {
             ++mintedOk;
-            spdlog::info("[catalog] minted '{}' live: '{}' {} slot forms {:06X}..{:06X}",
-                         d.gid, rg.liveName, cm.domain, d.gemItem[0], d.gemItem[4]);
+            spdlog::info("[catalog] minted '{}' live: '{}' {} {} rider(s), slot forms {:06X}..{:06X}",
+                         d.gid, rg.liveName, cm.domain, rg.nRiders, d.gemItem[0], d.gemItem[4]);
         }
         g_gems.push_back(std::move(rg));
     }
