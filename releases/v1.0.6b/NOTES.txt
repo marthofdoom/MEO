@@ -1,0 +1,2 @@
+Point release over v1.0.6: NPC-border hardening, under-floor + merchant-counter loose-spawn fixes, live MCM version readout, gem leveling slowed ~10%.
+built from native run 29463876948
