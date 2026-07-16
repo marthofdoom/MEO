@@ -62,7 +62,37 @@ from `AppContext.BaseDirectory` (NOT `Assembly.Location`, which is `""` in a
 single-file build).
 
 **Users add it in Synthesis** as a Git-repository patcher pointing at this repo,
-project `installer/MEO.Synthesis/MEO.Synthesis.csproj`.
+project `installer/MEO.Synthesis/MEO.Synthesis.csproj` (or by opening
+`assets/MEO.synth`, which does it for them).
+
+### TRAP: Synthesis requires a SOLUTION at the repo root (`MEO.sln`)
+
+Synthesis's git-patcher flow **clones this repo, locates a `.sln`, and builds the
+project named by `MEO.synth`'s `SelectedProject`**. With no solution it stops on a
+blocking **"could not locate solution to run"** — the patcher never runs.
+
+This shipped broken through v1.0.5/1.0.6/1.0.6b: the repo had *never* had a `.sln`,
+and since v1.0.5 went exe-free the Synthesis patcher is THE install path, so every
+user hit it. It hid because we only ever built the patcher locally (`dotnet run`),
+never through Synthesis's clone-and-build. Rules learned:
+
+- **Keep `MEO.sln` at the repo root**, and its project path must match
+  `MEO.synth`'s `SelectedProject` **verbatim** (backslashes included).
+- **Keep the solution minimal — the patcher project only.** Synthesis rewrites
+  Mutagen/Synthesis package versions in the projects it builds; extra projects are
+  needless build surface and version-conflict risk on the user's machine.
+  (`MEO.Installer` builds fine standalone via its `.csproj` — CI does exactly that
+  — so it doesn't need to be in the solution.)
+- **No new tag/release is needed to fix the patcher.** Synthesis's
+  `GithubPatcherSettings` defaults to `PatcherVersioning=Branch` +
+  `FollowDefaultBranch=true`, so a newly-added patcher builds the **default branch
+  tip** — a push to `main` reaches users immediately.
+- `assets/MEO.synth`'s schema (`{"AddGitPatcher":{"Url","SelectedProject"}}`) is
+  per the official Synth-File docs — that part was never the problem.
+- **CI guards this now** (`.github/workflows/installer.yml` → `synthesis-patcher`):
+  it asserts the solution + `SelectedProject` exist and agree, then builds through
+  the solution exactly as Synthesis does. Don't remove it — building only
+  `MEO.Installer` (the legacy exe) is what let this ship unnoticed.
 
 ## Creation Club — must read `Skyrim.ccc` yourself
 
