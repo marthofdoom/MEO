@@ -355,7 +355,7 @@ exactly. Protocol:
   (the DLL keys off the catalog's `isSupport`).
 - **Catalog header** `tools/gen_catalog_header.py` → `native/GemCatalog.h`
   (`kGems[]`, 58 entries; `GemRider[2]` fixed arrays; `kXPThresholds`
-  {400,900,2800,7000}). Hard-exits on a gid missing from its THEME map or
+  {500,1000,3000,8000}). Hard-exits on a gid missing from its THEME map or
   >2 riders — those guards protect the DLL's fixed-size arrays.
 - **Installer / Synthesis patcher** (`installer/`, C# Mutagen;
   `Commands.cs` is SHARED between the standalone exe and the Synthesis

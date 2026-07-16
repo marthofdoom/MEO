@@ -86,13 +86,20 @@ revisit against real playthrough logs.
 | + Daedric/civil war/rest ×2 | ~600 | ~25 | ~400 | ~3,400 | ~6,900 |
 
 Targets → thresholds (A-tier, cumulative):
-- **II = 400** — lands mid-main-quest.
-- **III = 900** — main quest ends ~⅔ of the way (600/900); needs one extra
+- **II = 500** — lands mid-to-late main quest.
+- **III = 1,000** — around main-quest end (600/1,000); needs one extra
   questline. "Near but not without extra quests."
-- **IV = 2,800** — the first plateau: MQ + Dawnguard + clearing + guild(s).
-- **V = 7,000** — the rest of vanilla minus Dragonborn, Mentor running.
+- **IV = 3,000** — the first plateau: MQ + Dawnguard + clearing + guild(s).
+- **V = 8,000** — the rest of vanilla minus Dragonborn, Mentor running.
 
-S-tier ×1.5 → 600/1,350/4,200/10,500. B-tier ×0.6 → 240/540/1,680/4,200.
+S-tier ×1.5 → 750/1,500/4,500/12,000. B-tier ×0.6 → 300/600/1,800/4,800.
+
+> **v1.0.6b pacing nudge (marth):** leveling read ~10% too fast in play, so the
+> ladder was raised from the original 400/900/2,800/7,000. Every threshold is a
+> multiple of 20 by design — that keeps `threshold × xp_mult` a whole number for
+> all tiers (×0.6 needs ÷5, ×1.5 needs ÷2, ×2.25 needs ÷4 → LCM 20), so the
+> "XP required" the player sees never shows an odd fraction. Keep it that way when
+> retuning.
 Followers earn their own Gem XP (their kills, their worn gems) — this is
 extra throughput for players who arm followers, intentionally not modeled
 in the ladder (it accelerates, never gates).

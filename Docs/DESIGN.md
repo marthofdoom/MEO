@@ -322,7 +322,7 @@ prototype in python, build the C#/Mutagen tool via CI).
   same {gid, level, xp} record shape) — the record follows the gem between
   "socketed in weapon X" and "loose item" states, so distinct gems never
   merge into a stack. The pouch UI must therefore list each unique gem
-  individually, with its progress (e.g. "Fire I — 250/900").
+  individually, with its progress (e.g. "Fire I — 300/500").
   *M5 (v0.11.0)*: the Gem Pouch is a native two-pane **ContainerMenu**
   (hidden CONT form + temp ref, activated by the pouch power; all mutation
   in one reconcile pass on menu close). The socketed gem sits inside as a
@@ -368,8 +368,8 @@ prototype in python, build the C#/Mutagen tool via CI).
     currency.
 
 - **Level thresholds (default A-tier, MCM-tunable): cumulative
-  400 / 900 / 2,800 / 7,000 Gem XP to reach II / III / IV / V.**
-  Reaching 7,000 = **Level V = Master**: the gem **births** one fresh
+  500 / 1,000 / 3,000 / 8,000 Gem XP to reach II / III / IV / V.**
+  Reaching 8,000 = **Level V = Master**: the gem **births** one fresh
   Level-1 copy (notification) and stops accruing. Birthing is the only way
   to replicate a gem.
 - **Calibration ladder (marth, 2026-07-07)** — thresholds are derived from
