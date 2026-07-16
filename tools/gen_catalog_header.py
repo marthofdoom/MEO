@@ -180,7 +180,11 @@ inline constexpr GemDef kGems[] = {{
 }};
 
 // Cumulative XP to reach level II..V, scaled per gem by xpMult (DESIGN §3).
-inline constexpr std::array<float, 4> kXPThresholds = {{ 400.0f, 900.0f, 2800.0f, 7000.0f }};
+// KEEP IN SYNC with the shipped native/GemCatalog.h — these were retuned in
+// v1.0.6b (BALANCE.md: multiples of 20 so threshold x xpMult never shows a
+// fraction). This template is the source the header is regenerated from; if
+// it lags, regeneration silently reverts the balance change.
+inline constexpr std::array<float, 4> kXPThresholds = {{ 500.0f, 1000.0f, 3000.0f, 8000.0f }};
 
 inline constexpr const char* kRoman[5] = {{ "I", "II", "III", "IV", "V" }};
 
