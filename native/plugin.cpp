@@ -156,7 +156,7 @@ constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPl
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.6b";
+constexpr const char* kMEOVersion = "1.0.6c";
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -4278,8 +4278,27 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
 // CONTAINER (a chest ref, not an actor) has been a silent no-op since m23 —
 // which is exactly where a low-level player meets "of Major Wielding / Minor
 // Alteration / the Major Knight" armor. Now a container holder is swept too,
-// via the engine's own flow (PlaceObjectAtMe -> stamp -> AddObjectToContainer
-// with fromRefr, which consumes the temp ref like Papyrus AddItem(ObjectReference)).
+// via the engine's own flow (StampInstance onto a heap ExtraDataList ->
+// AddObjectToContainer, which takes ownership of that list — see m47 below).
+// m47 (issue #2): a container ENTRY takes OWNERSHIP of the ExtraDataList*
+// passed to AddObjectToContainer. Proven at disassembly (1.6.1170: the
+// InventoryChanges worker LINKS the caller's pointer into entry->extraLists —
+// there is NO deep copy). So the list must be a relinquishable HEAP list built
+// by the ENGINE's own ctor: AE 1.6.629+ has a virtual BaseExtraList, so a
+// hand-inited struct or `new RE::ExtraDataList()` is wrong / won't link (NG
+// declares but never defines the ctor). Same recipe as Containerize /
+// ArcaneDisenchanterNG. This is why m44's `&ref->extraList` (an interior
+// pointer into a TESObjectREFR we then delete) was a use-after-free.
+RE::ExtraDataList* MakeEngineXList() {
+    auto* mem = RE::MemoryManager::GetSingleton()->Allocate(0x20, 0, false);
+    if (!mem) {
+        return nullptr;
+    }
+    using ctor_t = RE::ExtraDataList* (*)(void*);
+    static REL::Relocation<ctor_t> ctor{ RELOCATION_ID(11437, 11583) };
+    return ctor(mem);
+}
+
 int ConvertInventory(RE::TESObjectREFR* a_holder) {
     auto* actor = a_holder ? a_holder->As<RE::Actor>() : nullptr;
     if (!a_holder || g_convert.empty()) {
@@ -4373,48 +4392,45 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
         a_holder->RemoveItem(hit.old, hit.count, RE::ITEM_REMOVE_REASON::kRemove,
                              nullptr, nullptr);
         for (std::int32_t i = 0; i < hit.count; ++i) {
-            auto ref = a_holder->PlaceObjectAtMe(hit.tgt->base, false);
-            if (!ref) {
-                spdlog::error("[convert] PlaceObjectAtMe failed for '{}' — plain base given",
-                              hit.tgt->base->GetName());
-                a_holder->AddObjectToContainer(hit.tgt->base, nullptr, 1, nullptr);
-                continue;
-            }
-            auto& xl = ref->extraList;
-            // m34c (marth: converted BANDIT loot flagged as owned/theft):
-            // stamp ownership ONLY for the player's own conversion — m17b
-            // prevents the PLAYER's place-and-pickup near guards from reading
-            // as theft. Enemy loot must stay unowned (vanilla free corpse
-            // loot); vendor stock is gated by the merchant container, not
-            // per-item ownership; and here the ACTOR, not the player, does the
-            // pickup, so there is no player-theft to prevent. Baking the
-            // actor's ownership was what made a bandit's converted drop
-            // read as stolen.
-            if (actor && actor->IsPlayerRef()) {
-                xl.SetOwner(actor->GetActorBase());
-            }
             const std::uint32_t hi =
                 HashU32(seed ^ hit.old->GetFormID() ^ static_cast<std::uint32_t>(i));
             const int level = (hi % 10000) < l2cut ? 2 : 1;
-            StampInstance(hit.tgt->base, &xl, hit.tgt->gemIdx, level);
             if (actor && !actor->IsDead()) {
+                // Living actor (in practice the player): engine pickup flow —
+                // the placeholder ref is CONSUMED by PickUpObject, so its own
+                // extraList travels with it correctly. Unchanged from m34c/m17b.
+                auto ref = a_holder->PlaceObjectAtMe(hit.tgt->base, false);
+                if (!ref) {
+                    spdlog::error("[convert] PlaceObjectAtMe failed for '{}' — plain base given",
+                                  hit.tgt->base->GetName());
+                    a_holder->AddObjectToContainer(hit.tgt->base, nullptr, 1, nullptr);
+                    continue;
+                }
+                auto& xl = ref->extraList;
+                if (actor->IsPlayerRef()) {
+                    xl.SetOwner(actor->GetActorBase());  // m17b theft trap
+                }
+                StampInstance(hit.tgt->base, &xl, hit.tgt->gemIdx, level);
                 actor->PickUpObject(ref.get(), 1, false, false);
             } else {
-                // m42: a CORPSE (dead actor) is loot, not a combatant — route it
-                // through the container path (AddObjectToContainer, no PickUpObject,
-                // no re-equip below) exactly like a chest. This is what lets DeathSink
-                // convert a corpse safely; the engine PickUpObject that crashed only
-                // ever ran on a LIVING actor. (else = a container holder OR a corpse.)
-                a_holder->AddObjectToContainer(hit.tgt->base, &xl, 1, ref.get());
-                // m44 (marth: socketed weapons spawned UNDER the Warmaiden's counter):
-                // unlike PickUpObject above (which consumes the world ref), the engine's
-                // AddObjectToContainer copies the stamped item into the container's
-                // inventory but LEAVES the PlaceObjectAtMe placeholder in the world at
-                // the container's position — invisible inside a closed chest, but a
-                // visible loose weapon under a merchant counter. The container already
-                // holds its own copy (+ extraList), so delete the orphaned placeholder.
-                ref->Disable();
-                ref->SetDelete(true);
+                // m47 (issue #2 — replaces the m44 placeholder+reap): corpse or
+                // container. NO world ref at all. m44 handed the engine
+                // `&ref->extraList` (an interior pointer into the placeholder
+                // TESObjectREFR) then deleted the ref — but AddObjectToContainer
+                // LINKS that pointer into the container entry (no copy, proven at
+                // disasm), so the reap freed a list the entry still owned. The
+                // dangling list rode looted/bought gear into the player's
+                // inventory and any inventory walk (Requiem worn-keyword re-eval,
+                // savegame serialize, item destroy) detonated it — a torn 0x2
+                // pointer AV at an engine offset with MEO nowhere on the stack.
+                // Fix: mint on a heap list the entry OWNS (engine ctor), no ref.
+                auto* xl = MakeEngineXList();
+                if (!xl) {
+                    a_holder->AddObjectToContainer(hit.tgt->base, nullptr, 1, nullptr);
+                    continue;
+                }
+                StampInstance(hit.tgt->base, xl, hit.tgt->gemIdx, level);
+                a_holder->AddObjectToContainer(hit.tgt->base, xl, 1, nullptr);
             }
             ++converted;
         }

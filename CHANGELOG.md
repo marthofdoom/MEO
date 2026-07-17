@@ -4,6 +4,24 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.6c — crash hotfix: converted loot use-after-free (m47, 2026-07-17)
+
+**Strongly recommended update for everyone on v1.0.6b.** Fixes a crash that
+could strike after **buying converted vendor stock or looting a converted
+enchanted item off a corpse, then changing areas** — often seconds later, and
+with MEO nowhere in the crash log (it faults inside the engine's inventory
+walk, so crash tools blamed Skyrim itself, Requiem, or other inventory mods).
+
+- **m47** — the corpse/container conversion path (m44, v1.0.6b) handed the
+  engine an extra-data list embedded in a temporary object it then deleted;
+  the game keeps that pointer, so the freed list rode the converted item into
+  your inventory and detonated on the next inventory scan. The conversion now
+  builds a proper heap-owned list and never spawns/deletes a placeholder for
+  chests and corpses. No gameplay change; converted items are identical.
+
+**Your existing saves are safe** — the bad data lived only in memory, never on
+disk; a normal load fully clears it. No new game or clean save needed.
+
 ## v1.0.6b — NPC-border hardening + loose-spawn placement fixes + MCM version + leveling nudge (m42–m44, 2026-07-15)
 
 Point release over v1.0.6. Same feature set; stability, placement, and pacing fixes.

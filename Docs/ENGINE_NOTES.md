@@ -308,23 +308,29 @@ installed in `SKSEPluginLoad` — before the renderer exists):
   armor like "of Major Wielding") NEVER converted, and logged nothing because
   every miss line was gated behind the actor/player branch. Fix: `ConvertInventory`
   sweeps container holders too. Non-actor holders can't `PickUpObject`
-  (actor-only) — instead use the engine flow `holder->PlaceObjectAtMe(base,false)`
-  → `StampInstance` → `holder->AddObjectToContainer(base, &xl, 1, fromRefr=tempRef)`,
-  where a non-null `fromRefr` copies the stamped instance (its `&xl`) into the
-  container's inventory. **TRAP (corrected 2026-07-15, m44 — the deck log DISPROVED
-  the old claim that the engine consumes `fromRefr`): `AddObjectToContainer` does
-  NOT delete the temp world ref.** The stamped item lands in the container's
-  inventory (which owns its extra-data independently — it serializes into the
-  `.ess` and survives saves, see §1), but the `PlaceObjectAtMe` placeholder LINGERS
-  in the world at the holder's position. Invisible inside a closed chest; a visible
-  loose weapon (and a real lootable DUPLICATE) under a merchant counter — this was
-  the Warmaiden's "socketed weapons under the counter" bug. **You MUST reap it
-  yourself: `tempRef->Disable(); tempRef->SetDelete(true);` right after
-  `AddObjectToContainer`** (the live-actor `PickUpObject` branch consumes its ref;
-  only this container/corpse branch needs the manual delete). Deleting the
-  placeholder never touches the container entry (independent storage). NOT the same
-  as Papyrus `AddItem(ObjectReference)`, which DOES delete the source ref — the raw
-  native does not. Mirror this to ../Linux-Native-Tools instance-data notes.
+  (actor-only). CORRECT flow (m47, issue #2):
+  `holder->AddObjectToContainer(base, xl, 1, nullptr)` where `xl` is a HEAP
+  `ExtraDataList*` from the engine's OWN ctor (`RELOCATION_ID(11437, 11583)`,
+  size 0x20, MemoryManager-allocated) — NO placeholder world ref.
+  **CONTRACT, proven at disassembly on 1.6.1170 (InventoryChanges worker id
+  16053, node write at `+0x484`): `AddObjectToContainer` LINKS the passed
+  `a_extraList` pointer into the container entry's `extraLists` list — it does
+  NOT deep-copy. The entry TAKES OWNERSHIP of that pointer.**
+  ⚠ **m44 was WRONG and shipped a use-after-free (v1.0.1–v1.0.6b, fixed m47).**
+  m44 stamped `&tempRef->extraList` (an interior pointer at TESObjectREFR+0x70),
+  linked it via `AddObjectToContainer`, then `tempRef->Disable();
+  SetDelete(true)` — freeing a list the container entry still owned. The
+  dangling list moved BY POINTER into whoever looted/bought the item (inventory
+  extra-data transfers by pointer, §1), was freed at the source cell's detach,
+  and the next inventory walk (Requiem worn-keyword re-eval, savegame
+  serialize, item destroy) read a torn `0x2` pointer → AV at a `SkyrimSE.exe`
+  offset with MEO nowhere on the stack (issue #2; also a tbbmalloc
+  `Block::freeOwnObject` free-path variant). The m44 review passed on the
+  visible SYMPTOM (no under-counter dup) without checking the API contract —
+  the "copies / entry owns independently / reap the placeholder" claim is
+  FALSE. The live-actor branch (`PickUpObject` CONSUMES its placeholder ref, so
+  its extraList travels correctly) is fine and unchanged. NOT the same
+  as Papyrus `AddItem(ObjectReference)`. Mirror this to ../Linux-Native-Tools instance-data notes.
   Guard the actor-only steps (`worn` equip, player ownership/theft-guard,
   player convert-miss diag) behind `if (actor…)`. Log container sweeps with a
   count so this failure class self-diagnoses.
