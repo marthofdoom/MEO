@@ -1,0 +1,2 @@
+Crash hotfix (m47): converted-loot use-after-free — recommended for all v1.0.6b users
+built from native run 29559508437
