@@ -83,6 +83,21 @@ sibling project can audit itself against the list in one sitting.
   assignment and silently re-keys everything downstream (MEO pool slots →
   saved gems change species). And a raw parse exception that names the file
   invites the user to delete it — same reset. Catch, explain, refuse.
+- **Never hand an ownership-taking engine API a pointer you also own and
+  destroy.** m44 stamped `&placeholderRef->extraList`, passed it to
+  `AddObjectToContainer` (which LINKS, not copies — the entry now owns it),
+  then deleted the placeholder → the container held a freed list → a
+  use-after-free that rode converted loot into inventory and crashed at an
+  engine offset with MEO nowhere on the stack (issue #2). Give the API a heap
+  object built by the engine's own ctor that it is meant to keep. Two owners
+  of one allocation, one of them freeing it, is the whole bug class.
+- **Review the API's ownership CONTRACT, not just the visible symptom.** The
+  m44 review signed off because the observable bug (a duplicate under the
+  counter) was gone and no leak showed — an inference about copy-vs-link that
+  was never checked against the engine. The contract was only knowable by
+  disassembly, and the wrong inference shipped a UAF to every user. When a fix
+  hands memory across an API boundary, prove who owns it, don't infer it from
+  behavior.
 
 ## Player-relative logic
 

@@ -55,6 +55,17 @@ the portable "never again" digest for sibling projects.
 7. **All engine mutation goes through `SKSE::GetTaskInterface()->AddTask`**
    (main thread). Sinks, sleeper threads, and menu actions only queue;
    the render thread only reads mutex-guarded snapshots.
+7b. **Any `ExtraDataList*` handed to an ownership-taking inventory API
+   (`AddObjectToContainer`'s `a_extraList`) must be a RELINQUISHABLE HEAP list
+   from the engine's own ctor (`MakeEngineXList`, `RELOCATION_ID(11437,
+   11583)`) — never a pointer interior to another object.** The API LINKS the
+   pointer into the container entry (no deep copy, disasm-proven) and the entry
+   then owns it. m44 passed `&placeholderRef->extraList` then deleted the ref =
+   the container held a freed list = a use-after-free that rode converted loot
+   into player inventory and detonated on the next inventory walk (issue #2,
+   fixed m47/v1.0.6c). `new RE::ExtraDataList()` won't even link in NG (ctor
+   declared, undefined). The living-actor conversion path is exempt only
+   because `PickUpObject` CONSUMES its placeholder ref.
 
 ## Co-save (schema `'GEMS'` v11)
 

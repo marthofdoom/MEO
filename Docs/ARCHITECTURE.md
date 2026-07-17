@@ -125,6 +125,14 @@ Every socket, unsocket, level-up, and load funnels through one function.
   arriving orphan xList with the stranded record and move it to the new uid;
   the event's uniqueID field names the ARRIVING uid. Ambiguous multi-instance
   transfers log + skip.
+- **Conversion into a container/corpse** (`ConvertInventory`, m47/v1.0.6c):
+  `MakeEngineXList()` (engine ctor `RELOCATION_ID(11437, 11583)`) → stamp →
+  `AddObjectToContainer(base, xl, 1, nullptr)`, which LINKS and thereby OWNS
+  the heap list (no deep copy — disasm-proven; INVARIANTS 7b, ENGINE_NOTES §9).
+  NO placeholder ref. The living-actor/player branch keeps
+  `PlaceObjectAtMe → stamp → PickUpObject` (the pickup consumes the ref). m44's
+  `&ref->extraList` + reap was a use-after-free (issue #2) — the freed list
+  rode converted loot into inventory and detonated on the next inventory walk.
 - **Menu operations** (all deferred to SKSE tasks via `QueueMenuTask` :3075):
   `MenuSocket` (:2770), `MenuUnsocket` (:2698), `DestroyGem` (:2734),
   `FeedSoulToGem` (:2986, `kSoulFeedXP` :621, Soul Feeder doubles).
