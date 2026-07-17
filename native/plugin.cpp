@@ -2276,6 +2276,7 @@ void ApplyTemperPerk();                    // m33b — defined before EnsurePlay
 void DispelStaleGemEffects();              // m24b/c — defined with the load-refresh code
 void StockVendorGems();                    // m19b — defined with the loot rolls below
 int  ConvertInventory(RE::TESObjectREFR* a_holder);  // m38 — defined with conversion below
+int  ConvertVendorPersonalStock(RE::Actor* a_vendor);  // m48 — defined with conversion below
 void CloseGemMenu();
 extern std::atomic<std::uint32_t> g_reapplyPending;  // m19e/S2 — defined with the load reapply below
 void RunDeferredReapply(int a_delayMs);
@@ -2351,7 +2352,13 @@ public:
                             }
                         }
                     }
-                    const int n = ConvertInventory(target);
+                    int n = ConvertInventory(target);
+                    // m48: also sweep the vendor's personal sellables (barter
+                    // menu shows them beside the chest). Skip when target==vendor
+                    // (ConvertInventory already swept the actor).
+                    if (vendor != target) {
+                        n += ConvertVendorPersonalStock(vendor);
+                    }
                     if (n > 0) {
                         // Rebuild the open barter list from the now-converted stock
                         // by calling the game's OWN inventory-update routine — the
@@ -2385,6 +2392,13 @@ public:
                                      "chest {:08X} vendor {:08X} bound {:08X}",
                                      n, target->GetFormID(), vendor->GetFormID(),
                                      bound ? bound->GetFormID() : 0u);
+                    } else {
+                        // Diagnosability (ANTI_PATTERNS: success-only logging made
+                        // a live sweep indistinguishable from a dead one — this
+                        // hunt was blind for two visits). Log the zero-case too.
+                        spdlog::info("[vendor] barter sweep: 0 convertible "
+                                     "(chest {:08X} vendor {:08X})",
+                                     target->GetFormID(), vendor->GetFormID());
                     }
                 });
             });
@@ -4804,6 +4818,72 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
     return converted;
 }
 
+// m48 (marth-approved scoped m42 exemption): a vendor's PERSONAL inventory —
+// LVLI-rolled sellables on the NPC record (LoreRim citizens carry
+// LootCitizenPocketsCommon → enchanted-jewelry ladders), shown in the barter
+// menu ALONGSIDE the merchant chest — stopped converting when m42 removed the
+// living-NPC ConvertInventory sweep. Restore it NARROWLY: unworn vendor
+// sellables at trade time only, converted via the m47 container recipe
+// (MakeEngineXList → StampInstance → AddObjectToContainer; NO
+// PlaceObjectAtMe/PickUpObject/equip — none of m42's worn-actor crash class).
+// WORN gear is skipped entirely (it would need the re-equip path m42 hardened
+// against). Called only at dialogue-open (StockVendorGems) and the 2-frame-
+// deferred barter task — the m19e-safe windows on a fully-loaded, in-dialogue
+// vendor. The barter task's sendInvUpdate repaints the display.
+int ConvertVendorPersonalStock(RE::Actor* a_vendor) {
+    if (!a_vendor || g_convert.empty()) {
+        return 0;
+    }
+    struct Hit {
+        RE::TESBoundObject* old;
+        const ConvTarget*   tgt;
+        std::int32_t        count;
+    };
+    std::vector<Hit> hits;
+    for (auto& [obj, data] : a_vendor->GetInventory()) {
+        auto it = g_convert.find(obj->GetFormID());
+        if (it == g_convert.end() || data.first <= 0) {
+            continue;
+        }
+        if (data.second && data.second->IsWorn()) {
+            continue;  // worn gear needs the re-equip path (m42 crash class) — skip
+        }
+        hits.push_back({ obj, &it->second, data.first });
+    }
+    if (hits.empty()) {
+        return 0;
+    }
+    OpenEnchHumMuteWindow(4000);  // [snd] m41: enchant BUILDS are a hum source
+                                  // even with no equip — mirror ConvertInventory's
+                                  // container-sweep mute (a vendor conversion at
+                                  // dialogue/barter open would otherwise play the SFX)
+    const std::uint32_t seed = HashU32(a_vendor->GetFormID() ^ 0x4D454F56u);  // 'MEOV'
+    const std::uint32_t l2cut = static_cast<std::uint32_t>(g_gemLevel2Chance * 10000.0f);
+    int converted = 0;
+    for (const auto& hit : hits) {
+        a_vendor->RemoveItem(hit.old, hit.count, RE::ITEM_REMOVE_REASON::kRemove,
+                             nullptr, nullptr);
+        for (std::int32_t i = 0; i < hit.count; ++i) {
+            const std::uint32_t hi =
+                HashU32(seed ^ hit.old->GetFormID() ^ static_cast<std::uint32_t>(i));
+            const int level = g_gems[hit.tgt->gemIdx].def->singleLevel
+                                  ? 1 : ((hi % 10000) < l2cut ? 2 : 1);
+            auto* xl = MakeEngineXList();
+            if (!xl) {
+                a_vendor->AddObjectToContainer(hit.tgt->base, nullptr, 1, nullptr);
+                continue;
+            }
+            StampInstance(hit.tgt->base, xl, hit.tgt->gemIdx, level);
+            a_vendor->AddObjectToContainer(hit.tgt->base, xl, 1, nullptr);
+            ++converted;
+        }
+        spdlog::info("[convert] {:08X} '{}' (vendor-personal): '{}' x{} -> '{}' + {} gem",
+                     a_vendor->GetFormID(), a_vendor->GetName(), hit.old->GetName(),
+                     hit.count, hit.tgt->base->GetName(), GemName(g_gems[hit.tgt->gemIdx]));
+    }
+    return converted;
+}
+
 // m26 (marth: an enchanted name floating over a world item until pickup
 // "is jarring"): loose world refs of convertible generics swap IN PLACE at
 // cell attach — but only disposable clutter. Persistent and quest-aliased
@@ -5055,16 +5135,8 @@ void RekeyTransferredSockets(RE::FormID a_base, RE::FormID a_oldC, RE::FormID a_
     if (stranded.empty()) {
         return;
     }
-    std::uint16_t fromUid = 0;
-    if (std::find(stranded.begin(), stranded.end(), a_evUid) != stranded.end()) {
-        fromUid = a_evUid;  // event uid named the OLD (stranded) side
-    } else if (stranded.size() == 1) {
-        fromUid = stranded[0];
-    } else {
-        spdlog::warn("[rekey] {:08X}: ambiguous ({} stranded, evUid={}) — skipped",
-                     a_base, stranded.size(), a_evUid);
-        return;
-    }
+    // Resolve the ARRIVING orphan FIRST (m49): its MEO-built enchant is what
+    // lets us disambiguate an ambiguous stranded set by family signature below.
     RE::ExtraDataList* toXl = nullptr;
     std::uint16_t      toUid = 0;
     for (auto& [uid, xl] : orphans) {
@@ -5077,12 +5149,81 @@ void RekeyTransferredSockets(RE::FormID a_base, RE::FormID a_oldC, RE::FormID a_
         toXl = orphans[0].second;
         toUid = orphans[0].first;
     }
-    if (!toXl || toUid == fromUid) {
-        if (!toXl) {
-            spdlog::warn("[rekey] {:08X}: ambiguous ({} orphans, evUid={}) — skipped",
-                         a_base, orphans.size(), a_evUid);
-        }
+    if (!toXl) {
+        spdlog::warn("[rekey] {:08X}: ambiguous ({} orphans, evUid={}) — skipped",
+                     a_base, orphans.size(), a_evUid);
         return;
+    }
+
+    std::uint16_t fromUid = 0;
+    if (std::find(stranded.begin(), stranded.end(), a_evUid) != stranded.end()) {
+        fromUid = a_evUid;  // event uid named the OLD (stranded) side
+    } else if (stranded.size() == 1) {
+        fromUid = stranded[0];
+    } else {
+        // m49: >1 stranded records for this base. One prior orphan poisons EVERY
+        // later transfer of the base — the uid ambiguity is a permanent ratchet
+        // (marth's field case: an ancient fortifystamina orphan + a bought
+        // resistshock boots → skip forever, gem invisible). Disambiguate by
+        // family SIGNATURE: the arriving orphan's created enchant names its gem
+        // families, so the true source is the stranded record whose gem mgef(s)
+        // ALL appear in that enchant. Mis-assignment stays impossible — 0 or >1
+        // survivors falls back to the safe skip (§1 doctrine).
+        std::vector<const RE::EffectSetting*> enchFx;
+        if (auto* xe = toXl->GetByType<RE::ExtraEnchantment>(); xe && xe->enchantment) {
+            for (auto* eff : xe->enchantment->effects) {
+                if (eff && eff->baseEffect) {
+                    enchFx.push_back(eff->baseEffect);
+                }
+            }
+        }
+        auto recordMatches = [&](std::uint16_t uid) {
+            bool anyChecked = false;
+            for (int s = 0; s < kMaxSockets; ++s) {
+                auto it = g_sockets.find(MakeKey(a_base, uid, static_cast<std::uint8_t>(s)));
+                if (it == g_sockets.end()) {
+                    continue;
+                }
+                auto gi = g_gemByGid.find(it->second.gid);
+                if (gi == g_gemByGid.end()) {
+                    return false;  // unknown gem — can't vouch
+                }
+                auto* mgef = g_gems[gi->second].mgef;
+                if (!mgef) {
+                    continue;  // support gem (no mgef of its own) — excluded
+                }
+                anyChecked = true;
+                bool inEnch = false;
+                for (auto* fx : enchFx) {
+                    if (fx == mgef || SameEffectSig(fx, mgef)) {
+                        inEnch = true;
+                        break;
+                    }
+                }
+                if (!inEnch) {
+                    return false;  // this record's family isn't in the arriving enchant
+                }
+            }
+            return anyChecked;  // every non-support slot matched, and there was one
+        };
+        std::vector<std::uint16_t> cand;
+        for (auto u : stranded) {
+            if (recordMatches(u)) {
+                cand.push_back(u);
+            }
+        }
+        if (cand.size() == 1) {
+            fromUid = cand[0];
+            spdlog::info("[rekey] {:08X}: {} stranded disambiguated by family signature -> uid {}",
+                         a_base, stranded.size(), fromUid);
+        } else {
+            spdlog::warn("[rekey] {:08X}: ambiguous ({} stranded, {} sig-match, evUid={}) — skipped",
+                         a_base, stranded.size(), cand.size(), a_evUid);
+            return;
+        }
+    }
+    if (toUid == fromUid) {
+        return;  // same instance — nothing to move
     }
     for (int s = 0; s < kMaxSockets; ++s) {
         auto it = g_sockets.find(MakeKey(a_base, fromUid, static_cast<std::uint8_t>(s)));
@@ -5128,6 +5269,13 @@ void StockVendorGems() {
     // m23: vendor stock is LVLI-generated in place (no container events),
     // so convert enchanted generics here, at dialogue time.
     ConvertInventory(target);
+    // m48: the merchant CHEST is swept above; the vendor's own personal
+    // sellables (shown in the barter menu too) need the scoped-exemption sweep.
+    // Only when a distinct chest exists — else target==vendor and ConvertInventory
+    // already handled the actor.
+    if (vendor != target) {
+        ConvertVendorPersonalStock(vendor);
+    }
     int  itemCount = 0;
     bool hasGem = false;
     for (auto& [obj, data] : target->GetInventory()) {

@@ -140,6 +140,12 @@ sibling project can audit itself against the list in one sitting.
 - **Don't build on the host's load order when it silently omits plugins.**
   Synthesis's order drops Creation Club — ~24% of conversions and whole gem
   families vanished until the patcher built its own from `Skyrim.ccc`.
+- **Success-only logging makes a live path indistinguishable from a dead one.**
+  MEO's barter sweep logged only when it converted something, so "ran and found
+  nothing" and "never ran" looked identical — a real vendor bug hunt was blind
+  for two visits. Guarded/periodic sweeps must log their zero-case too. Related:
+  `[convert-miss]` diagnostics were player-gated, so container/vendor misses
+  were structurally silent — a miss you can't see reads as "never examined."
 - **Presence is not integrity — never gate on a plugin's NAME being loaded;
   resolve one of its known records.** A Synthesis GROUP named "MEO" outputs
   `MEO.esp`, overwriting/shadowing the real plugin; the name check passed
