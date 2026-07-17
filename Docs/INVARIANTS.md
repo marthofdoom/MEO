@@ -84,6 +84,15 @@ the portable "never again" digest for sibling projects.
    recoverable on the next transfer; a mis-assignment corrupts the wrong item —
    §1 doctrine). One stranded record poisons every later transfer of its base
    until a match clears it — the ambiguity is a ratchet, not a rare safe-out.
+8c. **Never call NG `ExtraDataList::RemoveByType`; strip extras via
+   `SafeRemoveAllByType` only** (m50). The NG version null-derefs the moment a
+   removal EMPTIES the list (ENGINE_NOTES §8) — and an emptied list is a REAL
+   shape: a converted instance can arrive at a strip site as exactly
+   `{kEnchantment, kTextDisplayData}` because the engine's uid rewrite + a
+   save/load can cost it its `ExtraUniqueID` node entirely (ENGINE_NOTES §1
+   TRAP 2, field-proven load-CTD 2026-07-17). Corollary: no code may assume a
+   converted/enchanted instance carries a uid node; the kPostLoadGame sweep's
+   in-place re-conversion of such an instance is the sanctioned self-heal.
 9. **Bound every count and bail on short read** (N2, :5867): a truncated
    record must stop the read, not fabricate keys from garbage.
 10. **Clamp deserialized values at the source**: level → [1,5] (:5891) —

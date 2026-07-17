@@ -71,6 +71,14 @@ sibling project can audit itself against the list in one sitting.
   engine to REWRITE uids on container transfer.** The pouch-container menu
   orphaned every banked-XP record in one day (v0.11.0); the rekey sink is
   the only cure.
+- **Never assume a library mutator is total over its input shapes — read the
+  impl before feeding it a boundary case.** NG's `ExtraDataList::RemoveByType`
+  null-derefs when the removal empties the list; it sat compiled into every
+  MEO build and detonated only when the first `{ench, text}`-only xlist (a
+  bought item whose uid node didn't survive save/load) reached a strip site —
+  a deterministic every-load CTD on that save (m50, MEO.dll+0x7C4EB). The
+  crash was in library code, but the SHIP decision that mattered was ours:
+  strip sites must own their empty-list behavior (`SafeRemoveAllByType`).
 - **Two sequential ID allocators must never share one freeze anchor.** A
   `max+1` scan that can see a reserved band's fids leapfrogs the band on the
   next regen; MEO keeps `pool_forms.frozen.json` separate from

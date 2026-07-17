@@ -27,6 +27,7 @@ the database; it travels through drop/pickup/containers/saves with no script:
 |---|---|
 | `ExtraUniqueID` (0x9F) | instance identity — **only unique per base form**; any map must key on `(baseFormID, uniqueID)` |
 | | **TRAP (validated 2026-07-07, v0.11.0):** the engine REWRITES `uniqueID` when the item transfers between containers (per-container bookkeeping, reassigned from 1). uid-keyed identity is only stable while the item stays in ONE container. Player-inventory round trips (drop/pickup of world refs, equip/unequip) preserve it; `player -> chest -> player` does NOT — MEO's pouch-container menu (v0.11.0) orphaned banked-XP records this way and was scrapped. **SOLVED in v0.27.0-m19 (proven in-game 2026-07-09):** a `TESContainerChangedEvent` sink re-keys the record on every transfer — match the arriving orphan xList (enchanted, record-less, in the new container) with the stranded record (uid in neither container) and move the record to the new uid. **The event's `uniqueID` field names the ARRIVING (new-container) uid** (field-proven: `[rekey] uid 36933 -> 42 (evUid=42)`). Ambiguous multi-instance transfers log + skip. Socketed gear now survives corpse loot, vendors, and storage with living records. |
+| | **TRAP 2 (field-proven 2026-07-17, m50):** the uid node can be ABSENT entirely after a save/load. A container-minted converted item (m47/m48 recipe) that hopped containers (chest → player at purchase; engine rewrote the stamped uid 36907 → 1 → 8, log-proven) loaded back as `{ExtraEnchantment, ExtraTextDisplayData}` with NO `ExtraUniqueID` at all (proven by crash shape: a strip of those two types EMPTIED the list). So code may never assume a converted/enchanted instance carries a uid node — the kPostLoadGame `ConvertInventory` sweep sees such an instance as a foreign player enchant and re-converts it IN PLACE (`ConvertInstanceEnchant` → fresh MEO uid + record), which is the actual self-heal for an unkeyed bought item. Strip sites on that path must survive an xlist that empties (see §8, NG `RemoveByType`). |
 | `ExtraTextDisplayData` (0x99) | display name (see §2) |
 | `ExtraEnchantment` (0x9B) | the *created* enchantment (see §3) |
 
@@ -248,6 +249,23 @@ The `- 4` offset on the callback message is the trap everyone hits.
 - **Some floor items vanish after save → main menu → load.** Suspected
   engine save-culling issue (wskeever pinpointed it), external to MEO.
   Socketed items *in inventory* persist correctly across save/load.
+- **CommonLibSSE-NG `ExtraDataList::RemoveByType` NULL-DEREFS when the
+  removal EMPTIES the list (m50, deck load-CTD 2026-07-17, MEO.dll+0x7C4EB —
+  disasm-proven).** Its head-removal loop is `while (GetData()->GetType() ==
+  type) { … GetData() = GetData()->next; … }` — after unlinking the last
+  node it re-derefs the new (null) head with no check; the trailing prev/cur
+  walk then derefs `GetData()->next` on the emptied list too. Latent for the
+  project's whole life because every strip target had always carried a
+  surviving `ExtraUniqueID`/`ExtraWorn` node; the first `{kEnchantment,
+  kTextDisplayData}`-only xlist (a bought container-minted item whose uid
+  node didn't survive save/load, §1 TRAP 2) crashed on the SECOND call
+  (`kTextDisplayData` emptied the list; register-proven, r14=0x99). MEO-side
+  cure: `SafeRemoveAllByType` (GetByType + Remove + delete — all null-safe,
+  Remove takes the engine's `BSReadWriteLock`, delete goes through the same
+  virtual deleting dtor NG used). NG's `Remove` clears the presence BIT even
+  if same-type nodes remain, but one-node-per-type is an engine invariant
+  (the bitfield can only encode presence), so the loop is complete. Never
+  call NG `RemoveByType` anywhere in MEO (INVARIANTS 8c).
 
 ## 9. In-process ImGui overlay menu (validated 2026-07-08, v0.12.0 in-game)
 
@@ -399,7 +417,11 @@ installed in `SKSEPluginLoad` — before the renderer exists):
   source is the stranded record whose gem mgef(s) all appear in that enchant
   (pointer or `SameEffectSig`); 0 or >1 survivors → keep skipping
   (mis-assignment stays impossible). Self-heals a poisoned save on the next
-  drop+re-pickup of the item.
+  drop+re-pickup of the item. NOTE (m50): the rekey sink only fires on
+  container EVENTS — a poisoned instance that additionally lost its uid node
+  across save/load (§1 TRAP 2) is instead healed by the kPostLoadGame
+  `ConvertInventory` sweep re-converting it in place; that strip path crossing
+  an `{ench, text}`-only xlist is what detonated NG's `RemoveByType` (§8).
 - `io.IniFilename = nullptr` — never write imgui.ini into the game dir.
 - vcpkg: `imgui` features `dx11-binding`, `win32-binding`; link
   `imgui::imgui d3d11`.

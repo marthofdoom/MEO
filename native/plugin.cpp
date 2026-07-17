@@ -1585,6 +1585,35 @@ const ResolvedGem* ConduitSibling(const ResolvedGem* a_normal, bool a_itemIsArmo
     return nullptr;
 }
 
+// m50 (deck load-CTD 2026-07-17, MEO.dll+0x7C4EB): CommonLibSSE-NG's
+// ExtraDataList::RemoveByType NULL-DEREFS when the removal EMPTIES the list —
+// its head-removal loop re-derefs the new head with no null check (`while
+// (GetData()->GetType() == type)` after `GetData() = GetData()->next`), and the
+// trailing prev/cur walk then derefs `GetData()->next` on the emptied list.
+// Any xlist that is exactly {kEnchantment, kTextDisplayData} detonates it —
+// and that is precisely the shape a container-minted converted item (m47/m48
+// recipe) has once the engine's per-container uid rewrite has cost it its
+// ExtraUniqueID node across a save/load (field case: bought 'Res Shock I Iron
+// Boots' 00012E4B, kPostLoadGame ConvertInventory sweep -> ConvertInstance
+// Enchant strip). Replacement with identical semantics, null-safe end to end:
+// GetByType + Remove both guard the empty list and take the engine's own
+// BSReadWriteLock; delete matches what NG's RemoveByType does per node
+// (virtual scalar-deleting dtor). One node per type is an engine invariant
+// (the presence BITFIELD can only encode presence, not multiplicity), so the
+// loop runs at most once per type in practice; the break is defensive —
+// never delete a node that failed to unlink.
+void SafeRemoveAllByType(RE::ExtraDataList* a_xList, RE::ExtraDataType a_type) {
+    if (!a_xList) {
+        return;
+    }
+    while (auto* node = a_xList->GetByType(a_type)) {
+        if (!a_xList->Remove(a_type, node)) {
+            break;
+        }
+        delete node;
+    }
+}
+
 void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList,
                             RE::Actor* a_owner = nullptr) {
     auto* xid = a_xList ? a_xList->GetByType<RE::ExtraUniqueID>() : nullptr;
@@ -1653,9 +1682,9 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         std::erase_if(filled, [&](const Filled& f) { return f.rg->def->isArmor != isArmor; });
     }
     if (filled.empty()) {  // no normal gem left — return the item to plain (a
-        a_xList->RemoveByType(RE::ExtraDataType::kEnchantment);      // lone or
-        a_xList->RemoveByType(RE::ExtraDataType::kTextDisplayData);  // double
-        return;                                                     // support is inert
+        SafeRemoveAllByType(a_xList, RE::ExtraDataType::kEnchantment);      // lone or
+        SafeRemoveAllByType(a_xList, RE::ExtraDataType::kTextDisplayData);  // double
+        return;                                                            // support is inert
     }
     // m36: Focus lifts a linked elemental gem's magnitude (+20/35/50% by tier).
     float supportMag = 1.0f;
@@ -1674,8 +1703,8 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         conduitTarget = ConduitSibling(filled[0].rg, isArmor);
         conduitRatio = support->def->tierParam[supportTier - 1];
         if (!conduitTarget) {  // off-domain gem, no mapping for this theme — inert
-            a_xList->RemoveByType(RE::ExtraDataType::kEnchantment);
-            a_xList->RemoveByType(RE::ExtraDataType::kTextDisplayData);
+            SafeRemoveAllByType(a_xList, RE::ExtraDataType::kEnchantment);
+            SafeRemoveAllByType(a_xList, RE::ExtraDataType::kTextDisplayData);
             return;
         }
     }
@@ -4606,8 +4635,11 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
         return 0;
     }
     const bool worn = IsWornXList(a_xList);
-    a_xList->RemoveByType(RE::ExtraDataType::kEnchantment);
-    a_xList->RemoveByType(RE::ExtraDataType::kTextDisplayData);  // forge rename dies with it
+    // m50: NEVER NG RemoveByType here — this xlist can be exactly {ench, text}
+    // (a container-minted purchase whose uid node didn't survive save/load),
+    // and emptying the list is the exact shape that null-derefs NG's version.
+    SafeRemoveAllByType(a_xList, RE::ExtraDataType::kEnchantment);
+    SafeRemoveAllByType(a_xList, RE::ExtraDataType::kTextDisplayData);  // forge rename dies with it
     std::string what;
     for (std::size_t s = 0; s < picks.size(); ++s) {
         // Forward a_owner (build-B1 future-proof): identical today (this path is
