@@ -4,6 +4,26 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.6d — crash hotfix: on-load CTD stripping a converted item (m50, 2026-07-17)
+
+**Strongly recommended update for everyone on v1.0.6b/c.** Fixes a crash that
+could strike **on loading a save** — repeatably, once the save was in the bad
+state — after previously acquiring a converted enchanted item (vendor/chest/
+corpse loot) that later lost part of its internal data across a save/load.
+
+- **m50** — MEO's routine that strips an item back to plain used a CommonLibSSE
+  helper that crashes if the strip empties the item's extra-data list. A
+  converted item reduced to just its enchant + name (which the engine's own
+  bookkeeping can cause across a save/load) hit exactly that case during MEO's
+  post-load pass. Replaced with a null-safe strip. No gameplay change.
+- **Bonus: affected saves self-heal.** On the first load with this build, MEO
+  re-converts any such item in place — it comes back as a proper socketed item,
+  gem intact and manageable, instead of crashing.
+
+**Your saves are safe** — the crash was in-memory during load, never on disk;
+this build simply loads them correctly. `MEO.esp` is byte-identical to
+v1.0.6b/c — a drop-in DLL update.
+
 ## v1.0.6c — crash hotfix: converted loot use-after-free (m47, 2026-07-17)
 
 **Strongly recommended update for everyone on v1.0.6b.** Fixes a crash that
