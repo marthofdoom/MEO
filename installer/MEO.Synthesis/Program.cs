@@ -8,8 +8,11 @@
 
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Plugins;
+using Mutagen.Bethesda.Plugins.Binary.Parameters;
 using Mutagen.Bethesda.Plugins.Cache;
 using Mutagen.Bethesda.Plugins.Order;
+using Mutagen.Bethesda.Strings;
+using Mutagen.Bethesda.Strings.DI;
 using Mutagen.Bethesda.Skyrim;
 using Mutagen.Bethesda.Synthesis;
 using Mutagen.Bethesda.Synthesis.Settings;
@@ -23,9 +26,23 @@ return await SynthesisPipeline.Instance
 
 static void RunPatch(IPatcherState<ISkyrimMod, ISkyrimModGetter> state)
 {
-    // Match the standalone installer's ESL flag: MEO - Patch.esp is a pure
-    // override plugin, so it costs no load-order slot.
-    state.PatchMod.IsSmallMaster = true;
+    // GUARD (issue: "spells disappeared from MEO.esp"): Synthesis names a group's
+    // output plugin after the GROUP. A group named "MEO" therefore outputs
+    // MEO.esp — which OVERWRITES the real MEO.esp (deleting our spells/gems/quest)
+    // and leaves the load order with an impostor that passes every name check.
+    // Refuse loudly instead of shipping a silently-bricked install.
+    if (state.PatchMod.ModKey.FileName.String.Equals("MEO.esp", StringComparison.OrdinalIgnoreCase))
+        throw new Exception(
+            "Your Synthesis group is named 'MEO', so its output plugin is MEO.esp and would " +
+            "REPLACE the real MEO.esp (deleting MEO's spells, gems, and startup quest). " +
+            "Rename the Synthesis group to anything else (e.g. 'Synthesis'), reinstall MEO.esp " +
+            "from the MEO download, and re-run.");
+
+    // ESL-flag ONLY our own standalone output. In a Synthesis group with other
+    // patchers, PatchMod is the SHARED group output — flagging that as a small
+    // master is not ours to do and can make the group's plugin non-compliant.
+    if (state.PatchMod.ModKey.FileName.String.Equals("MEO - Patch.esp", StringComparison.OrdinalIgnoreCase))
+        state.PatchMod.IsSmallMaster = true;
 
     // Phase 3 auto-mint options (Synthesis settings UI; marth 2026-07-16
     // "as close to parity as possible" — multi-effect ON by default).
@@ -82,16 +99,39 @@ static (LoadOrder<IModListingGetter<ISkyrimModGetter>>, ILinkCache) BuildCalibra
     foreach (var f in Directory.EnumerateFiles(dataDir))
         files.TryAdd(Path.GetFileName(f), f);
 
+    // Embedded (non-localized) plugin strings default to Windows-1252 in Mutagen;
+    // a UTF-8 plugin (common for non-English content, e.g. a Japanese Unslaad)
+    // then decodes as mojibake — cosmetic in logs today, but it would bake garbled
+    // text into phase-3 minted gem NAMES. _utf8_1252 decodes genuine UTF-8 first
+    // and falls back to 1252 for legacy Western plugins; pure-ASCII is byte-
+    // identical under both, so English-list output is unchanged. (CJK plugins
+    // authored in Shift-JIS/CP932 rather than UTF-8 would need _utf8_932 — a
+    // per-game-language choice to revisit before phase-3 ships wide.) Names are
+    // near-inert to matching: conversions/minted-slot keys are FormKey/filename-
+    // based; the ONE name-keyed surface is the m28 kin-ladder root match
+    // (Commands.cs Root(Name)), where both rungs of a real ladder decode from
+    // the same plugin, so a decode shift moves both sides identically.
+    var readParams = BinaryReadParameters.Default with
+    {
+        StringsParam = new StringsReadParameters
+        {
+            NonLocalizedEncodingOverride = MutagenEncoding._utf8_1252,
+        },
+    };
+    var ownOutput = state.PatchMod.ModKey.FileName.String;
     var listings = new List<IModListingGetter<ISkyrimModGetter>>();
     foreach (var name in baseMasters.Concat(ccc).Concat(active)
                  .Distinct(StringComparer.OrdinalIgnoreCase))
     {
-        if (name.Equals("MEO - Patch.esp", StringComparison.OrdinalIgnoreCase) ||
+        // never read our own output (the Synthesis group's plugin, whatever it's
+        // named — not just the standalone MEO - Patch/Strip names)
+        if (name.Equals(ownOutput, StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("MEO - Patch.esp", StringComparison.OrdinalIgnoreCase) ||
             name.Equals("MEO - Strip.esp", StringComparison.OrdinalIgnoreCase))
-            continue;  // never read our own output
+            continue;
         if (!files.TryGetValue(name, out var full)) continue;
         var mod = SkyrimMod.CreateFromBinaryOverlay(
-            new ModPath(ModKey.FromNameAndExtension(name), full), SkyrimRelease.SkyrimSE);
+            new ModPath(ModKey.FromNameAndExtension(name), full), SkyrimRelease.SkyrimSE, readParams);
         listings.Add(new ModListing<ISkyrimModGetter>(mod, enabled: true));
     }
     var lo = new LoadOrder<IModListingGetter<ISkyrimModGetter>>(listings);

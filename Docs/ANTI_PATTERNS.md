@@ -140,6 +140,25 @@ sibling project can audit itself against the list in one sitting.
 - **Don't build on the host's load order when it silently omits plugins.**
   Synthesis's order drops Creation Club — ~24% of conversions and whole gem
   families vanished until the patcher built its own from `Skyrim.ccc`.
+- **Presence is not integrity — never gate on a plugin's NAME being loaded;
+  resolve one of its known records.** A Synthesis GROUP named "MEO" outputs
+  `MEO.esp`, overwriting/shadowing the real plugin; the name check passed
+  while the impostor held none of MEO's records, so the run reported success
+  and the DLL then couldn't find the Gem Pouch spell ("mod stopped working",
+  "spells disappeared from MEO.esp"). Resolve a frozen record (perk 0x810)
+  and refuse if it's absent. Also refuse if OUR patch output would itself be
+  named `MEO.esp`.
+- **Don't set properties on a shared output you don't own.** `IsSmallMaster`
+  was set on `state.PatchMod` — which in a multi-patcher Synthesis group is
+  the GROUP's shared output; ESL-flagging that can make another patcher's
+  plugin non-compliant. Gate it to our own standalone output name.
+- **Mutagen decodes embedded plugin strings as Windows-1252 by default —
+  UTF-8/CJK plugins garble.** A Japanese Unslaad rendered mojibake in the
+  Synthesis log (cosmetic there), but the same strings would bake into
+  phase-3 minted gem NAMES. Pass `NonLocalizedEncodingOverride`
+  (`MutagenEncoding._utf8_1252`) so genuine UTF-8 decodes and legacy Western
+  falls back; mojibake in a log is an ENCODING signal, never a structural
+  failure (System.Text.Json keeps output valid JSON regardless).
 
 ## Process
 

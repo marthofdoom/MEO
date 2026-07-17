@@ -208,6 +208,17 @@ static class Commands
         // MEO.esp-local perk FormIDs (DESIGN §6; FROZEN).
         FormKey Perk(uint local) => new(meo, local);
         var attune1 = Perk(0x810);   // ranked 1..5 via NNAM chain inside MEO.esp
+        // INTEGRITY, not just presence (ANTI_PATTERNS: a plugin's NAME being in
+        // the order is not proof it's OURS). A Synthesis group named "MEO"
+        // outputs MEO.esp and shadows the real one; the impostor passes the
+        // name check above while containing none of our records → the DLL then
+        // can't find the pouch spell and "the mod stopped working". Resolve a
+        // frozen MEO record to confirm the real plugin is what's loaded.
+        if (!cache.TryResolve<IPerkGetter>(attune1, out _))
+            return Fail("MEO.esp is in the load order but is missing MEO's own records "
+                      + "(perk 0x810 not found) — it is shadowed or overwritten, usually by a "
+                      + "Synthesis group NAMED 'MEO' (whose output is MEO.esp). Rename the group, "
+                      + "reinstall MEO.esp from the MEO download, and re-run.");
         var gemCutter = Perk(0x815);
         var soulFeeder = Perk(0x816);
         var twinned = Perk(0x817);
@@ -1018,8 +1029,8 @@ static class Commands
     }
 
     // ── Phase 3: auto-mint uncovered families onto the reserved pool ─────
-    // marth 2026-07-16: MEO.esp pre-mints 32 slots x 5 levels of MISC gem
-    // forms at 0xB00-0xB9F (data/pool_forms.frozen.json is the contract this
+    // marth 2026-07-16: MEO.esp pre-mints 64 slots x 5 levels of MISC gem
+    // forms at 0xB00-0xC3F (data/pool_forms.frozen.json is the contract this
     // reads — shipped beside gem_catalog.json). Uncovered strip-class enchant
     // clusters that pass the filters below become "minted" families in
     // meo_calibration.json; the DLL registers them at load as runtime gem
