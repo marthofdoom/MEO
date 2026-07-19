@@ -224,6 +224,14 @@ RE::BGSKeyword*  g_kwNPC = nullptr;     // ActorTypeNPC (humanoids only)
 RE::BGSKeyword*  g_kwUndead = nullptr;  // ActorTypeUndead
 float g_magnitudeMult = 1.0f;  // [XP] fMagnitudeMult master power scale; used by StampInstance below, set by ReadConfig (MCM)
 bool  g_fullGemNames = false;  // [UI] bFullGemNames — full effect names in socketed-item titles (default OFF = shorthand); ShortGemName/RebuildInstanceEnchant use it (declared up top) (m40)
+// [XP] bConvertPlayerEnchants — m51, marth's ruling 2026-07-17. Adopting a
+// player/foreign instance enchant into gems (m26) is the catch-all that stops
+// stray enchanted gear slipping past MEO, so it defaults ON. MEO can't tell a
+// genuine player enchant from one an enchantment-TRANSFER mod injected (EDU
+// class) — both are uid-less created FF enchants on a socketable base — and
+// marth rules there's no innate support for other enchanting overhauls, so the
+// escape hatch is the player's, not ours. Read by ConvertInstanceEnchant.
+bool  g_convertPlayerEnchants = true;
 
 // Option A shorthand (m40, marth): trim the boilerplate from gem names in
 // socketed-item titles so multi-gem names stay readable — strip a trailing
@@ -958,6 +966,54 @@ meo::GemClass MintedClass(const std::string& s) {
     return s == "ABSORB" ? meo::GemClass::kAbsorb : meo::GemClass::kLinear;
 }
 
+// m51 F5: is this enchant one MEO built? Same signature DispelStaleGemEffects
+// has trusted since m24b — an engine-created (FF) enchantment carrying
+// kCostOverride, which MEO sets unconditionally in RebuildInstanceEnchant and a
+// vanilla player-crafted enchant never has. Used to exempt MEO's own self-heal
+// from the bConvertPlayerEnchants toggle: the toggle is about FOREIGN enchants.
+bool IsMEOBuiltEnchant(const RE::EnchantmentItem* a_ench) {
+    return a_ench && a_ench->GetFormID() >= 0xFF000000u &&
+           a_ench->data.flags.any(RE::EnchantmentItem::EnchantmentFlag::kCostOverride);
+}
+
+// m51 F3 / ENGINE_NOTES §2 trap 5: the instance name WITHOUT the temper suffix.
+// `displayName` carries "(Fine)" once the engine's GetDisplayName reconcile has
+// run; `customNameLength` is the length without it, and is only meaningful when
+// the name really is a custom override. Any string surgery on an instance name
+// must go through here — a raw displayName compare silently fails on every
+// tempered item.
+std::string NameWithoutTemper(const RE::ExtraTextDisplayData* a_xText) {
+    if (!a_xText) return {};
+    const char* dn = a_xText->displayName.c_str();
+    if (!dn || !*dn) return {};
+    std::string s(dn);
+    // IsPlayerSet() IS the ownerInstance == kCustomName test, and spells the
+    // scoped enumerator correctly (a bare RE::ExtraTextDisplayData::kCustomName
+    // does not compile — scoped-enum enumerators aren't injected into the class).
+    if (a_xText->IsPlayerSet()) {
+        const auto n = static_cast<std::size_t>(a_xText->customNameLength);
+        if (n > 0 && n <= s.size()) s.resize(n);
+    }
+    return s;
+}
+
+// m51 F-T1: does the winning skill perk tree actually contain this perk?
+// Breadth-first over the node graph; the tree is a DAG (nodes can share
+// children), so a visited set is required or a diamond re-walks forever.
+bool TreeContainsPerk(const RE::BGSSkillPerkTreeNode* a_root, const RE::BGSPerk* a_perk) {
+    if (!a_root || !a_perk) return false;
+    std::vector<const RE::BGSSkillPerkTreeNode*> queue{ a_root };
+    std::unordered_set<const RE::BGSSkillPerkTreeNode*> seen{ a_root };
+    for (std::size_t i = 0; i < queue.size(); ++i) {
+        const auto* node = queue[i];
+        if (node->perk == a_perk) return true;
+        for (const auto* kid : node->children) {
+            if (kid && seen.insert(kid).second) queue.push_back(kid);
+        }
+    }
+    return false;
+}
+
 void ResolveCatalog() {
     auto* dh = RE::TESDataHandler::GetSingleton();
     if (!dh) {
@@ -1324,9 +1380,39 @@ void ResolveCatalog() {
     // Tree mode: the installer-generated patch replaces the enchanting perk
     // tree with MEO's perks, so the player earns them with perk points and
     // the interim skill-based auto-grant must stand down.
-    g_treeMode = dh->LookupModByName("MEO - Patch.esp") != nullptr;
-    if (g_treeMode) {
-        spdlog::info("[perks] MEO - Patch.esp present: perk tree mode, auto-grant off");
+    // m51 F-T1: "presence is not integrity" (ANTI_PATTERNS). A patch file being
+    // LOADED does not mean its AVEnchanting tree WON: another enchanting overhaul
+    // (Ordinator, Vokrii, Thaumaturgy, Master of One...) loading after it takes the
+    // whole record, tree included, and MEO's perks vanish from the UI. Standing
+    // down auto-grant on presence alone left the player unable to earn Attunement
+    // by ANY route — silent, permanent, and indistinguishable from "gems are weak".
+    // So resolve the WINNING tree and require it to actually contain our perk.
+    g_treeMode = false;
+    if (dh->LookupModByName("MEO - Patch.esp") != nullptr) {
+        // NOT LookupByEditorID: that map only holds form types that store an
+        // editorID at runtime (~15 of them; ActorValueInfo is NOT one) — it would
+        // compile clean and nullptr for every user, then read as "someone
+        // overrode us". po3 Tweaks caches all editorIDs and LoreRim ships it, so
+        // the deck would have PASSED a check broken for everyone else.
+        // ENGINE_NOTES §9. Ask the engine's own AV table instead.
+        auto* avl = RE::ActorValueList::GetSingleton();
+        const auto* avEnch = avl ? avl->GetActorValue(RE::ActorValue::kEnchanting) : nullptr;
+        bool found = false;
+        for (auto* p : g_perkAttune) {  // any rank vouches for the tree
+            if (avEnch && p && TreeContainsPerk(avEnch->perkTree, p)) { found = true; break; }
+        }
+        if (found) {
+            g_treeMode = true;
+            spdlog::info("[perks] MEO perks found in the winning enchanting tree: "
+                         "tree mode, auto-grant off");
+        } else {
+            spdlog::warn("[perks] MEO - Patch.esp is loaded but MEO's perks are NOT in the "
+                         "winning AVEnchanting tree (avif={}, attune={}) — another enchanting "
+                         "overhaul overrode it. Falling back to skill-based auto-grant so "
+                         "Attunement stays reachable; re-run MEO.Installer.exe and load "
+                         "MEO - Patch.esp AFTER that mod to get the perk tree back.",
+                         avEnch ? "ok" : "MISSING", g_perkAttune[0] ? "ok" : "MISSING");
+        }
     }
     // m23: resolve the loot-conversion table against the live load order.
     // NOT LookupForm<TESBoundObject>: that template gates on T::FORMTYPE, and
@@ -2151,6 +2237,7 @@ static void ApplyIniFile(const char* a_path) {
         else if (key == "fMagnitudeMult")     g_magnitudeMult = val;
         else if (key == "bXPNotify")          g_xpNotify = val != 0.0f;
         else if (key == "bFullGemNames")     g_fullGemNames = val != 0.0f;
+        else if (key == "bConvertPlayerEnchants") g_convertPlayerEnchants = val != 0.0f;
         else if (key == "bEnableLogging")     g_enableLogging = val != 0.0f;
         else if (key == "bStationTakeover")   g_stationTakeover = val != 0.0f;
         else if (key == "iMenuStyle")         g_menuStyle = std::clamp(static_cast<int>(val), 0, 3);
@@ -4573,6 +4660,24 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
     if (!ench) {
         return 0;
     }
+    // m51 (marth's ruling 2026-07-17): adopting a PLAYER instance enchant is the
+    // catch-all that stops stray enchanted gear slipping past MEO, so it stays ON
+    // by default. But MEO cannot distinguish a genuine player enchant from one an
+    // enchantment-TRANSFER mod injected (EDU-class: absorb an enchant off item A,
+    // inject it onto plain item B as a created FF form) — both are uid-less FF
+    // enchants on a socketable base. marth: no innate support for other enchanting
+    // overhauls; leave it to player discretion. Users of such mods turn this off.
+    // F5: the toggle gates FOREIGN enchants only. This same path is the sanctioned
+    // self-heal for a converted item whose uid node died across save/load
+    // (ENGINE_NOTES §1 TRAP 2 / INVARIANTS 8c) — gating that too would leave such
+    // items record-less forever: never leveling, delivery-dead after every load.
+    // MEO's own work is identifiable: a created (FF) enchant carrying kCostOverride
+    // — which MEO sets unconditionally and a vanilla player enchant never has.
+    if (!g_convertPlayerEnchants && !IsMEOBuiltEnchant(ench)) {
+        spdlog::info("[convert-miss] '{}' base {:08X} — instance enchant left alone "
+                     "(bConvertPlayerEnchants off)", a_base->GetName(), a_base->GetFormID());
+        return 0;
+    }
     const bool armor = a_base->Is(RE::FormType::Armor);
     const bool eligible = armor ? IsSocketableArmorBase(a_base->As<RE::TESObjectARMO>())
                                 : IsSocketableWeaponBase(a_base->As<RE::TESObjectWEAP>());
@@ -4583,6 +4688,14 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
     }
     const int  cap = SocketCapacity(a_base);
     std::vector<int> picks;
+    // m51 LOSSLESS GATE (the instance-path twin of marth's 2026-07-10 ruling for
+    // base conversions): this used to silently DESTROY any effect it couldn't map
+    // to a family, and any effect past the socket cap — so a two-effect enchant
+    // moved onto a one-socket ring lost an effect with only a log line. Now an
+    // unmappable or overflowing effect aborts the WHOLE conversion and the item is
+    // left exactly as it was. Convert losslessly or not at all.
+    std::string lossy;
+    std::vector<RE::EffectSetting*> unmapped;
     for (auto* eff : ench->effects) {
         if (!eff || !eff->baseEffect) {
             continue;
@@ -4604,9 +4717,10 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
             }
         }
         if (found < 0) {
-            spdlog::info("[convert]   dropping non-gem effect '{}' ({:08X}) mag={:.1f} — no family",
-                         eff->baseEffect->GetName(), eff->baseEffect->GetFormID(),
-                         eff->effectItem.magnitude);
+            // Deferred: this may be a RIDER of a family we end up picking, which
+            // is no loss at all (RebuildInstanceEnchant re-emits the family's
+            // whole recipe, riders included). Judged after picks are final.
+            unmapped.push_back(eff->baseEffect);
             continue;
         }
         bool dup = false;
@@ -4616,9 +4730,31 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
         if (!dup && static_cast<int>(picks.size()) < cap) {
             picks.push_back(found);
         } else if (!dup) {
-            spdlog::info("[convert]   dropping overflow effect '{}' — out of sockets (cap {})",
-                         eff->baseEffect->GetName(), cap);
+            lossy += std::format("{}'{}' (past cap {})", lossy.empty() ? "" : ", ",
+                                 eff->baseEffect->GetName(), cap);
         }
+    }
+    // F2: forgive unmapped effects that a picked family will re-supply as a rider.
+    // Requiem/LoreRim player-made elemental enchants carry rider entries in every
+    // created ENCH, and minted multi-effect items re-enter this path via the
+    // TRAP-2 self-heal — without this, the gate refuses MEO's own work.
+    for (auto* m : unmapped) {
+        bool covered = false;
+        for (int p : picks) {
+            for (int r = 0; r < g_gems[p].nRiders && !covered; ++r) {
+                auto* rm = g_gems[p].riders[r].mgef;
+                covered = rm && (rm == m || SameEffectSig(rm, m));
+            }
+        }
+        if (!covered) {
+            lossy += std::format("{}'{}' (no family)", lossy.empty() ? "" : ", ", m->GetName());
+        }
+    }
+    if (!lossy.empty()) {
+        spdlog::info("[convert-miss] '{}' base {:08X} — converting would LOSE {} — "
+                     "left enchanted (lossless-or-skip)",
+                     a_base->GetName(), a_base->GetFormID(), lossy);
+        return 0;
     }
     if (picks.empty()) {
         spdlog::info("[convert-miss] '{}' base {:08X} — instance enchant matches no gem "
@@ -4635,11 +4771,53 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
         return 0;
     }
     const bool worn = IsWornXList(a_xList);
+    // m51 / F-A2 (marth's ruling 2026-07-17, AMENDS the old "forge rename dies
+    // with it"): a converted item keeps its identity — it becomes the SOCKETED
+    // version of that item, same name. Capture any CUSTOM display name before the
+    // strip so we can recompose "<gems> <customName>" instead of
+    // "<gems> <plainBaseName>". Without this, an item whose identity lives in a
+    // name override (a renamed forge item, or a unique that a transfer mod re-
+    // added as plain-base + name) reads as a completely different item after
+    // conversion — the "my gauntlets vanished" report.
+    // A name ENDING in the base name is one of OUR composed names (or just the
+    // base): not custom — that guard stops re-conversion nesting
+    // "One-Handed I One-Handed I ..." on the TRAP-2 self-heal path.
+    // KNOWN LIMIT (documented, INVARIANTS 8d): preservation lasts only until the
+    // next RebuildInstanceEnchant — an XP level-up, a socket change, or the worn
+    // reapply after a load recomposes "<gems> <plainBaseName>" from scratch and
+    // the kept name is gone. Persisting it properly needs a co-save field; that's
+    // a phase-3-hold decision, not this fix.
+    // F3/ENGINE_NOTES §2 trap 5: displayName INCLUDES the temper suffix after the
+    // engine's GetDisplayName reconcile ("Frostbite (Fine)"); customNameLength is
+    // the length WITHOUT it. Do all surgery on that prefix or every tempered item
+    // — exactly the renamed forge gear this feature exists for — fails the
+    // ends_with test, loses its name, AND re-reads as custom on the next self-heal,
+    // nesting "Fire I Fire I ...". Accepted limitation: a genuine custom name that
+    // itself ends with the base name ("Bob's Iron Sword") reads as non-custom and
+    // is not preserved — the price of the nesting guard.
+    std::string customName;
+    // V2: ONLY a kCustomName record is a real rename. The engine lazily creates a
+    // text extra for TEMPERED gear too (§2 trap 1) — kUninitialized, holding the
+    // DECORATED name "Elven Bow (Fine)". Treating that as custom re-marks the
+    // suffix as part of the name and the next GetDisplayName appends a second
+    // one: "Fire I Elven Bow (Fine) (Fine)".
+    // V3: never re-preserve MEO's own composed name. "Fire I Frostbite" doesn't
+    // end with the base name, so the ends_with guard can't see it; on the TRAP-2
+    // self-heal path it would capture whole and nest — "Fire I Fire I Frostbite",
+    // compounding every heal. Re-converting our own work recomposes from scratch.
+    if (auto* xOld = a_xList->GetByType<RE::ExtraTextDisplayData>();
+        xOld && xOld->IsPlayerSet() && !IsMEOBuiltEnchant(ench)) {
+        std::string s = NameWithoutTemper(xOld);
+        const char* bn = a_base->GetName();
+        if (!s.empty() && !(bn && *bn && s.ends_with(bn))) {
+            customName = std::move(s);
+        }
+    }
     // m50: NEVER NG RemoveByType here — this xlist can be exactly {ench, text}
     // (a container-minted purchase whose uid node didn't survive save/load),
     // and emptying the list is the exact shape that null-derefs NG's version.
     SafeRemoveAllByType(a_xList, RE::ExtraDataType::kEnchantment);
-    SafeRemoveAllByType(a_xList, RE::ExtraDataType::kTextDisplayData);  // forge rename dies with it
+    SafeRemoveAllByType(a_xList, RE::ExtraDataType::kTextDisplayData);
     std::string what;
     for (std::size_t s = 0; s < picks.size(); ++s) {
         // Forward a_owner (build-B1 future-proof): identical today (this path is
@@ -4650,6 +4828,34 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
             what += " + ";
         }
         what += std::format("{} I", GemName(g_gems[picks[s]]));
+    }
+    // m51 / F-A2: RebuildInstanceEnchant composed "<gems> <plainBaseName>".
+    // Swap the trailing base name for the preserved custom one, then re-run the
+    // engine's own display-name reconcile (ENGINE_NOTES §2 trap 2 — temperFactor
+    // must match ExtraHealth, so never hand-write it).
+    if (!customName.empty()) {
+        if (auto* xText = a_xList->GetByType<RE::ExtraTextDisplayData>()) {
+            // F3: compare against the temper-free prefix — Rebuild already ran
+            // GetDisplayName, so displayName here is "Fire I Iron Sword (Fine)"
+            // and a raw ends_with(base) would never match on tempered gear.
+            std::string composed = NameWithoutTemper(xText);
+            const char* bn = a_base->GetName();
+            if (!composed.empty() && bn && *bn) {
+                const std::size_t bl = std::strlen(bn);
+                if (composed.size() > bl && composed.ends_with(bn)) {
+                    const std::string kept = composed.substr(0, composed.size() - bl) + customName;
+                    xText->displayNameText = nullptr;
+                    xText->ownerQuest = nullptr;
+                    xText->SetName(kept.c_str());
+                    float health = 1.0f;
+                    if (auto* xHealth = a_xList->GetByType<RE::ExtraHealth>()) {
+                        health = xHealth->health;
+                    }
+                    xText->GetDisplayName(a_base, health);
+                    spdlog::info("[convert]   kept custom name '{}' -> '{}'", customName, kept);
+                }
+            }
+        }
     }
     if (worn && a_owner) {
         EquipCycleWorn(a_owner, a_base, a_xList);  // old ability out, gem live
@@ -4803,8 +5009,54 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
                 if (actor->IsPlayerRef()) {
                     xl.SetOwner(actor->GetActorBase());
                 }
-                StampInstance(hit.tgt->base, &xl, hit.tgt->gemIdx, level);
+                const std::uint16_t phUid =
+                    StampInstance(hit.tgt->base, &xl, hit.tgt->gemIdx, level);
+                // m51 F-A1: PickUpObject can decline (mid-attach actor, 3D not
+                // loaded, engine refusal) and it fails SILENTLY. Unverified, that
+                // leaves the stamped placeholder standing in the world — the m44
+                // visible-duplicate class — while the player's item is gone. Count
+                // before/after; on refusal reap the placeholder and re-mint through
+                // the m47 container path (its own heap list — never the ref's
+                // interior list, which the ref still owns).
+                // Sum the QUANTITY, not the map size: an actor already holding one
+                // of that base keeps size()==1 whether the pickup landed or not.
+                auto held = [&] {
+                    std::int32_t n = 0;
+                    for (auto& [obj, cnt] : actor->GetInventoryCounts(
+                             [&](RE::TESBoundObject& o) { return &o == hit.tgt->base; })) {
+                        n += cnt;
+                    }
+                    return n;
+                };
+                const auto before = held();
                 actor->PickUpObject(ref.get(), 1, false, false);
+                // F6 belt: demand two independent signals before re-granting —
+                // count unmoved AND the ref still alive. If the ref IS gone but
+                // the count didn't move, something consumed it; re-adding would
+                // double-grant, so log and leave it.
+                if (held() == before && !ref->IsDeleted()) {
+                    spdlog::warn("[convert] PickUpObject refused '{}' on {:08X} — reaping the "
+                                 "placeholder and adding directly (no world duplicate)",
+                                 hit.tgt->base->GetName(), actor->GetFormID());
+                    // F4: the placeholder's stamp already WROTE a socket record.
+                    // Reaping the ref without erasing it strands a record keyed to
+                    // a uid nothing carries — m49's ratchet fodder, and it would
+                    // then take part in every future rekey disambiguation.
+                    if (phUid) {
+                        for (int s = 0; s < kMaxSockets; ++s) {
+                            g_sockets.erase(MakeKey(hit.tgt->base->GetFormID(), phUid,
+                                                    static_cast<std::uint8_t>(s)));
+                        }
+                    }
+                    ref->Disable();
+                    ref->SetDelete(true);
+                    if (auto* xl2 = MakeEngineXList()) {
+                        StampInstance(hit.tgt->base, xl2, hit.tgt->gemIdx, level);
+                        actor->AddObjectToContainer(hit.tgt->base, xl2, 1, nullptr);
+                    } else {
+                        actor->AddObjectToContainer(hit.tgt->base, nullptr, 1, nullptr);
+                    }
+                }
             } else {
                 // m47 (issue #2 — replaces the m44 placeholder+reap): corpse or
                 // container. NO world ref at all. m44 handed the engine
@@ -5187,6 +5439,69 @@ void RekeyTransferredSockets(RE::FormID a_base, RE::FormID a_oldC, RE::FormID a_
         return;
     }
 
+    // m51: the family-signature check must guard EVERY adoption path, not just
+    // the ambiguous one. m49 only ran it when >1 records were stranded; the
+    // COMMON case (evUid names a side, or exactly one stranded + one orphan)
+    // adopted with NO verification at all — and the collection predicate can't
+    // tell a MEO orphan from a foreign enchanted instance (both are "enchanted,
+    // record-less"). Concrete corruption that allowed: player has one stranded
+    // record for a base, an enchantment-transfer mod (EDU-class) injects onto
+    // ANOTHER item of that same base, a container transfer adopts our record
+    // onto THEIR item, and the next rebuild overwrites their enchant with the
+    // gem. Hoisted here so both the veto and the disambiguation share it.
+    std::vector<const RE::EffectSetting*> enchFx;
+    if (auto* xe = toXl->GetByType<RE::ExtraEnchantment>(); xe && xe->enchantment) {
+        for (auto* eff : xe->enchantment->effects) {
+            if (eff && eff->baseEffect) {
+                enchFx.push_back(eff->baseEffect);
+            }
+        }
+    }
+    // Does this record set have anything we can vouch on? (all-support or
+    // disabled-family records have no mgef to compare — see below)
+    auto recordCheckable = [&](std::uint16_t uid) {
+        for (int s = 0; s < kMaxSockets; ++s) {
+            auto it = g_sockets.find(MakeKey(a_base, uid, static_cast<std::uint8_t>(s)));
+            if (it == g_sockets.end()) {
+                continue;
+            }
+            auto gi = g_gemByGid.find(it->second.gid);
+            if (gi != g_gemByGid.end() && g_gems[gi->second].mgef) {
+                return true;
+            }
+        }
+        return false;
+    };
+    auto recordMatches = [&](std::uint16_t uid) {
+        bool anyChecked = false;
+        for (int s = 0; s < kMaxSockets; ++s) {
+            auto it = g_sockets.find(MakeKey(a_base, uid, static_cast<std::uint8_t>(s)));
+            if (it == g_sockets.end()) {
+                continue;
+            }
+            auto gi = g_gemByGid.find(it->second.gid);
+            if (gi == g_gemByGid.end()) {
+                return false;  // unknown gem — can't vouch
+            }
+            auto* mgef = g_gems[gi->second].mgef;
+            if (!mgef) {
+                continue;  // support gem (no mgef of its own) — excluded
+            }
+            anyChecked = true;
+            bool inEnch = false;
+            for (auto* fx : enchFx) {
+                if (fx == mgef || SameEffectSig(fx, mgef)) {
+                    inEnch = true;
+                    break;
+                }
+            }
+            if (!inEnch) {
+                return false;  // this record's family isn't in the arriving enchant
+            }
+        }
+        return anyChecked;  // every non-support slot matched, and there was one
+    };
+
     std::uint16_t fromUid = 0;
     if (std::find(stranded.begin(), stranded.end(), a_evUid) != stranded.end()) {
         fromUid = a_evUid;  // event uid named the OLD (stranded) side
@@ -5201,43 +5516,6 @@ void RekeyTransferredSockets(RE::FormID a_base, RE::FormID a_oldC, RE::FormID a_
         // families, so the true source is the stranded record whose gem mgef(s)
         // ALL appear in that enchant. Mis-assignment stays impossible — 0 or >1
         // survivors falls back to the safe skip (§1 doctrine).
-        std::vector<const RE::EffectSetting*> enchFx;
-        if (auto* xe = toXl->GetByType<RE::ExtraEnchantment>(); xe && xe->enchantment) {
-            for (auto* eff : xe->enchantment->effects) {
-                if (eff && eff->baseEffect) {
-                    enchFx.push_back(eff->baseEffect);
-                }
-            }
-        }
-        auto recordMatches = [&](std::uint16_t uid) {
-            bool anyChecked = false;
-            for (int s = 0; s < kMaxSockets; ++s) {
-                auto it = g_sockets.find(MakeKey(a_base, uid, static_cast<std::uint8_t>(s)));
-                if (it == g_sockets.end()) {
-                    continue;
-                }
-                auto gi = g_gemByGid.find(it->second.gid);
-                if (gi == g_gemByGid.end()) {
-                    return false;  // unknown gem — can't vouch
-                }
-                auto* mgef = g_gems[gi->second].mgef;
-                if (!mgef) {
-                    continue;  // support gem (no mgef of its own) — excluded
-                }
-                anyChecked = true;
-                bool inEnch = false;
-                for (auto* fx : enchFx) {
-                    if (fx == mgef || SameEffectSig(fx, mgef)) {
-                        inEnch = true;
-                        break;
-                    }
-                }
-                if (!inEnch) {
-                    return false;  // this record's family isn't in the arriving enchant
-                }
-            }
-            return anyChecked;  // every non-support slot matched, and there was one
-        };
         std::vector<std::uint16_t> cand;
         for (auto u : stranded) {
             if (recordMatches(u)) {
@@ -5253,6 +5531,16 @@ void RekeyTransferredSockets(RE::FormID a_base, RE::FormID a_oldC, RE::FormID a_
                          a_base, stranded.size(), cand.size(), a_evUid);
             return;
         }
+    }
+    // m51 VETO on the unambiguous paths too: only adopt when the arriving
+    // instance's enchant actually contains this record's gem families. When the
+    // record set has nothing checkable (all-support, or a family disabled by a
+    // missing master) we keep the old permissive behaviour rather than strand a
+    // legitimate transfer — the veto can only ever REFUSE a mismatch it can see.
+    if (recordCheckable(fromUid) && !recordMatches(fromUid)) {
+        spdlog::warn("[rekey] {:08X}: uid {} rejected — arriving enchant doesn't carry its "
+                     "gem famil(ies) (foreign/transferred enchant?) — skipped", a_base, fromUid);
+        return;
     }
     if (toUid == fromUid) {
         return;  // same instance — nothing to move

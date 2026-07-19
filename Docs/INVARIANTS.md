@@ -76,14 +76,24 @@ the portable "never again" digest for sibling projects.
    Without resolution every key points into the wrong plugin's FormID space:
    worn gems read record-less (dead), banked XP lost, stale ids can collide
    onto unrelated items. Unresolvable → **drop the record, never guess**.
-8b. **Container-transfer re-key disambiguates by FAMILY SIGNATURE, never
-   guesses** (`RekeyTransferredSockets`, m49). The engine rewrites uids on
-   transfer; when >1 stranded records share a base the true source is the one
-   whose gem mgef(s) all appear in the ARRIVING instance's MEO-built enchant
-   (pointer / `SameEffectSig`). 0 or >1 signature-survivors → SKIP (a strand is
-   recoverable on the next transfer; a mis-assignment corrupts the wrong item —
-   §1 doctrine). One stranded record poisons every later transfer of its base
-   until a match clears it — the ambiguity is a ratchet, not a rare safe-out.
+8b. **Container-transfer re-key adopts ONLY what the family signature vouches
+   for — on EVERY path, not just the ambiguous one** (`RekeyTransferredSockets`,
+   m49 + m51). The engine rewrites uids on transfer. When >1 stranded records
+   share a base, the true source is the unique record whose gem mgef(s) all
+   appear in the ARRIVING instance's MEO-built enchant (pointer /
+   `SameEffectSig`); 0 or >1 survivors → SKIP. **m51:** the same check now
+   VETOES the "unambiguous" paths too (evUid names a side, or exactly-one-
+   stranded) — pre-m51 those adopted UNCHECKED, and the collection predicate
+   cannot tell a MEO orphan from a foreign enchanted instance (an enchantment-
+   transfer mod's inject is the same shape: enchanted, record-less), so the
+   old "never guesses" wording was FALSE — a foreign instance could adopt a
+   stranded record and the next rebuild would overwrite its enchant with the
+   gem. Records with nothing checkable (all-support, disabled family) keep
+   permissive adoption: the veto only refuses a mismatch it can see. A
+   vetoed/ambiguous strand is a RATCHET — it persists until a matching
+   transfer clears it. Known cost (m51 F7): a slot whose gid is entirely
+   unknown (corrupt/ancient co-save) now vetoes permanently rather than being
+   re-adopted on a later transfer.
 8c. **Never call NG `ExtraDataList::RemoveByType`; strip extras via
    `SafeRemoveAllByType` only** (m50). The NG version null-derefs the moment a
    removal EMPTIES the list (ENGINE_NOTES §8) — and an emptied list is a REAL
@@ -93,6 +103,23 @@ the portable "never again" digest for sibling projects.
    TRAP 2, field-proven load-CTD 2026-07-17). Corollary: no code may assume a
    converted/enchanted instance carries a uid node; the kPostLoadGame sweep's
    in-place re-conversion of such an instance is the sanctioned self-heal.
+8d. **Instance-enchant conversion is lossless-or-skip, rider-aware, and
+   self-heal-exempt from the player toggle** (`ConvertInstanceEnchant`, m51).
+   An effect that maps to no family aborts the WHOLE conversion (no silent
+   effect destruction) — but an effect matching a RIDER of an already-picked
+   family is NOT a loss (the family recipe re-emits it; Requiem-class enchants
+   carry rider entries in every player-made ENCH, and minted multi-effect
+   items re-enter this path via the TRAP-2 self-heal). `bConvertPlayerEnchants`
+   gates only genuinely foreign instance enchants: an enchant carrying MEO's
+   own signature (created FF form + `kCostOverride`, per `IsMEOBuiltEnchant`)
+   converts regardless, or the 8c self-heal dies with the toggle. The abort
+   must precede every mutation (name capture, strips, stamps) — the item
+   leaves exactly as it arrived.
+   Custom-name preservation is capture-gated to genuine renames only
+   (`IsPlayerSet()`, and never MEO's own enchant — see ENGINE_NOTES §2 trap 5),
+   and is TRANSIENT BY CONSTRUCTION: the next `RebuildInstanceEnchant` (level-up,
+   socket change, worn reapply after load) recomposes `<gems> <plainBaseName>`
+   and discards it. Making it durable needs a co-save field — deferred.
 9. **Bound every count and bail on short read** (N2, :5867): a truncated
    record must stop the read, not fabricate keys from garbage.
 10. **Clamp deserialized values at the source**: level → [1,5] (:5891) —

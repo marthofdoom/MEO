@@ -28,6 +28,11 @@ sibling project can audit itself against the list in one sitting.
   tempered gear silently fell back to base names; NG's
   `TESDataHandler::LookupForm<T>` rejects abstract intermediates — a 100%
   dead conversion table that compiled clean (v0.31.0).
+- **Never gate a feature on `LookupByEditorID` without checking the form type
+  retains editorIDs at runtime.** The map holds ~15 form types; everything
+  else nullptrs — compiled clean, and read as "another mod overrode us".
+  Worse: po3 Tweaks caches all editorIDs, so the flagship test order masks
+  the failure — a deck pass proves nothing here (m51 F-T1).
 
 ## Iteration & concurrency
 
@@ -106,6 +111,11 @@ sibling project can audit itself against the list in one sitting.
   disassembly, and the wrong inference shipped a UAF to every user. When a fix
   hands memory across an API boundary, prove who owns it, don't infer it from
   behavior.
+- **A verification fallback must clean up what the failed primary path
+  already committed.** m51 F-A1's pickup-refusal re-mint initially left the
+  placeholder's freshly-minted socket record orphaned in the co-save — the
+  fix for one leak class almost shipped another (the m49 stranded-record
+  ratchet).
 
 ## Player-relative logic
 
