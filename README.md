@@ -94,30 +94,27 @@ No other mod is bundled or required. Developed under a Requiem-based list
 ## Installing
 
 Each release zip is a complete MO2 mod — install it like any other. Then one
-post-install step:
+post-install step, run through **Synthesis**:
 
 1. Enable the mod (left pane) and `MEO.esp` (right pane).
-2. Open the mod's folder (right-click → *Open in Explorer*) and run
-   **`MEO.Installer.exe`**. It finds your MO2 instance on its own (vanilla /
-   non-MO2 setups are also supported), reads your *actual* load order
-   (nothing is hardcoded or assumed), and:
-   - generates `MEO - Patch.esp`: your enchanting perk tree with its crafting
-     perks replaced by MEO's gem perks. Any other perk it finds in the tree
-     (staff/wand utility perks and the like) it shows you — description,
-     effects, abilities — and asks whether to keep, one `[Y/n]` per perk.
-     Answers persist in `MEO - Patch.choices.json`; edit or delete it and
-     re-run to change your mind.
+2. In Synthesis, add the MEO patcher — *Git Repository* →
+   `https://github.com/marthofdoom/MEO` — and run your group. It reads your
+   *actual* load order (nothing is hardcoded or assumed), and:
+   - rebuilds your enchanting perk tree with its crafting perks replaced by
+     MEO's gem perks, keeping any unrelated perks it finds (staff/wand utility
+     perks and the like);
    - writes `meo_calibration.json`: per-list gem magnitudes, recipe riders,
      and the enchanted-loot conversion table, all derived from your winning
-     records. Re-run the installer after modlist updates.
-3. Enable `MEO - Patch.esp` **near the end of your load order** (after
-   anything that edits the enchanting perk tree). `MEO.esp` itself declares a
-   single master (Skyrim.esm) and can sit anywhere.
+     records. Re-run the patcher after modlist updates.
+3. Enable the patcher's output plugin **near the end of your load order**
+   (after anything that edits the enchanting perk tree). `MEO.esp` itself
+   declares a single master (Skyrim.esm) and can sit anywhere. If another
+   enchanting overhaul wins the tree anyway, MEO detects it, says so in
+   `MEO.log`, and falls back to granting its perks by Enchanting skill.
 
-The installer is a .NET CLI tool (Mutagen), built untrimmed on public GitHub
-CI — it never launches or touches the game, only reads your load order files
-and writes its outputs. It runs natively on Windows *and* Linux (MO2-under-
-Proton setups work unchanged).
+**MEO ships no executable.** Synthesis is the only install path; the mod
+contains nothing runnable but the SKSE plugin itself. Older guides mentioning
+`MEO.Installer.exe` describe a retired path (dropped in v1.0.5).
 
 ## How to play
 
@@ -217,10 +214,12 @@ does.
   Address-Library-based.
 - **MCM** — MCM Helper config paired with an INI; every gameplay tunable is
   live-editable in game.
-- **`MEO.Installer.exe`** — C# (Mutagen) post-install patcher, CI-built
-  (win-x64, self-contained): resolves the load order without the VFS,
-  derives calibration + conversion from the winning records, and writes
-  `MEO - Patch.esp` with interactive perk curation.
+- **Synthesis patcher** — C# (Mutagen), built from this repo by Synthesis
+  itself: resolves the load order, derives calibration + conversion from the
+  winning records, and rebuilds the enchanting perk tree. The only install
+  path; nothing runnable ships in the mod. (A standalone `MEO.Installer.exe`
+  existed before v1.0.5 and is retired — releases must contain no executable,
+  and `tools/release_native.sh` asserts it.)
 - Papyrus is compile-time only (one empty MCM stub), compiled under Proton
   wine from Linux.
 

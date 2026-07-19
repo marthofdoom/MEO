@@ -6,16 +6,21 @@
 # the MO2 archive layout: the zip root IS the virtual Data folder, so MO2
 # installs it with zero manual file placement — no dropping DLLs by hand.
 #
+# NO EXECUTABLE IS EVER PACKAGED (marth's standing rule, 2026-07-19). Since
+# v1.0.5 the SYNTHESIS PATCHER is the one and only install path — it derives the
+# perk tree and the per-list calibration. The old MEO.Installer.exe path is dead;
+# this script asserts, positively, that the zip contains no executable at all, so
+# a stale artifact or a copied line can never reintroduce one.
+#
 # Layout produced (unzip = Data/):
 #   SKSE/Plugins/MEO.dll                    (+ MEO.pdb if CI produced one)
 #   SKSE/Plugins/MEO/meo_runtime.json
 #   MEO.esp
-#   MEO.Installer.exe                       (CI-built win-x64 post-install patcher)
-#   MEO-README.txt                          (post-install steps)
+#   MEO-README.txt                          (install steps — Synthesis)
 #   fomod/info.xml                          (MO2 metadata card)
 #
 # Usage:
-#   tools/release_native.sh <version> "desc" [--run <id>] [--installer-run <id>] [--esp] [--json]
+#   tools/release_native.sh <version> "desc" [--run <id>] [--esp] [--json]
 # Examples:
 #   tools/release_native.sh v0.2.0-m0 "M0 native skeleton"          # DLL only
 #   tools/release_native.sh v0.4.0-m2 "native socket" --esp --json  # full mod
@@ -29,7 +34,6 @@ VER="${1:?usage: tools/release_native.sh <version> [description] [--run <id>] [-
 shift
 DESC=""
 RUN_ID=""
-INST_RUN_ID=""
 # Every release is a COMPLETE, standalone mod (marth's rule 2026-07-08: MO2
 # install REPLACES a mod's content, so a partial zip = broken download). ESP,
 # MCM config + settings, the compiled MCM script, and the runtime JSON are
@@ -41,7 +45,12 @@ if [[ $# -gt 0 && "$1" != --* ]]; then DESC="$1"; shift; fi
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --run)  RUN_ID="${2:?--run needs an id}"; shift 2 ;;
-        --installer-run) INST_RUN_ID="${2:?--installer-run needs an id}"; shift 2 ;;
+        # Refuse loudly rather than ignore: anyone passing this is working from
+        # the dead exe-installer playbook and needs to know it's gone.
+        --installer-run)
+            echo "ERROR: --installer-run is retired. MEO ships NO executable; the Synthesis" >&2
+            echo "       patcher is the install path. Drop the flag." >&2
+            exit 1 ;;
         --esp|--json) shift ;;  # always-on now; accepted for back-compat
         *) echo "unknown arg: $1" >&2; exit 1 ;;
     esac
@@ -78,11 +87,11 @@ tools/compile.sh MEO_MCM >/dev/null       # Scripts/MEO_MCM.pex (Papyrus, local 
 
 mkdir -p "$STAGE/SKSE/Plugins/MEO"
 cp out/SKSE/Plugins/MEO/meo_runtime.json "$STAGE/SKSE/Plugins/MEO/"
-# The installer derives per-list rider calibration from this catalog at
-# post-install time (write-calibration); it must ship next to the exe.
+# The Synthesis patcher derives per-list rider calibration from this catalog
+# (write-calibration); it must ship inside the mod.
 cp data/gem_catalog.json "$STAGE/SKSE/Plugins/MEO/"
 # Phase 3 pool contract: MintFamilies resolves it BESIDE the catalog —
-# without it the standalone-exe path silently skips auto-minting.
+# without it the patcher silently skips auto-minting.
 cp data/pool_forms.frozen.json "$STAGE/SKSE/Plugins/MEO/"
 # m24 menu skins: three OFL typefaces (Cinzel head / EB Garamond body /
 # Inter sans) + their licenses; the DLL bakes them at init, skins pick.
@@ -93,18 +102,7 @@ cp out/MEO.esp "$STAGE/"
 mkdir -p "$STAGE/MCM";     cp -r out/MCM/. "$STAGE/MCM/"
 mkdir -p "$STAGE/Scripts"; cp out/Scripts/MEO_MCM.pex "$STAGE/Scripts/"
 
-# CI-built win-x64 installer exe (post-install patcher: perk tree + choices).
-# Built on windows-latest from public source — the trust story for Nexus.
-if [[ -z "$INST_RUN_ID" ]]; then
-    INST_RUN_ID=$(gh run list --workflow=installer.yml --status success --limit 1 \
-                  --json databaseId -q '.[0].databaseId')
-    [[ -n "$INST_RUN_ID" ]] || { echo "ERROR: no successful 'installer' run found. Push installer/ and let CI go green first." >&2; exit 1; }
-fi
-echo "== installer exe from run $INST_RUN_ID =="
-gh run download "$INST_RUN_ID" -n MEO-installer -D "$STAGE"
-[[ -f "$STAGE/MEO.Installer.exe" ]] || { echo "ERROR: artifact had no MEO.Installer.exe" >&2; exit 1; }
-
-# MO2 metadata card + post-install steps shipped inside the mod folder.
+# MO2 metadata card + install steps shipped inside the mod folder.
 mkdir -p "$STAGE/fomod"
 cat > "$STAGE/fomod/info.xml" <<EOF
 <fomod>
@@ -112,7 +110,7 @@ cat > "$STAGE/fomod/info.xml" <<EOF
   <Author>marth</Author>
   <Version>$VER</Version>
   <Website>https://github.com/marthofdoom/MEO</Website>
-  <Description>Socketable, leveling enchantment gems. After installing, run MEO.Installer.exe from this mod's folder to adapt the enchanting perk tree to your load order — see MEO-README.txt.</Description>
+  <Description>Socketable, leveling enchantment gems. After installing, run the MEO patcher in Synthesis to adapt the enchanting perk tree and gem calibration to your load order — see MEO-README.txt.</Description>
 </fomod>
 EOF
 cat > "$STAGE/MEO-README.txt" <<'EOF'
@@ -120,46 +118,36 @@ marth's Enchanting Overhaul (MEO)
 =================================
 Socketable, leveling enchantment gems.
 
-RUNNING THE INSTALLER (required once, and again after any load-order change)
+RUNNING THE PATCHER (required once, and again after any load-order change)
 -----------------------------------------------------------------------------
-MEO.Installer.exe adapts MEO to YOUR load order — nothing is hardcoded. It:
-  * replaces the enchanting perk tree's crafting perks with MEO's gem perks
-    (asking you, perk by perk, about anything unusual it finds; answers are
-    saved in "MEO - Patch.choices.json" — edit/delete it to change your mind),
+MEO adapts itself to YOUR load order — nothing is hardcoded. That work is done
+by the MEO patcher for SYNTHESIS. It:
+  * replaces the enchanting perk tree's crafting perks with MEO's gem perks,
   * derives the gem calibration for your list and writes it to
     SKSE/Plugins/MEO/meo_calibration.json — WITHOUT THIS FILE, LOOT
     CONVERSION DOES NOTHING IN GAME.
 
-IMPORTANT: the exe writes its output NEXT TO ITSELF. Always run it from the
-folder it was installed to — never from Downloads or a temp folder.
+MEO ships no executable of any kind. If you are following an older guide that
+mentions "MEO.Installer.exe", that path is retired — use Synthesis.
 
-WITH MO2 (modlists):
+SETUP:
   1. Install this mod and enable it (left pane) + MEO.esp (right pane).
-  2. Right-click the mod -> Open in Explorer -> run MEO.Installer.exe.
-     It finds the MO2 instance above it automatically.
-  3. Enable the generated "MEO - Patch.esp" (right pane, near the end).
+  2. In Synthesis, add the MEO patcher:
+       Git Repository -> https://github.com/marthofdoom/MEO
+     Synthesis builds it from source; leave the default branch/versioning.
+  3. Run the Synthesis group. Enable the patcher's output plugin in your load
+     order (right pane), AFTER any other enchanting overhaul.
 
-WITHOUT A MOD MANAGER (vanilla / manual / Steam Deck):
-  1. Unzip this whole archive into the game's Data folder.
-  2. Run Data/MEO.Installer.exe (on Linux/Deck: with the same Proton/Wine
-     the game uses, from a terminal if possible so you can read the output).
-     It detects the game folder above it and uses the game's own plugins.txt.
-  3. Enable "MEO - Patch.esp" in the in-game CREATIONS/MODS menu.
-
-DID IT WORK? Check that these files now exist next to the exe:
-  MEO - Patch.esp
-  MEO - Patch.choices.json
+DID IT WORK? Check that this file now exists in your MEO mod folder (or your
+Synthesis output, depending on your setup):
   SKSE/Plugins/MEO/meo_calibration.json      <- the important one
-If meo_calibration.json is missing, the run failed partway: run the exe from
-a terminal and read the "CALIBRATION FAILED" message it prints.
 In game, the SKSE log (Documents/My Games/.../SKSE/MEO.log) should say
 "calibration: N family recipe(s), M conversion(s) loaded" — not
 "no calibration file".
 
-The installer never launches or touches the game — it only reads your load
-order and writes the files above. If Windows SmartScreen warns about an
-unrecognized app: the exe is built by public GitHub CI from the sources at
-https://github.com/marthofdoom/MEO (Details -> Run anyway).
+If MEO's perks do not appear in the enchanting tree, MEO.log will say so and
+fall back to granting them by Enchanting skill; that means another enchanting
+overhaul is overriding the tree — load MEO's patch output after it.
 EOF
 
 # Completeness gate: refuse to write a release missing any required file.
@@ -169,15 +157,30 @@ for req in "SKSE/Plugins/MEO.dll" "MEO.esp" "Scripts/MEO_MCM.pex" \
            "SKSE/Plugins/MEO/pool_forms.frozen.json" \
            "SKSE/Plugins/MEO/fonts/head.ttf" "SKSE/Plugins/MEO/fonts/body.ttf" \
            "SKSE/Plugins/MEO/fonts/sans.ttf" \
-           "MEO.Installer.exe" "fomod/info.xml" "MEO-README.txt"; do
+           "fomod/info.xml" "MEO-README.txt"; do
     [[ -f "$STAGE/$req" ]] || { echo "ERROR: release incomplete — missing $req" >&2; exit 1; }
 done
+
+# NO-EXECUTABLE GATE (marth's standing rule). MEO installs via Synthesis and
+# ships nothing runnable. This is a POSITIVE assertion over the staged tree, not
+# a matter of "we didn't add one" — it catches a stale artifact, a resurrected
+# download line, or anything a future edit drags in. Nexus trust depends on it.
+if find "$STAGE" -type f \( -iname '*.exe' -o -iname '*.dll' -o -iname '*.bat' \
+                            -o -iname '*.cmd' -o -iname '*.ps1' -o -iname '*.msi' \) \
+        ! -path "$STAGE/SKSE/Plugins/MEO.dll" | grep -q .; then
+    echo "ERROR: executable content in the release — MEO ships NO executable." >&2
+    echo "       Offending files (only SKSE/Plugins/MEO.dll is allowed):" >&2
+    find "$STAGE" -type f \( -iname '*.exe' -o -iname '*.dll' -o -iname '*.bat' \
+                             -o -iname '*.cmd' -o -iname '*.ps1' -o -iname '*.msi' \) \
+         ! -path "$STAGE/SKSE/Plugins/MEO.dll" -printf '         %P\n' >&2
+    exit 1
+fi
 
 mkdir -p "$DEST"
 ( cd "$STAGE" && zip -qr - . ) > "$ZIP"
 printf '%s\n' "$VER" > "$DEST/VERSION"
 [[ -n "$DESC" ]] && printf '%s\n' "$DESC" > "$DEST/NOTES.txt"
-printf 'built from native run %s, installer run %s\n' "$RUN_ID" "$INST_RUN_ID" >> "$DEST/NOTES.txt"
+printf 'built from native run %s (no executable packaged; installs via Synthesis)\n' "$RUN_ID" >> "$DEST/NOTES.txt"
 
 echo "== manifest (MO2 installs this as Data/) =="
 unzip -l "$ZIP"
