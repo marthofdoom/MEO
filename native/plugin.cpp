@@ -674,7 +674,7 @@ bool         g_supportScaffoldGranted = false;  // co-save v9: test-scaffold sup
 std::uint8_t g_handPlacedMask = 0;              // co-save v10: bitmask of hand-placed support gems dropped (m36i)
 std::unordered_set<std::string> g_discoveredGems;  // co-save v11: gem gids the player has studied (m37 Enchanting XP)
 bool g_needSeedDiscoveries = false;             // m37: pre-v11 save loaded — seed held gems silently, no XP burst
-bool g_treeMode = false;  // MEO - Patch.esp installed: perks come from the tree, not auto-grant
+bool g_treeMode = false;  // MEO perks present in the WINNING enchanting tree (m51b) — never a plugin-name check
 // Cached from the player's perks (refreshed on load + menu close).
 int  g_attuneRank = 0;      // 0..5 → +5% gem magnitude per rank (v1.0.6 marth: was +8%, top-end too high)
 bool g_hasGemCutter = false;  // +50% Gem XP
@@ -1387,33 +1387,35 @@ void ResolveCatalog() {
     // down auto-grant on presence alone left the player unable to earn Attunement
     // by ANY route — silent, permanent, and indistinguishable from "gems are weak".
     // So resolve the WINNING tree and require it to actually contain our perk.
+    // m51b (marth): NO PLUGIN-NAME GATE. The old check was
+    // `LookupModByName("MEO - Patch.esp")` — the filename the RETIRED standalone
+    // exe wrote. Synthesis names a group's output plugin after the GROUP (the same
+    // fact behind the MEO.esp shadowing guard), so that file does not exist on a
+    // modern install: tree mode was DEAD for every Synthesis user since v1.0.5,
+    // the patcher put MEO's perks in the tree, and the DLL kept granting them free
+    // by skill anyway. Whether the perk is in the WINNING tree is the whole
+    // question, and it doesn't care what anyone named their output plugin.
+    //
+    // NOT LookupByEditorID for the AVIF: that map only holds form types that store
+    // an editorID at runtime (~15 of them; ActorValueInfo is NOT one) — it would
+    // compile clean and nullptr for every user, then read as "someone overrode us".
+    // po3 Tweaks caches all editorIDs and LoreRim ships it, so the deck would have
+    // PASSED a check broken for everyone else. ENGINE_NOTES §9. Ask the engine's
+    // own AV table instead.
+    auto* avl = RE::ActorValueList::GetSingleton();
+    const auto* avEnch = avl ? avl->GetActorValue(RE::ActorValue::kEnchanting) : nullptr;
     g_treeMode = false;
-    if (dh->LookupModByName("MEO - Patch.esp") != nullptr) {
-        // NOT LookupByEditorID: that map only holds form types that store an
-        // editorID at runtime (~15 of them; ActorValueInfo is NOT one) — it would
-        // compile clean and nullptr for every user, then read as "someone
-        // overrode us". po3 Tweaks caches all editorIDs and LoreRim ships it, so
-        // the deck would have PASSED a check broken for everyone else.
-        // ENGINE_NOTES §9. Ask the engine's own AV table instead.
-        auto* avl = RE::ActorValueList::GetSingleton();
-        const auto* avEnch = avl ? avl->GetActorValue(RE::ActorValue::kEnchanting) : nullptr;
-        bool found = false;
-        for (auto* p : g_perkAttune) {  // any rank vouches for the tree
-            if (avEnch && p && TreeContainsPerk(avEnch->perkTree, p)) { found = true; break; }
-        }
-        if (found) {
-            g_treeMode = true;
-            spdlog::info("[perks] MEO perks found in the winning enchanting tree: "
-                         "tree mode, auto-grant off");
-        } else {
-            spdlog::warn("[perks] MEO - Patch.esp is loaded but MEO's perks are NOT in the "
-                         "winning AVEnchanting tree (avif={}, attune={}) — another enchanting "
-                         "overhaul overrode it. Falling back to skill-based auto-grant so "
-                         "Attunement stays reachable; re-run the MEO patcher in Synthesis "
-                         "and load its output AFTER that mod to get the perk tree back.",
-                         avEnch ? "ok" : "MISSING", g_perkAttune[0] ? "ok" : "MISSING");
-        }
+    for (auto* p : g_perkAttune) {  // any rank vouches for the tree
+        if (avEnch && p && TreeContainsPerk(avEnch->perkTree, p)) { g_treeMode = true; break; }
     }
+    // Bad load order stays a SILENT failure by design (marth 2026-07-19): one log
+    // line, no in-game nagging. The auto-grant fallback is what keeps Attunement
+    // reachable — that is the fix, not the messaging.
+    spdlog::info("[perks] MEO perks in the winning enchanting tree: {} — {}",
+                 g_treeMode ? "yes" : "no",
+                 g_treeMode ? "tree mode, auto-grant off"
+                            : "granting by Enchanting skill (run the MEO patcher and load "
+                              "its output after other enchanting overhauls to use the tree)");
     // m23: resolve the loot-conversion table against the live load order.
     // NOT LookupForm<TESBoundObject>: that template gates on T::FORMTYPE, and
     // TESBoundObject is an intermediate class with no FORMTYPE of its own
