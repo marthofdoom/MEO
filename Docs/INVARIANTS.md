@@ -65,6 +65,14 @@ the portable "never again" digest for sibling projects.
    Without resolution every key points into the wrong plugin's FormID space:
    worn gems read record-less (dead), banked XP lost, stale ids can collide
    onto unrelated items. Unresolvable → **drop the record, never guess**.
+8b. **Container-transfer re-key disambiguates by FAMILY SIGNATURE, never
+   guesses** (`RekeyTransferredSockets`, m49). The engine rewrites uids on
+   transfer; when >1 stranded records share a base the true source is the one
+   whose gem mgef(s) all appear in the ARRIVING instance's MEO-built enchant
+   (pointer / `SameEffectSig`). 0 or >1 signature-survivors → SKIP (a strand is
+   recoverable on the next transfer; a mis-assignment corrupts the wrong item —
+   §1 doctrine). One stranded record poisons every later transfer of its base
+   until a match clears it — the ambiguity is a ratchet, not a rare safe-out.
 9. **Bound every count and bail on short read** (N2, :5867): a truncated
    record must stop the read, not fabricate keys from garbage.
 10. **Clamp deserialized values at the source**: level → [1,5] (:5891) —
@@ -90,6 +98,13 @@ the portable "never again" digest for sibling projects.
     `WornActiveEffectKeys()` scans the player's inventory only, so an
     ungated cap on NPC gear strips the just-written enchant and orphans its
     record in the co-save permanently (build-B1 — v1.0.6's worst blocker).
+14b. **The m42 living-NPC border has ONE scoped exemption** (m48,
+    marth-approved 2026-07-17): a VENDOR's unworn personal sellables convert at
+    trade time (`ConvertVendorPersonalStock`, dialogue-open + the deferred
+    barter task) via the m47 container recipe ONLY — never the worn/
+    `PlaceObjectAtMe`/`PickUpObject`/re-equip path that m42 exists to prevent.
+    Worn gear is skipped. Every other living-NPC path (`ContainerSink`,
+    `CellAttachSink`) stays gated — do not widen this.
 15. **After any `g_sockets` mutation on a worn item: rebuild → activate →
     redistribute the cap iff the gid's worn count exceeds 2** (`WornGidCount`
     :1177; level-up path :2210-2220, socket/unsocket/destroy mirror it).

@@ -361,6 +361,33 @@ installed in `SKSEPluginLoad` — before the renderer exists):
   reset early + writing `vendorData.lastDayReset` is hand-writing engine
   bookkeeping and risks desyncing vendor gold) — let the engine restock, then
   convert, then ask it to refresh.
+- **Barter stock has THREE sources, not two (m48, 2026-07-17 — field bug).**
+  Beyond (1) the merchant chest and (2) the LVLI re-roll into that chest at
+  barter-open, a vendor also sells (3) their OWN actor personal inventory —
+  LoreRim citizens carry `LootCitizenPocketsCommon`, which chains down to
+  enchanted-jewelry ladders (`…RingList → LItemEnchRingHealth → 'Ring of Major
+  Health' 0FCEFF`). The barter menu lists a vendor's unworn personal sellables
+  alongside the chest. m42 (living-NPC border) removed the CellAttach/
+  ObjectLoaded `ConvertInventory(actor)` sweep that used to convert this, so
+  vendor-personal stock stopped converting — it displayed enchanted but still
+  converted on purchase (player path). Fix `ConvertVendorPersonalStock`
+  (marth-approved scoped m42 exemption): unworn sellables only, via the m47
+  container recipe (no PlaceObjectAtMe/PickUpObject/equip), at dialogue-open +
+  the deferred barter task. **Verified chest map: Belethor = `0009CAF9` via
+  `ServicesWhiterunBelethorsGoods [09CAF5]` merchantContainer — the old
+  `0009CAFE` note was WRONG (that's a different Whiterun vendor, 0001A67C).**
+- **The uid-rekey ambiguity is a permanent RATCHET (m49).** `RekeyTransferred
+  Sockets` skips when >1 stranded records share a base (can't tell which maps
+  to the arriving instance). But ONE stranded record poisons EVERY subsequent
+  transfer of that base forever — it never clears itself. Field case: an
+  ancient fortifystamina orphan on Iron Boots + a bought resistshock Iron Boots
+  → ambiguous → skip → the bought gem invisible in the menu (the `ours` check
+  fails on the rewritten uid). Fix: disambiguate by FAMILY SIGNATURE — the
+  arriving orphan's MEO-built enchant names its gem families, so the true
+  source is the stranded record whose gem mgef(s) all appear in that enchant
+  (pointer or `SameEffectSig`); 0 or >1 survivors → keep skipping
+  (mis-assignment stays impossible). Self-heals a poisoned save on the next
+  drop+re-pickup of the item.
 - `io.IniFilename = nullptr` — never write imgui.ini into the game dir.
 - vcpkg: `imgui` features `dx11-binding`, `win32-binding`; link
   `imgui::imgui d3d11`.
