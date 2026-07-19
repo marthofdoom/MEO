@@ -1120,8 +1120,8 @@ void ResolveCatalog() {
             spdlog::warn("[perks] MEO - Patch.esp is loaded but MEO's perks are NOT in the "
                          "winning AVEnchanting tree (avif={}, attune={}) — another enchanting "
                          "overhaul overrode it. Falling back to skill-based auto-grant so "
-                         "Attunement stays reachable; re-run MEO.Installer.exe and load "
-                         "MEO - Patch.esp AFTER that mod to get the perk tree back.",
+                         "Attunement stays reachable; re-run the MEO patcher in Synthesis "
+                         "and load its output AFTER that mod to get the perk tree back.",
                          avEnch ? "ok" : "MISSING", g_perkAttune[0] ? "ok" : "MISSING");
         }
     }
