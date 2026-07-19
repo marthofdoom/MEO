@@ -421,6 +421,12 @@ MCM_TUNABLES=[
     ("Loot & Spawns","Loot","fVendorGemChance","Vendor gem chance",
      "Per stock item, the chance a vendor also carries a loose gem for sale this restock (up to 3).",
      'f',0.04,0.0,0.25,0.005,"{2}"),
+    # Page is "Loot & Spawns" (this governs what gets converted), but the INI
+    # SECTION stays "UI" — the section is the settings key the DLL parses and
+    # players' saved MCM.ini already carry, so moving the page must never move it.
+    ("Loot & Spawns","UI","bConvertPlayerEnchants","Convert player-enchanted gear to gems",
+     "ON (default) turns enchantments you placed yourself into the matching socketed gems, so no enchanted gear slips past MEO. Turn this OFF if you use a mod that MOVES or UPGRADES enchantments between items (MEO cannot tell a transferred enchantment apart from one you made, and would convert it). Only affects items MEO has not already socketed; nothing is ever converted if any effect would be lost.",
+     'b',1,None,None,None,None),
     ("XP & Balance","XP","fXPPerKill","Gem XP rate",
      "Multiplier on the Gem XP your socketed gems earn from each kill.",
      'f',1.0,0.25,5.0,0.25,"{2}"),
@@ -449,9 +455,6 @@ MCM_TUNABLES=[
     ("XP & Balance","UI","bFullGemNames","Full gem names on items",
      "OFF (default) shortens gem names in socketed-item titles so multi-gem names stay readable — drops \"Fortify\", trims \"Damage\" (Fire II, not Fire Damage II), and abbreviates \"Resist\" to \"Res\". ON restores the full effect names. Applies to worn/socketed gear on the next rebuild (reload or re-equip); loose gems in the pouch always keep their full names.",
      'b',0,None,None,None,None),
-    ("XP & Balance","UI","bConvertPlayerEnchants","Convert player-enchanted gear to gems",
-     "ON (default) turns enchantments you placed yourself into the matching socketed gems, so no enchanted gear slips past MEO. Turn this OFF if you use a mod that MOVES or UPGRADES enchantments between items (MEO cannot tell a transferred enchantment apart from one you made, and would convert it). Only affects items MEO has not already socketed; nothing is ever converted if any effect would be lost.",
-     'b',1,None,None,None,None),
     ("XP & Balance","UI","bStationTakeover","Gem menu replaces enchanting table",
      "Enchanting stations open the gem menu (soul feeding and gem destruction) instead of the vanilla enchanting menu. MEO replaces enchanting entirely; disable only to overlay the vanilla menu instead.",
      'b',1,None,None,None,None),
