@@ -30,7 +30,7 @@ the database; it travels through drop/pickup/containers/saves with no script:
 | `ExtraTextDisplayData` (0x99) | display name (see §2) |
 | `ExtraEnchantment` (0x9B) | the *created* enchantment (see §3) |
 
-## 2. Renaming an instance — the four traps
+## 2. Renaming an instance — the five traps
 
 1. **Force, never add-if-absent.** The engine lazily creates a *blank*
    `ExtraTextDisplayData` for any TEMPERED item (health ≠ 1.0) to render
@@ -53,6 +53,22 @@ the database; it travels through drop/pickup/containers/saves with no script:
    entry that kept the handle from its pickup can read a *stale* name from
    the old world ref. (The enchanting table's output never carries 0x1C —
    it mints a fresh entry.)
+5. **`displayName` INCLUDES the temper suffix after the engine reconcile** —
+   `GetDisplayName(base, health)` writes "Name (Fine)" back into
+   `displayName`; `customNameLength` is the length WITHOUT the temper string
+   (valid when `ownerInstance == kCustomName`). Any string surgery on an
+   instance name (prefix swaps, ends-with tests against the base name) must
+   operate on `displayName.substr(0, customNameLength)`, or it silently fails
+   on every tempered item — which is exactly the renamed-forge-gear case such
+   surgery exists for (m51 F3). MEO routes all such surgery through the
+   `NameWithoutTemper` helper.
+   Corollary: **only a `kCustomName` record is a custom name.** The engine's
+   lazily-created blank for a TEMPERED item is `kUninitialized` and holds the
+   DECORATED name — treat it as custom and you re-mark the suffix as part of the
+   name, so the next `GetDisplayName` appends a second one ("… (Fine) (Fine)").
+   Gate every capture on `IsPlayerSet()` (which is that comparison, and is also
+   the only way to spell it that compiles — the scoped enumerator is not injected
+   into the class scope).
 
 ## 3. A functional instance enchantment (the SKSE recipe)
 
@@ -388,6 +404,23 @@ installed in `SKSEPluginLoad` — before the renderer exists):
   (pointer or `SameEffectSig`); 0 or >1 survivors → keep skipping
   (mis-assignment stays impossible). Self-heals a poisoned save on the next
   drop+re-pickup of the item.
+  drop+re-pickup of the item. NOTE (m50): the rekey sink only fires on
+  container EVENTS — a poisoned instance that additionally lost its uid node
+  across save/load (§1 TRAP 2) is instead healed by the kPostLoadGame
+  `ConvertInventory` sweep re-converting it in place; that strip path crossing
+  an `{ench, text}`-only xlist is what detonated NG's `RemoveByType` (§8).
+- **`TESForm::LookupByEditorID<T>` compiles for any T but resolves only form
+  types that store editorIDs at runtime** (NG 3.7 overriders: BGSKeyword+
+  derived, TESGlobal, TESQuest, TESRace, TESTopic, TESObjectCELL,
+  TESWorldSpace, TESIdleForm, TESObjectANIO, TESSound, TESImageSpaceModifier,
+  BGSHeadPart, BGSSoundDescriptorForm, BGSVoiceType, BGSMusicType). Everything
+  else — **ActorValueInfo included** — returns nullptr on a vanilla runtime.
+  po3 Tweaks' editorID caching populates the map for ALL forms, and LoreRim
+  ships it, **so the deck passes lookups that fail for Nexus users** — never
+  validate an editorID lookup in-game on the deck alone. For AVIFs call the
+  engine's own table: `ActorValueList::GetSingleton()->
+  GetActorValue(RE::ActorValue::kEnchanting)` (m51 F-T1). Keywords
+  (`ActorTypeNPC` etc.) remain legitimately lookup-able.
 - `io.IniFilename = nullptr` — never write imgui.ini into the game dir.
 - vcpkg: `imgui` features `dx11-binding`, `win32-binding`; link
   `imgui::imgui d3d11`.
@@ -428,9 +461,16 @@ Mutagen on Linux (installer/).
   index 277, param1 = AV index (Enchanting=23), operator byte 0x60 =
   GreaterThanOrEqual (3<<5). 32-byte CTDA:
   `<B3xfH2xiiiii` = op, compValue, func, param1, param2, runOn, ref, -1.
-- **DLL coexistence**: the DLL detects the generated patch via
-  `TESDataHandler::LookupModByName("MEO - Patch.esp")` and stands down its
-  skill-based auto-grant so tree perks cost perk points.
+- **DLL coexistence (m51 F-T1: presence is not integrity):** the DLL enters
+  tree mode only when `MEO - Patch.esp` is loaded AND one of MEO's Attunement
+  perks (0x810..0x814) is present in the WINNING `AVEnchanting` tree (BFS
+  over `ActorValueInfo::perkTree`, resolved via `ActorValueList` — see §9
+  editorID trap). A later-loading enchanting overhaul (Ordinator/Vokrii/
+  Thaumaturgy/Master of One) takes the whole AVIF record and MEO's perks
+  vanish from the UI; presence-gated tree mode then also stood down
+  auto-grant, leaving Attunement unreachable by ANY route. Integrity-fail
+  now falls back to skill-based auto-grant with a loud warn naming the fix
+  (re-run the installer, load the patch last).
 
 - **Perk-domain classification (m21 installer)**: perk entry-point effects
   carry their own condition lists declaring what they apply to. Craft perks

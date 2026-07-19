@@ -28,6 +28,11 @@ sibling project can audit itself against the list in one sitting.
   tempered gear silently fell back to base names; NG's
   `TESDataHandler::LookupForm<T>` rejects abstract intermediates — a 100%
   dead conversion table that compiled clean (v0.31.0).
+- **Never gate a feature on `LookupByEditorID` without checking the form type
+  retains editorIDs at runtime.** The map holds ~15 form types; everything
+  else nullptrs — compiled clean, and read as "another mod overrode us".
+  Worse: po3 Tweaks caches all editorIDs, so the flagship test order masks
+  the failure — a deck pass proves nothing here (m51 F-T1).
 
 ## Iteration & concurrency
 
@@ -71,6 +76,46 @@ sibling project can audit itself against the list in one sitting.
   engine to REWRITE uids on container transfer.** The pouch-container menu
   orphaned every banked-XP record in one day (v0.11.0); the rekey sink is
   the only cure.
+- **Never assume a library mutator is total over its input shapes — read the
+  impl before feeding it a boundary case.** NG's `ExtraDataList::RemoveByType`
+  null-derefs when the removal empties the list; it sat compiled into every
+  MEO build and detonated only when the first `{ench, text}`-only xlist (a
+  bought item whose uid node didn't survive save/load) reached a strip site —
+  a deterministic every-load CTD on that save (m50, MEO.dll+0x7C4EB). The
+  crash was in library code, but the SHIP decision that mattered was ours:
+  strip sites must own their empty-list behavior (`SafeRemoveAllByType`).
+- **Two sequential ID allocators must never share one freeze anchor.** A
+  `max+1` scan that can see a reserved band's fids leapfrogs the band on the
+  next regen; MEO keeps `pool_forms.frozen.json` separate from
+  `gem_forms.frozen.json` and hard-fails the curated allocator at the band
+  edge instead. And freeze guards must trip BOTH directions — shrinking a
+  reserved pool passes a base/drift check silently while dropping shipped
+  forms out of users' saves.
+- **Per-user append-only identity state must fail LOUD when unreadable,
+  never fall back to empty.** An empty fallback re-runs first-time
+  assignment and silently re-keys everything downstream (MEO pool slots →
+  saved gems change species). And a raw parse exception that names the file
+  invites the user to delete it — same reset. Catch, explain, refuse.
+- **Never hand an ownership-taking engine API a pointer you also own and
+  destroy.** m44 stamped `&placeholderRef->extraList`, passed it to
+  `AddObjectToContainer` (which LINKS, not copies — the entry now owns it),
+  then deleted the placeholder → the container held a freed list → a
+  use-after-free that rode converted loot into inventory and crashed at an
+  engine offset with MEO nowhere on the stack (issue #2). Give the API a heap
+  object built by the engine's own ctor that it is meant to keep. Two owners
+  of one allocation, one of them freeing it, is the whole bug class.
+- **Review the API's ownership CONTRACT, not just the visible symptom.** The
+  m44 review signed off because the observable bug (a duplicate under the
+  counter) was gone and no leak showed — an inference about copy-vs-link that
+  was never checked against the engine. The contract was only knowable by
+  disassembly, and the wrong inference shipped a UAF to every user. When a fix
+  hands memory across an API boundary, prove who owns it, don't infer it from
+  behavior.
+- **A verification fallback must clean up what the failed primary path
+  already committed.** m51 F-A1's pickup-refusal re-mint initially left the
+  placeholder's freshly-minted socket record orphaned in the co-save — the
+  fix for one leak class almost shipped another (the m49 stranded-record
+  ratchet).
 
 ## Player-relative logic
 
