@@ -1,0 +1,2 @@
+Phase 3 public BETA: automatic gem minting for load-order enchantment mods + 'Allow uncovered enchanted loot' strip toggle. Community-test build; see CHANGELOG caveats.
+built from native run 29781978515 (no executable packaged; installs via Synthesis)
