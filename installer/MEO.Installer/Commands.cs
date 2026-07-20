@@ -964,6 +964,22 @@ static class Commands
                                             "strip-2fx-uncovered", "keep-generic-multifx",
                                             "keep-generic-uncovered" };  // phase 3: minted single-fx
         var conversions = new List<object>();
+        // Uncovered-strip tag (bAllowUncoveredGenerics OFF, marth 2026-07-20):
+        // the enchanted generics MEO cannot cleanly convert. Synthesis only TAGS
+        // them (base fid + plain-base target); the DLL swaps enchanted base ->
+        // plain base at runtime when the toggle is OFF, and does nothing when ON.
+        // Non-destructive here (no ESP/LVLI edit), so the toggle is truly live.
+        // ONLY honored-class corroborated generics reach this loop, so
+        // artifacts/uniques/quest (keep-named/keep-cast) and NPC-hand twins
+        // (review-npc-twin) can NEVER be tagged — they have no StripBase target.
+        var uncovered = new List<object>();
+        void Tag(FormKey item, FormKey plain) => uncovered.Add(new Dictionary<string, object>
+        {
+            ["plugin"] = item.ModKey.FileName.String,
+            ["fid"] = $"0x{item.ID:X6}",
+            ["basePlugin"] = plain.ModKey.FileName.String,
+            ["baseFid"] = $"0x{plain.ID:X6}",
+        });
         int noFamily = 0, pinned = 0, partial = 0, machineryWaived = 0;
         var pinnedByEnch = new Dictionary<FormKey, string>();
         var waivedFx = new Dictionary<string, int>();
@@ -990,6 +1006,7 @@ static class Commands
                                    + $"cast={bm.CastType}/{bm.TargetType}]";
                             noFamilyFx[nm] = noFamilyFx.GetValueOrDefault(nm) + 1;
                         }
+                Tag(r.Key, baseKey);   // no gem family — strippable when OFF
                 continue;
             }
             // Minted families: only same-domain items convert — the cast-
@@ -998,7 +1015,7 @@ static class Commands
             // Wrong-domain carriers fall back to uncovered (the safe side).
             if (mintedDomain.TryGetValue(famKey, out var mdom) &&
                 (mdom == "weapon") != cache.TryResolve<IWeaponGetter>(r.Key, out _))
-            { mintedDomainSkip++; continue; }
+            { mintedDomainSkip++; Tag(r.Key, baseKey); continue; }  // wrong-domain — strippable when OFF
             // Lossless gate (marth's ruling, 2026-07-10): convert ONLY when
             // every UNCOVERED companion is either carried by the family's
             // adopted riders or is hidden framework machinery (HideInUI —
@@ -1033,6 +1050,12 @@ static class Commands
             {
                 pinned++;
                 pinnedByEnch.TryAdd(r.Ench, string.Join(", ", lost.Distinct()));
+                // marth 2026-07-20: a family exists but can't convert cleanly ->
+                // "considered lost already if it can't cleanly convert" (unless
+                // artifact/unique/quest, which never reach this loop). The m51
+                // lossless gate still protects it under toggle ON (default); under
+                // OFF it is strippable like any uncovered item.
+                Tag(r.Key, baseKey);
                 continue;
             }
             if (waived) machineryWaived++;
@@ -1057,6 +1080,9 @@ static class Commands
             Console.WriteLine($"  pinned: ench {ench} would lose [{lostFx}]");
         foreach (var (fx, n) in waivedFx.OrderByDescending(kv => kv.Value))
             Console.WriteLine($"  waived machinery x{n}: {fx}");
+        Console.WriteLine($"uncovered: {uncovered.Count} enchanted generic(s) tagged strippable "
+                          + "(DLL strips these when bAllowUncoveredGenerics is OFF; artifacts/"
+                          + "uniques/quest never tagged)");
 
         var doc = new Dictionary<string, object>
         {
@@ -1070,6 +1096,9 @@ static class Commands
         // skips its conversions at family lookup (gid not in g_gemByGid) — so
         // this calibration stays safe on every shipped DLL.
         if (mintedFams.Count > 0) doc["minted"] = mintedFams;
+        // "uncovered" is additive like "minted": a pre-feature DLL ignores the
+        // key. The strip only ever fires when the player sets the toggle OFF.
+        if (uncovered.Count > 0) doc["uncovered"] = uncovered;
         File.WriteAllText(outPath, System.Text.Json.JsonSerializer.Serialize(doc,
             new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
         Console.WriteLine($"wrote {outPath} ({outFams.Count} matched famil(ies), " +
