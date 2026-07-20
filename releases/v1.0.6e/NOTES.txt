@@ -1,0 +1,2 @@
+Hotfix: m48+m49 vendor conversion/rekey, m51 EDU-class enchant hijack + lossless conversion + tree-mode integrity, exe-free packaging
+built from native run 29704029931 (no executable packaged; installs via Synthesis)
