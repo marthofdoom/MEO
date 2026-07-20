@@ -749,6 +749,27 @@ struct ConvTarget {
 };
 std::unordered_map<RE::FormID, ConvTarget> g_convert;  // runtime item id -> target
 
+// m52 uncovered-generic strip (bAllowUncoveredGenerics OFF): enchanted generics
+// MEO cannot cleanly convert. Synthesis TAGS them (never destroys); the DLL swaps
+// the enchanted base for the plain base at runtime ONLY when the toggle is OFF —
+// same base-swap machinery as conversion, minus the gem. Never an ExtraDataList
+// strip (these are base-enchanted forms, not instance enchants). Artifacts/
+// uniques/quest are never tagged (no StripBase target in the installer).
+struct CalUncovered {
+    std::string plugin;      RE::FormID fid = 0;
+    std::string basePlugin;  RE::FormID baseFid = 0;
+};
+std::vector<CalUncovered> g_calUncovered;
+std::unordered_map<RE::FormID, RE::TESBoundObject*> g_stripUncovered;  // ench base id -> plain base
+
+// m52: a base is worth sweeping if it converts, OR (toggle OFF) it strips. The
+// pre-check gates (cell-attach, container-sink) use this so a strip-only holder
+// isn't skipped as "nothing to do".
+inline bool NeedsSweep(RE::FormID a_id) {
+    return g_convert.contains(a_id) ||
+           (!g_allowUncoveredGenerics && g_stripUncovered.contains(a_id));
+}
+
 // ── Phase 3: minted (runtime) gem families ────────────────────────────
 // The installer's MintFamilies promotes uncovered enchant clusters onto the
 // ESP's reserved pool (MISC 0xB00+, INVARIANTS 23/26) and describes them in
@@ -798,6 +819,7 @@ static void LoadCalibration() {
     g_calLevels.clear();
     g_calCurves.clear();
     g_calConversions.clear();
+    g_calUncovered.clear();
     g_calMinted.clear();
     nlohmann::json j;
     try {
@@ -877,6 +899,26 @@ static void LoadCalibration() {
         spdlog::error("calibration conversions parse failed ({}): {} — no loot conversion",
                       kPath, ex.what());
         g_calConversions.clear();
+    }
+    // m52 uncovered-strip tag — own try/catch, failure clears only itself (a dead
+    // section = strip feature inert, nothing destroyed). Same shape as conversions.
+    try {
+        if (j.contains("uncovered")) {
+            for (const auto& u : j.at("uncovered")) {
+                CalUncovered cu;
+                cu.plugin = u.at("plugin").get<std::string>();
+                cu.fid = static_cast<RE::FormID>(
+                    std::stoul(u.at("fid").get<std::string>(), nullptr, 16));
+                cu.basePlugin = u.at("basePlugin").get<std::string>();
+                cu.baseFid = static_cast<RE::FormID>(
+                    std::stoul(u.at("baseFid").get<std::string>(), nullptr, 16));
+                g_calUncovered.push_back(std::move(cu));
+            }
+        }
+    } catch (const std::exception& ex) {
+        spdlog::error("calibration uncovered parse failed ({}): {} — no uncovered strip",
+                      kPath, ex.what());
+        g_calUncovered.clear();
     }
     // Phase 3 "minted" section — parsed PER ENTRY, unlike the families block
     // above: one malformed minted family must cost only itself, never the
@@ -1462,6 +1504,40 @@ void ResolveCatalog() {
         spdlog::info("[convert] table resolved: {} live, {} skipped (item {}, base {}, gem {})",
                      convOk, convItemMiss + convBaseMiss + convGemMiss,
                      convItemMiss, convBaseMiss, convGemMiss);
+    }
+    // m52: resolve the uncovered-strip table the same way. Two integrity guards:
+    // (1) DISJOINTNESS — if a fid is already a conversion source, conversion wins
+    // (an item with a family must never be stripped); (2) never-remove-without-
+    // replace — a row whose plain-base target is unresolvable is dropped, so the
+    // strip can only ever swap to a live form, never delete-and-vanish. A target
+    // that is itself a strip/convert source is dropped (cyclic).
+    g_stripUncovered.clear();
+    int upOk = 0, upItemMiss = 0, upBaseMiss = 0, upConvWins = 0;
+    for (const auto& cu : g_calUncovered) {
+        auto* itemForm = dh->LookupForm(cu.fid, cu.plugin);
+        auto* item = itemForm ? itemForm->As<RE::TESBoundObject>() : nullptr;
+        if (!item) { ++upItemMiss; continue; }
+        if (g_convert.contains(item->GetFormID())) { ++upConvWins; continue; }
+        auto* baseForm = dh->LookupForm(cu.baseFid, cu.basePlugin);
+        auto* base = baseForm ? baseForm->As<RE::TESBoundObject>() : nullptr;
+        if (!base) { ++upBaseMiss; continue; }  // never remove without a live replacement
+        g_stripUncovered[item->GetFormID()] = base;
+        ++upOk;
+    }
+    int upCyclic = 0;
+    for (auto it = g_stripUncovered.begin(); it != g_stripUncovered.end();) {
+        const auto tid = it->second->GetFormID();
+        if (g_stripUncovered.contains(tid) || g_convert.contains(tid)) {
+            it = g_stripUncovered.erase(it);
+            ++upCyclic;
+        } else {
+            ++it;
+        }
+    }
+    if (upOk + upItemMiss + upBaseMiss + upConvWins + upCyclic > 0) {
+        spdlog::info("[strip] uncovered table resolved: {} live, skipped (item {}, base {}, "
+                     "conv-wins {}, cyclic {})",
+                     upOk, upItemMiss, upBaseMiss, upConvWins, upCyclic);
     }
     spdlog::info("catalog resolved: {}/{} gems live (+{} minted), {} socketable gem items, pouch={}, "
                  "mentor={}, soulCairn={}, bossType={}",
@@ -2269,8 +2345,22 @@ static void ApplyIniFile(const char* a_path) {
 // (written by MCM Helper) is read last so it wins. Called at load and re-called
 // live on menu close (ReloadConfigIfChanged) so MCM edits apply immediately.
 void ReadConfig() {
+    const bool wasAllow = g_allowUncoveredGenerics;
     ApplyIniFile("Data/SKSE/Plugins/MEO.ini");
     ApplyIniFile("Data/MCM/Settings/MEO.ini");
+    // m52 live toggle: on ON->OFF, strip the player's already-owned uncovered gear
+    // immediately (one queued sweep, main thread). Everything else catches up on
+    // its natural trigger (container arrival, cell attach, vendor open, next load).
+    // OFF->ON needs nothing — source-resumes (marth): new drops just stop being
+    // stripped; already-stripped instances stay plain (no per-instance restore).
+    if (wasAllow && !g_allowUncoveredGenerics && !g_stripUncovered.empty()) {
+        SKSE::GetTaskInterface()->AddTask([]() {
+            if (auto* pc = RE::PlayerCharacter::GetSingleton()) {
+                spdlog::info("[strip] toggle ON->OFF — sweeping player inventory");
+                ConvertInventory(pc);
+            }
+        });
+    }
     // m38d: bEnableLogging gates ALL file logging in one place — flip the spdlog
     // level rather than guard every call site. Default on; MCM re-reads on menu
     // close, so toggling takes effect immediately.
@@ -4903,10 +4993,72 @@ RE::ExtraDataList* MakeEngineXList() {
     return ctor(mem);
 }
 
+// m52: strip uncovered enchanted generics to plain gear (bAllowUncoveredGenerics
+// OFF). Deliberately SEPARATE from ConvertInventory's conversion logic so the two
+// regimes never cross: this only ever touches bases in g_stripUncovered, does a
+// pure base-swap (RemoveItem -> AddObjectToContainer plain, no gem, no uid, no
+// ExtraDataList surgery, no co-save), and re-equips a worn item so the wearer is
+// never left bare. Returns the count stripped. Inherits every holder-level
+// protection from its callers (m42 living-NPC border, quest/persistent deferrals).
+int StripUncoveredInventory(RE::TESObjectREFR* a_holder) {
+    if (!a_holder || g_allowUncoveredGenerics || g_stripUncovered.empty()) {
+        return 0;
+    }
+    auto* actor = a_holder->As<RE::Actor>();
+    struct SHit { RE::TESBoundObject* old; RE::TESBoundObject* plain; std::int32_t count; bool worn; };
+    std::vector<SHit> hits;
+    for (auto& [obj, data] : a_holder->GetInventory()) {
+        if (data.first <= 0) continue;
+        auto it = g_stripUncovered.find(obj->GetFormID());
+        if (it == g_stripUncovered.end()) continue;
+        // Skip a unit carrying its OWN instance enchant (an EDU-class inject on
+        // top of the base enchant, or MEO's own socket) — stripping the base must
+        // never silently destroy a second, unrelated enchant source. Conservative:
+        // if any extra list on this stack has kEnchantment, leave the whole stack.
+        bool hasInstance = false;
+        if (data.second && data.second->extraLists) {
+            for (auto* xl : *data.second->extraLists) {
+                if (xl && (xl->HasType(RE::ExtraDataType::kEnchantment) ||
+                           xl->HasType(RE::ExtraDataType::kAliasInstanceArray))) {
+                    hasInstance = true;
+                    break;
+                }
+            }
+        }
+        if (hasInstance) continue;
+        bool worn = data.second && data.second->IsWorn();
+        hits.push_back({ obj, it->second, data.first, worn });
+    }
+    int stripped = 0;
+    for (const auto& h : hits) {
+        a_holder->RemoveItem(h.old, h.count, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
+        // Plain items stack: one add of the whole count, no per-unit loop, no ref.
+        a_holder->AddObjectToContainer(h.plain, nullptr, h.count, nullptr);
+        // Re-equip so a living wearer (in practice the player; m42 keeps living
+        // NPCs out of these sweeps) is not left with an empty slot. Plain gear, so
+        // no ability to apply — this is the whole action, unlike conversion.
+        if (actor && !actor->IsDead() && h.worn) {
+            RE::ActorEquipManager::GetSingleton()->EquipObject(
+                actor, h.plain, nullptr, 1, nullptr, false, false, false, true);
+        }
+        spdlog::info("[strip] {:08X} '{}'{}: '{}' x{} -> '{}' (uncovered, toggle off)",
+                     a_holder->GetFormID(), a_holder->GetName(), actor ? "" : " (container)",
+                     h.old->GetName(), h.count, h.plain->GetName());
+        stripped += h.count;
+    }
+    return stripped;
+}
+
 int ConvertInventory(RE::TESObjectREFR* a_holder) {
     auto* actor = a_holder ? a_holder->As<RE::Actor>() : nullptr;
-    if (!a_holder || g_convert.empty()) {
+    if (!a_holder) {
         return 0;
+    }
+    // m52: the uncovered strip runs first and independently; it has work even when
+    // the conversion table is empty, so it must precede the g_convert early-out.
+    int converted = StripUncoveredInventory(a_holder);
+    if (g_convert.empty()) {
+        return converted;
     }
     struct Hit {
         RE::TESBoundObject* old;
@@ -4943,7 +5095,7 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
     if (!hits.empty() || (actor && actor->IsPlayerRef())) {
         OpenEnchHumMuteWindow(4000);
     }
-    int converted = 0;
+    // 'converted' already holds the strip count from StripUncoveredInventory above.
     // m25d (marth's helmet/cuirass): when the PLAYER sweep misses enchanted
     // gear, say exactly what and why — an enchanted BASE not in the table is
     // an installer question; an INSTANCE enchant (on the copy, not the
@@ -5185,6 +5337,33 @@ int ConvertVendorPersonalStock(RE::Actor* a_vendor) {
 // cell attach — but only disposable clutter. Persistent and quest-aliased
 // refs are exactly the ones scripts point at, so they keep converting on
 // pickup (ContainerSink) instead of being replace-and-deleted here.
+// m52: strip a loose world item to plain (toggle OFF). Same base-swap-with-
+// placement as ConvertWorldRef, same deferrals, minus the gem stamp. Kept
+// separate so the proven conversion path stays byte-identical.
+void StripWorldRef(RE::TESObjectREFR* a_ref, RE::TESBoundObject* a_base, RE::TESBoundObject* a_plain) {
+    // Same three deferrals as conversion — a stripped-on-pickup item still ends
+    // up plain, just later, and these refs must not be swapped in place.
+    if ((a_ref->formFlags & RE::TESObjectREFR::RecordFlags::kPersistent) != 0) return;
+    if (a_ref->extraList.GetCount() > 1) return;
+    if (a_ref->extraList.HasType(RE::ExtraDataType::kAliasInstanceArray)) return;
+    if (a_ref->extraList.HasType(RE::ExtraDataType::kEnchantment)) return;  // don't destroy an instance enchant
+    auto* node3D = a_ref->Get3D();
+    if (!node3D) return;  // no visible spot — strips on pickup instead
+    const RE::NiPoint3 visiblePos = node3D->world.translate;
+    const RE::NiPoint3 shelfAngle = a_ref->data.angle;
+    RE::TESForm* const  owner     = a_ref->GetOwner();
+    const RE::FormID    srcID     = a_ref->GetFormID();
+    auto newRef = a_ref->PlaceObjectAtMe(a_plain, false);
+    if (!newRef) return;
+    a_ref->Disable();
+    a_ref->SetDelete(true);
+    if (owner) newRef->extraList.SetOwner(owner);
+    newRef->data.angle = shelfAngle;
+    newRef->SetPosition(visiblePos);
+    spdlog::info("[strip] world ref {:08X} '{}' -> '{}' (uncovered, toggle off)",
+                 srcID, a_base->GetName(), a_plain->GetName());
+}
+
 void ConvertWorldRef(RE::TESObjectREFR* a_ref) {
     if (!a_ref || a_ref->IsDisabled() || a_ref->IsDeleted()) {
         return;
@@ -5195,6 +5374,11 @@ void ConvertWorldRef(RE::TESObjectREFR* a_ref) {
     }
     auto it = g_convert.find(base->GetFormID());
     if (it == g_convert.end()) {
+        // m52: not convertible — strip to plain if tagged uncovered and OFF.
+        if (!g_allowUncoveredGenerics) {
+            auto su = g_stripUncovered.find(base->GetFormID());
+            if (su != g_stripUncovered.end()) StripWorldRef(a_ref, base, su->second);
+        }
         return;
     }
     // m36f (Fable): these three deferrals are BY DESIGN — the item still converts,
@@ -5712,7 +5896,7 @@ public:
             SKSE::GetTaskInterface()->AddTask([handle]() {
                 if (auto ref = handle.get()) {
                     auto* b = ref->GetBaseObject();
-                    if (b && g_convert.contains(b->GetFormID())) {
+                    if (b && NeedsSweep(b->GetFormID())) {
                         ConvertWorldRef(ref.get());  // m26: no jarring names on shelves
                     } else if (b && b->Is(RE::FormType::Weapon)) {
                         MaybeStampWorldWeapon(ref.get());
@@ -5773,7 +5957,7 @@ public:
                     bool staticConvertible = false;
                     if (cont) {
                         cont->ForEachContainerObject([&](RE::ContainerObject& o) {
-                            if (o.obj && g_convert.contains(o.obj->GetFormID())) {
+                            if (o.obj && NeedsSweep(o.obj->GetFormID())) {
                                 staticConvertible = true;
                                 return RE::BSContainer::ForEachResult::kStop;
                             }
@@ -6173,7 +6357,8 @@ public:
         }
         // m23: a convertible enchanted generic just landed somewhere (chest
         // generation, corpse loot, purchase, pickup) — convert it in place.
-        if (g_convert.contains(base)) {
+        // m52: OR an uncovered generic to strip when the toggle is OFF.
+        if (NeedsSweep(base)) {
             const RE::FormID holder = a_event->newContainer;
             SKSE::GetTaskInterface()->AddTask([holder]() {
                 if (auto* ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(holder)) {
