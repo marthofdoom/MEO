@@ -4,6 +4,102 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.7-beta1 — Phase 3: auto-minting + the uncovered-loot toggle (m45–m52, 2026-07-20)
+
+**PUBLIC BETA (Nexus preview file).** The first 1.0.7 build. It adds automatic
+gem coverage for enchantment mods your load order adds — MEO no longer only knows
+its own ~54 curated families, it now MINTS new gem families from the enchanted
+loot in *your* list at patch time. This is the big feature and the reason it's a
+beta: the minting and the new strip toggle have been proven in the patcher and at
+build time, but NOT yet validated across a full in-game playthrough on an
+enchant-heavy list. That's what this beta is for. Save-safe over v1.0.6x (co-save
+schema unchanged, v11); the pool grew append-only so existing socketed gems never
+move.
+
+### New: automatic family minting (phase 3)
+- **MEO mints gem families for enchantments it doesn't ship a curated gem for**
+  (m45, S1–S3). The Synthesis patcher scans your load order's enchanted generic
+  loot, clusters it by effect, and assigns each viable family a slot in a reserved
+  pool of pre-made gem forms; the DLL registers them at runtime from the
+  calibration. On a Summermyst + Thaumaturgy list that is ~70+ new families
+  (Balefire, Soul Harvest, Spell Absorption, Stormbringer, Sun Damage, the
+  Weakness-to-X lines, and so on) on top of the curated set.
+- **Multi-effect minting (BETA-within-the-beta)** (e3838b6). When an enchantment
+  is one concept built from several magic effects (a primary plus real
+  sub-effects), MEO carries the sub-effects on the minted gem as riders — closest
+  to parity with the original item. A Synthesis setting ("Mint multi-effect
+  recipes (BETA)") toggles it; ON by default. Single-effect minting is unaffected.
+- **128-slot pool** (beb5eaa, grown from 32→64→128). One enchantment mod
+  (Summermyst) alone used 54 slots; a second mod overflowed 64. The pool is now
+  128 (ESL-safe, 128 further slots still in reserve), so a two-or-three
+  enchantment-mod list mints everything viable with room to spare.
+- **Bundled effect rulings** (4a4496d, 72a6ed5). Some enchantments are built from
+  hidden bookkeeping effects that would otherwise block their own family from
+  minting — Summermyst's "Drain Skills" is one visible effect plus 17 invisible
+  per-skill workers. MEO now ships rulings that waive that machinery, so those
+  families mint and convert instead of being stranded. Waivers ship with the mod
+  and apply automatically; a mod your list doesn't have is simply inert.
+
+### New: "Allow uncovered enchanted loot" toggle (m52)
+- An MCM toggle on **Loot & Spawns**, **default ON** (today's behavior). ON: any
+  enchanted loot MEO still has no gem family for keeps its enchantment and appears
+  normally. **OFF: that loot is stripped to plain gear**, so nothing enchanted
+  slips past MEO. The strip is a live, in-game toggle — no re-patch to flip. It is
+  a base-swap, not a destructive record edit: Synthesis only TAGS which generics
+  are strippable, the DLL does the swap at runtime.
+- **Unique items, artifacts, and quest items are NEVER stripped**, in either
+  toggle state — they are structurally excluded at tag time, not by a runtime
+  guess. Player-made enchants, MEO's own sockets, and enchantments injected by
+  transfer mods are also never stripped.
+- **Source-resumes**: an item already stripped stays plain even if you turn the
+  toggle back ON; new drops resume enchanted (loot tables are never edited).
+
+### Fixes folded in from the 1.0.6 hotfix line + new this cycle
+- **v1.0.6c (m47)** — converted-loot use-after-free: buying/looting converted
+  gear then changing cells could crash. AddObjectToContainer LINKS (not copies)
+  the extra-data list; the fix mints on an engine-owned heap list.
+- **v1.0.6d (m50)** — every-load crash stripping a converted item that lost its
+  unique-ID node across save/load: NG's `RemoveByType` null-derefs when a strip
+  empties the list. `SafeRemoveAllByType` fixes it; affected saves self-heal.
+- **EDU-class enchant hijack + lossless conversion (m51)**. If you use a mod that
+  MOVES or UPGRADES enchantments between items, MEO could convert a transferred
+  enchant into a gem or, worse, silently drop effects it couldn't fully map. Now:
+  a new **"Convert player-enchanted gear to gems"** toggle (default ON — turn OFF
+  if you use such a mod), and conversion is **lossless-or-skip** — if any effect
+  would be lost, the item is left enchanted instead of partially converted. A
+  converted item also keeps a custom name.
+- **Tree mode now follows the winning perk tree, not a filename (m51b)**. MEO
+  hands out its enchanting perks through the perk tree when its patch wins that
+  tree, and by Enchanting skill otherwise. It now decides on whether MEO's perk is
+  actually in the winning tree — so a load order where another enchanting overhaul
+  overrides the tree correctly falls back instead of leaving perks unreachable.
+- **m48/m49** — vendor "personal stock" (the merchant's own worn/sold gear) now
+  converts, and a container transfer no longer mis-assigns a socket record between
+  two items of the same base.
+- **m46** — a mod renaming an effect no longer rebrands unrelated gem recipes.
+- **Installer/Synthesis hardening (06f316e, 4c4167b)** — refuses to run if a
+  Synthesis group named "MEO" would overwrite the real MEO.esp; reads non-English
+  (UTF-8) plugin strings correctly; and the patcher builds through a repo solution
+  as Synthesis requires (it was silently failing to build for a stretch of 1.0.5–
+  1.0.6b).
+- **No executable is ever packaged** (d4e4bc8). MEO installs via Synthesis only;
+  the release now asserts the zip contains nothing runnable but the SKSE plugin.
+
+### CAVEATS — please read before testing
+- **Phase-3 minting is not yet playthrough-validated.** It is proven at patch/build
+  time; this beta exists to test it live. Expect to report minted gems that feel
+  off, misnamed, or mis-scaled.
+- **The uncovered-loot strip is a one-way, no-undo operation** and has not been
+  run in a live cell. It ships **default ON (safe)** — you only get the strip if
+  you deliberately turn it OFF. If you do, back up a save first.
+- **Multi-effect minting is beta within the beta** — the rider recipes are a
+  best-effort approximation, not authored parity.
+- **Re-run the MEO Synthesis patcher after installing**, and after any load-order
+  change — minting and calibration are derived from *your* list.
+- **The Synthesis settings page needs the patcher versioned to a build that
+  contains it** — this tagged beta does; if you point Synthesis at an older tag
+  the page renders empty.
+
 ## v1.0.6b — NPC-border hardening + loose-spawn placement fixes + MCM version + leveling nudge (m42–m44, 2026-07-15)
 
 Point release over v1.0.6. Same feature set; stability, placement, and pacing fixes.
