@@ -1,0 +1,107 @@
+{
+  "comment": "Human-curated rulings. A ruled effect never counts as conversion loss AND never rides on gems. Add entries when 'pinned:'/'no-family fx:' lines name hidden machinery rather than real loot value.",
+  "waivedEffects": [
+    {
+      "formKey": "051139:Summermyst - Enchantments of Skyrim.esp",
+      "editorId": "SUM_Drain Skill - Invisible",
+      "why": "Summermyst implements ONE 'Drain Skills' enchantment as a visible primary (0x051143) plus 17 invisible per-skill PeakValueModifier workers (HideInUI). They are implementation machinery, not loot value. Unwaived they exceed the 4-rider cap, so every carrier fails the mint gate (convertibleItems==0) AND the items have no family to convert to \u2014 each blocks the other, stranding 2856 items as enchanted loot. Waiving the workers lets the visible primary mint a family and the items convert on it.",
+      "revisit": "If Summermyst restructures Drain Skills, re-derive from the no-family fx report."
+    },
+    {
+      "formKey": "05113D:Summermyst - Enchantments of Skyrim.esp",
+      "editorId": "SUM_Drain Skill - Invisible",
+      "why": "Summermyst implements ONE 'Drain Skills' enchantment as a visible primary (0x051143) plus 17 invisible per-skill PeakValueModifier workers (HideInUI). They are implementation machinery, not loot value. Unwaived they exceed the 4-rider cap, so every carrier fails the mint gate (convertibleItems==0) AND the items have no family to convert to \u2014 each blocks the other, stranding 2856 items as enchanted loot. Waiving the workers lets the visible primary mint a family and the items convert on it.",
+      "revisit": "If Summermyst restructures Drain Skills, re-derive from the no-family fx report."
+    },
+    {
+      "formKey": "05113E:Summermyst - Enchantments of Skyrim.esp",
+      "editorId": "SUM_Drain Skill - Invisible",
+      "why": "Summermyst implements ONE 'Drain Skills' enchantment as a visible primary (0x051143) plus 17 invisible per-skill PeakValueModifier workers (HideInUI). They are implementation machinery, not loot value. Unwaived they exceed the 4-rider cap, so every carrier fails the mint gate (convertibleItems==0) AND the items have no family to convert to \u2014 each blocks the other, stranding 2856 items as enchanted loot. Waiving the workers lets the visible primary mint a family and the items convert on it.",
+      "revisit": "If Summermyst restructures Drain Skills, re-derive from the no-family fx report."
+    },
+    {
+      "formKey": "05113F:Summermyst - Enchantments of Skyrim.esp",
+      "editorId": "SUM_Drain Skill - Invisible",
+      "why": "Summermyst implements ONE 'Drain Skills' enchantment as a visible primary (0x051143) plus 17 invisible per-skill PeakValueModifier workers (HideInUI). They are implementation machinery, not loot value. Unwaived they exceed the 4-rider cap, so every carrier fails the mint gate (convertibleItems==0) AND the items have no family to convert to \u2014 each blocks the other, stranding 2856 items as enchanted loot. Waiving the workers lets the visible primary mint a family and the items convert on it.",
+      "revisit": "If Summermyst restructures Drain Skills, re-derive from the no-family fx report."
+    },
+    {
+      "formKey": "051140:Summermyst - Enchantments of Skyrim.esp",
+      "editorId": "SUM_Drain Skill - Invisible",
+      "why": "Summermyst implements ONE 'Drain Skills' enchantment as a visible primary (0x051143) plus 17 invisible per-skill PeakValueModifier workers (HideInUI). They are implementation machinery, not loot value. Unwaived they exceed the 4-rider cap, so every carrier fails the mint gate (convertibleItems==0) AND the items have no family to convert to \u2014 each blocks the other, stranding 2856 items as enchanted loot. Waiving the workers lets the visible primary mint a family and the items convert on it.",
+      "revisit": "If Summermyst restructures Drain Skills, re-derive from the no-family fx report."
+    },
+    {
+      "formKey": "051141:Summermyst - Enchantments of Skyrim.esp",
+      "editorId": "SUM_Drain Skill - Invisible",
+      "why": "Summermyst implements ONE 'Drain Skills' enchantment as a visible primary (0x051143) plus 17 invisible per-skill PeakValueModifier workers (HideInUI). They are implementation machinery, not loot value. Unwaived they exceed the 4-rider cap, so every carrier fails the mint gate (convertibleItems==0) AND the items have no family to convert to \u2014 each blocks the other, stranding 2856 items as enchanted loot. Waiving the workers lets the visible primary mint a family and the items convert on it.",
+      "revisit": "If Summermyst restructures Drain Skills, re-derive from the no-family fx report."
+    },
+    {
+      "formKey": "051142:Summermyst - Enchantments of Skyrim.esp",
+      "editorId": "SUM_Drain Skill - Invisible",
+      "why": "Summermyst implements ONE 'Drain Skills' enchantment as a visible primary (0x051143) plus 17 invisible per-skill PeakValueModifier workers (HideInUI). They are implementation machinery, not loot value. Unwaived they exceed the 4-rider cap, so every carrier fails the mint gate (convertibleItems==0) AND the items have no family to convert to \u2014 each blocks the other, stranding 2856 items as enchanted loot. Waiving the workers lets the visible primary mint a family and the items convert on it.",
+      "revisit": "If Summermyst restructures Drain Skills, re-derive from the no-family fx report."
+    },
+    {
+      "formKey": "051144:Summermyst - Enchantments of Skyrim.esp",
+      "editorId": "SUM_Drain Skill - Invisible",
+      "why": "Summermyst implements ONE 'Drain Skills' enchantment as a visible primary (0x051143) plus 17 invisible per-skill PeakValueModifier workers (HideInUI). They are implementation machinery, not loot value. Unwaived they exceed the 4-rider cap, so every carrier fails the mint gate (convertibleItems==0) AND the items have no family to convert to \u2014 each blocks the other, stranding 2856 items as enchanted loot. Waiving the workers lets the visible primary mint a family and the items convert on it.",
+      "revisit": "If Summermyst restructures Drain Skills, re-derive from the no-family fx report."
+    },
+    {
+      "formKey": "051145:Summermyst - Enchantments of Skyrim.esp",
+      "editorId": "SUM_Drain Skill - Invisible",
+      "why": "Summermyst implements ONE 'Drain Skills' enchantment as a visible primary (0x051143) plus 17 invisible per-skill PeakValueModifier workers (HideInUI). They are implementation machinery, not loot value. Unwaived they exceed the 4-rider cap, so every carrier fails the mint gate (convertibleItems==0) AND the items have no family to convert to \u2014 each blocks the other, stranding 2856 items as enchanted loot. Waiving the workers lets the visible primary mint a family and the items convert on it.",
+      "revisit": "If Summermyst restructures Drain Skills, re-derive from the no-family fx report."
+    },
+    {
+      "formKey": "051146:Summermyst - Enchantments of Skyrim.esp",
+      "editorId": "SUM_Drain Skill - Invisible",
+      "why": "Summermyst implements ONE 'Drain Skills' enchantment as a visible primary (0x051143) plus 17 invisible per-skill PeakValueModifier workers (HideInUI). They are implementation machinery, not loot value. Unwaived they exceed the 4-rider cap, so every carrier fails the mint gate (convertibleItems==0) AND the items have no family to convert to \u2014 each blocks the other, stranding 2856 items as enchanted loot. Waiving the workers lets the visible primary mint a family and the items convert on it.",
+      "revisit": "If Summermyst restructures Drain Skills, re-derive from the no-family fx report."
+    },
+    {
+      "formKey": "051147:Summermyst - Enchantments of Skyrim.esp",
+      "editorId": "SUM_Drain Skill - Invisible",
+      "why": "Summermyst implements ONE 'Drain Skills' enchantment as a visible primary (0x051143) plus 17 invisible per-skill PeakValueModifier workers (HideInUI). They are implementation machinery, not loot value. Unwaived they exceed the 4-rider cap, so every carrier fails the mint gate (convertibleItems==0) AND the items have no family to convert to \u2014 each blocks the other, stranding 2856 items as enchanted loot. Waiving the workers lets the visible primary mint a family and the items convert on it.",
+      "revisit": "If Summermyst restructures Drain Skills, re-derive from the no-family fx report."
+    },
+    {
+      "formKey": "051148:Summermyst - Enchantments of Skyrim.esp",
+      "editorId": "SUM_Drain Skill - Invisible",
+      "why": "Summermyst implements ONE 'Drain Skills' enchantment as a visible primary (0x051143) plus 17 invisible per-skill PeakValueModifier workers (HideInUI). They are implementation machinery, not loot value. Unwaived they exceed the 4-rider cap, so every carrier fails the mint gate (convertibleItems==0) AND the items have no family to convert to \u2014 each blocks the other, stranding 2856 items as enchanted loot. Waiving the workers lets the visible primary mint a family and the items convert on it.",
+      "revisit": "If Summermyst restructures Drain Skills, re-derive from the no-family fx report."
+    },
+    {
+      "formKey": "051149:Summermyst - Enchantments of Skyrim.esp",
+      "editorId": "SUM_Drain Skill - Invisible",
+      "why": "Summermyst implements ONE 'Drain Skills' enchantment as a visible primary (0x051143) plus 17 invisible per-skill PeakValueModifier workers (HideInUI). They are implementation machinery, not loot value. Unwaived they exceed the 4-rider cap, so every carrier fails the mint gate (convertibleItems==0) AND the items have no family to convert to \u2014 each blocks the other, stranding 2856 items as enchanted loot. Waiving the workers lets the visible primary mint a family and the items convert on it.",
+      "revisit": "If Summermyst restructures Drain Skills, re-derive from the no-family fx report."
+    },
+    {
+      "formKey": "05114A:Summermyst - Enchantments of Skyrim.esp",
+      "editorId": "SUM_Drain Skill - Invisible",
+      "why": "Summermyst implements ONE 'Drain Skills' enchantment as a visible primary (0x051143) plus 17 invisible per-skill PeakValueModifier workers (HideInUI). They are implementation machinery, not loot value. Unwaived they exceed the 4-rider cap, so every carrier fails the mint gate (convertibleItems==0) AND the items have no family to convert to \u2014 each blocks the other, stranding 2856 items as enchanted loot. Waiving the workers lets the visible primary mint a family and the items convert on it.",
+      "revisit": "If Summermyst restructures Drain Skills, re-derive from the no-family fx report."
+    },
+    {
+      "formKey": "05114B:Summermyst - Enchantments of Skyrim.esp",
+      "editorId": "SUM_Drain Skill - Invisible",
+      "why": "Summermyst implements ONE 'Drain Skills' enchantment as a visible primary (0x051143) plus 17 invisible per-skill PeakValueModifier workers (HideInUI). They are implementation machinery, not loot value. Unwaived they exceed the 4-rider cap, so every carrier fails the mint gate (convertibleItems==0) AND the items have no family to convert to \u2014 each blocks the other, stranding 2856 items as enchanted loot. Waiving the workers lets the visible primary mint a family and the items convert on it.",
+      "revisit": "If Summermyst restructures Drain Skills, re-derive from the no-family fx report."
+    },
+    {
+      "formKey": "05114C:Summermyst - Enchantments of Skyrim.esp",
+      "editorId": "SUM_Drain Skill - Invisible",
+      "why": "Summermyst implements ONE 'Drain Skills' enchantment as a visible primary (0x051143) plus 17 invisible per-skill PeakValueModifier workers (HideInUI). They are implementation machinery, not loot value. Unwaived they exceed the 4-rider cap, so every carrier fails the mint gate (convertibleItems==0) AND the items have no family to convert to \u2014 each blocks the other, stranding 2856 items as enchanted loot. Waiving the workers lets the visible primary mint a family and the items convert on it.",
+      "revisit": "If Summermyst restructures Drain Skills, re-derive from the no-family fx report."
+    },
+    {
+      "formKey": "05114D:Summermyst - Enchantments of Skyrim.esp",
+      "editorId": "SUM_Drain Skill - Invisible",
+      "why": "Summermyst implements ONE 'Drain Skills' enchantment as a visible primary (0x051143) plus 17 invisible per-skill PeakValueModifier workers (HideInUI). They are implementation machinery, not loot value. Unwaived they exceed the 4-rider cap, so every carrier fails the mint gate (convertibleItems==0) AND the items have no family to convert to \u2014 each blocks the other, stranding 2856 items as enchanted loot. Waiving the workers lets the visible primary mint a family and the items convert on it.",
+      "revisit": "If Summermyst restructures Drain Skills, re-derive from the no-family fx report."
+    }
+  ]
+}

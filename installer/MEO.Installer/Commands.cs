@@ -947,7 +947,10 @@ static class Commands
                     foreach (var ef in oe.Effects)
                         if (ef.BaseEffect.TryResolve(cache, out var bm))
                         {
-                            var nm = bm.Name?.String ?? bm.EditorID ?? "?";
+                            var nm = $"{bm.Name?.String ?? bm.EditorID ?? "?"} "
+                                   + $"[{bm.Archetype.Type}, {bm.FormKey.ModKey.FileName}, "
+                                   + $"0x{bm.FormKey.ID:X6}, hideUI={bm.Flags.HasFlag(MagicEffect.Flag.HideInUI)}, "
+                                   + $"cast={bm.CastType}/{bm.TargetType}]";
                             noFamilyFx[nm] = noFamilyFx.GetValueOrDefault(nm) + 1;
                         }
                 continue;
@@ -1011,7 +1014,7 @@ static class Commands
                           $"{pinned} PINNED lossy" +
                           (mintedDomainSkip > 0 ? $", {mintedDomainSkip} minted-domain-mismatch" : "") +
                           (noFamily > 0 ? $", {noFamily} no-family)" : ")"));
-        foreach (var kv in noFamilyFx.OrderByDescending(kv => kv.Value).Take(25))
+        foreach (var kv in noFamilyFx.OrderByDescending(kv => kv.Value).Take(300))
             Console.WriteLine($"  no-family fx: {kv.Value,6} x {kv.Key}");
         foreach (var (ench, lostFx) in pinnedByEnch.OrderBy(kv => kv.Value))
             Console.WriteLine($"  pinned: ench {ench} would lose [{lostFx}]");
