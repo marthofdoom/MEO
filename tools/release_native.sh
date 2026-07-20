@@ -80,6 +80,21 @@ gh run download "$RUN_ID" -n MEO-dll -D "$STAGE/SKSE/Plugins"
 [[ -f "$STAGE/SKSE/Plugins/MEO.dll" ]] || { echo "ERROR: artifact had no MEO.dll" >&2; exit 1; }
 echo "DLL: $(stat -c '%s bytes' "$STAGE/SKSE/Plugins/MEO.dll")"
 
+# VERSION-MATCH GATE (Fable, 2026-07-20): the MCM readout is baked from
+# kMEOVersion at ESP-generation time, but the DLL is pulled from CI — if --run
+# points at a build of a DIFFERENT version, the zip ships a DLL whose baked
+# version disagrees with the MCM/log (the v1.0.6 stale-zip lesson, INVARIANTS 24).
+# kMEOVersion is a plain literal in .rdata; assert the DLL actually contains the
+# version we're cutting. Strip a leading 'v' from the tag for the match.
+VBARE="${VER#v}"
+if ! grep -aq "$VBARE" "$STAGE/SKSE/Plugins/MEO.dll"; then
+    echo "ERROR: the CI DLL does not contain version string '$VBARE' — the --run you gave" >&2
+    echo "       built a different version. Push the version bump, wait for CI green, and" >&2
+    echo "       cut from THAT run. (Refusing to ship a version-mismatched zip.)" >&2
+    exit 1
+fi
+echo "version-match: DLL contains '$VBARE' OK"
+
 # Regenerate ALL DLL-adjacent content fresh so the zip is a complete, standalone
 # mod every time (never rely on files left in a previous install).
 python3 MEO_GenerateESP.py out            # MEO.esp + MCM/ + SKSE/Plugins/MEO/meo_runtime.json

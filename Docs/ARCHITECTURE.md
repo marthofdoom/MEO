@@ -391,8 +391,8 @@ exactly. Protocol:
   `data/gem_forms.frozen.json` — regen only unions new gid×level pairs,
   `next_fid = max+1`, never recycles. Support gems belong to NEITHER FLST
   (the DLL keys off the catalog's `isSupport`). Phase 3 reserved pool: 320
-  placeholder MISC "Uncut Gem" forms at **0xB00–0xC3F** (64 slots × 5 levels
-  — grown from 32 pre-ship, append-only,
+  placeholder MISC "Uncut Gem" forms at **0xB00–0xD7F** (128 slots × 5 levels
+  — grown 32→64→128 pre-ship, append-only,
   EDID `MEO_PoolNN_L`, neutral amethyst mesh, value 0, in NO FLST —
   conversion-only per marth 2026-07-16), anchored by
   `data/pool_forms.frozen.json` (second frozen anchor, kept separate from
@@ -432,7 +432,7 @@ exactly. Protocol:
   gate; wrong-domain carriers are excluded from conversion (the cast-shape
   guard covers only the majority domain).
   Slot state: `meo_pool_assignments.json` beside the calibration
-  (INVARIANTS 26). Overflow past 64 slots = leave uncovered + report;
+  (INVARIANTS 26). Overflow past 128 slots = leave uncovered + report;
   minted gems are conversion-only (marth 2026-07-16).
   Multi-effect recipes (BETA, default ON — Synthesis setting / standalone
   `--no-mint-riders`): companions classified mechanically — desc-inert

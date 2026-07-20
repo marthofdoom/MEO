@@ -145,8 +145,8 @@ never through Synthesis's clone-and-build. Rules learned:
 ## Phase 3 auto-minting (`MintFamilies`, inside `WriteCalibration`)
 
 Generic-loot enchant clusters that match NO catalog family are promoted to
-**minted** gem families on MEO.esp's reserved pool (64 slots × 5 MISC forms at
-0xB00–0xC3F; `data/pool_forms.frozen.json` is the contract, linked into the
+**minted** gem families on MEO.esp's reserved pool (128 slots × 5 MISC forms at
+0xB00–0xD7F; `data/pool_forms.frozen.json` is the contract, linked into the
 Synthesis build beside `gem_catalog.json`). Emitted as a top-level `"minted"`
 section in `meo_calibration.json` — additive: a pre-phase-3 DLL ignores the key
 and skips its conversions at gid lookup, so the calibration is safe on every

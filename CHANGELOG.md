@@ -95,10 +95,20 @@ move.
 - **Multi-effect minting is beta within the beta** — the rider recipes are a
   best-effort approximation, not authored parity.
 - **Re-run the MEO Synthesis patcher after installing**, and after any load-order
-  change — minting and calibration are derived from *your* list.
+  change — minting and calibration are derived from *your* list. If you DON'T
+  re-run it, nothing breaks: the beta simply behaves like 1.0.6 (no minting, and
+  the strip toggle does nothing).
 - **The Synthesis settings page needs the patcher versioned to a build that
   contains it** — this tagged beta does; if you point Synthesis at an older tag
   the page renders empty.
+- **Stripping (toggle OFF) drops tempering and custom names** along with the
+  enchantment — a stripped item becomes the plain base. Uniques/artifacts/quest
+  are never stripped, so this only affects generic loot you chose to strip.
+- **Downgrade is safe.** You can revert to stable v1.0.6x mid-playthrough: the
+  save format is unchanged (co-save v11), so minted-family gems go DORMANT, not
+  lost, and loose minted gems are re-minted with their banked XP when you return
+  to the beta. (A minted gem just won't function while you're on a DLL that
+  doesn't know its family.)
 
 ## v1.0.6b — NPC-border hardening + loose-spawn placement fixes + MCM version + leveling nudge (m42–m44, 2026-07-15)
 

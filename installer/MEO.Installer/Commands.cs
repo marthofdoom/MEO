@@ -1116,8 +1116,8 @@ static class Commands
     }
 
     // ── Phase 3: auto-mint uncovered families onto the reserved pool ─────
-    // marth 2026-07-16: MEO.esp pre-mints 64 slots x 5 levels of MISC gem
-    // forms at 0xB00-0xC3F (data/pool_forms.frozen.json is the contract this
+    // marth 2026-07-16: MEO.esp pre-mints 128 slots x 5 levels of MISC gem
+    // forms at 0xB00-0xD7F (data/pool_forms.frozen.json is the contract this
     // reads — shipped beside gem_catalog.json). Uncovered strip-class enchant
     // clusters that pass the filters below become "minted" families in
     // meo_calibration.json; the DLL registers them at load as runtime gem

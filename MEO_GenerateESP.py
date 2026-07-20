@@ -57,10 +57,11 @@ FID_MENTOR_GEM     = OWN | 0x8FF   # unique support gem (M3d); FROZEN, outside t
 FID_GEM_BASE       = OWN | 0x900   # MISC gems allocated sequentially from here
 # Phase 3 auto-minting (marth 2026-07-16): a RESERVED pool of pre-minted MISC
 # gem forms the installer assigns to load-order-detected enchant families at
-# patch time. Band 0xB00-0xC3F (64 slots x 5 levels — grown from 32 the same
+# patch time. Band 0xB00-0xD7F (128 slots x 5 levels — grown 32->64 the same
 # day, pre-ship, after the keep-generic-uncovered class fix revealed Authoria
-# alone has 54 viable candidates), FROZEN once shipped. Growth is append-only
-# legal (new slots at the end); shrinking never is (allocate_pool trips).
+# alone has 54 viable candidates, then 64->128 on 2026-07-20 after Authoria
+# +Summermyst+Thaumaturgy exhausted the 64-slot pool), FROZEN once shipped.
+# Growth is append-only legal (new slots at the end); shrinking never is (allocate_pool trips).
 # Curated-catalog growth stays BELOW 0xB00 (0xA11-0xAFF headroom, ~47 more
 # families); allocate_gems() hard-fails before it can ever enter the pool band.
 FID_POOL_BASE      = OWN | 0xB00

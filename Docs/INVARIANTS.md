@@ -204,8 +204,8 @@ the portable "never again" digest for sibling projects.
     `data/gem_forms.frozen.json` never recycles fids). Reordering the
     generator's perk list silently rebinds perks to wrong effects; moving a
     gem fid mis-resolves every socketed gem in existing saves.
-    **The Phase 3 reserved pool 0xB00–0xC3F (64 slots × 5 levels — grown from
-    32 pre-ship, append-only; anchored by
+    **The Phase 3 reserved pool 0xB00–0xD7F (128 slots × 5 levels — grown
+    32→64→128 pre-ship, append-only; anchored by
     `data/pool_forms.frozen.json`) is frozen the same way** — installer
     slot-assignments on users' machines bind detected enchant families to
     these exact fids, so a pool slot may be added but never removed,

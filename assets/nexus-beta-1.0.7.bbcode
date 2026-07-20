@@ -1,0 +1,31 @@
+[size=5][b]marth's Enchanting Overhaul — 1.0.7 BETA[/b][/size]
+
+[b]This is a public beta (preview file). The stable release is v1.0.6d.[/b] Install this only if you want to help test the big 1.0.7 feature and are comfortable reporting bugs. Back up a save before you start.
+
+[size=4][b]What's new in 1.0.7[/b][/size]
+
+[b]MEO now covers the enchantment mods in YOUR load order.[/b] Until now MEO only knew its own ~54 hand-built gem families. 1.0.7 adds [b]automatic minting[/b]: when you run the Synthesis patcher, it scans the enchanted loot your list actually has, groups it by effect, and mints new gem families for it. On a Summermyst + Thaumaturgy list that's 70+ new families on top of the curated set — Balefire, Soul Harvest, Spell Absorption, Stormbringer, Sun Damage, the Weakness-to-X lines, and more.
+
+[list]
+[*][b]Multi-effect gems[/b] — enchantments built from several magic effects carry their sub-effects as riders on the minted gem, closest to the original. Toggle in the Synthesis patcher settings ("Mint multi-effect recipes (BETA)"), on by default.
+[*][b]"Allow uncovered enchanted loot" (MCM, Loot & Spawns, default ON)[/b] — with it ON, any enchanted loot MEO still has no gem for keeps its enchantment and appears normally. Turn it OFF and that loot is stripped to plain gear, so nothing enchanted slips past MEO. [b]Unique items, artifacts, and quest items are never touched either way[/b], and neither are your own player-made enchants.
+[/list]
+
+[b]Also fixed since 1.0.6:[/b]
+[list]
+[*]Two crash fixes (converted-loot use-after-free; an every-load crash on some converted items) — these also shipped as v1.0.6c/d.
+[*]Enchantment-transfer mods (EDU-style): MEO no longer hijacks a moved enchant into a gem, and conversion is now lossless-or-skip — if any effect would be lost, the item is left enchanted. New "Convert player-enchanted gear to gems" toggle (turn OFF if you use such a mod).
+[*]MEO's perks now correctly follow whichever enchanting perk tree wins your load order.
+[*]Vendor personal stock converts; non-English plugins read correctly; and the Synthesis patcher build issues are resolved.
+[/list]
+
+[size=4][b]Please read before installing[/b][/size]
+[list]
+[*][b]Re-run the MEO Synthesis patcher[/b] after installing and after any load-order change — minting and calibration are derived from your list. If you don't re-run it, nothing breaks: the beta just behaves like 1.0.6 (no minting, and the strip toggle does nothing).
+[*][b]The minting is what needs testing.[/b] It's proven at patch time but not yet across a full playthrough — report minted gems that feel misnamed, mis-scaled, or wrong.
+[*][b]The "strip uncovered loot" option is one-way[/b] (an item stripped to plain stays plain if you turn it back on) and drops tempering and custom names along with the enchantment. It ships ON/safe; you only get the strip if you choose it. Back up a save first if you enable it. (A vendor's own sellable stock may arrive stripped in your inventory rather than showing stripped in the barter menu.)
+[*][b]Downgrade is safe.[/b] You can go back to stable v1.0.6x mid-playthrough — the save format is unchanged, so minted gems go dormant (not lost) and re-activate with their banked XP when you return to the beta. A minted gem just won't function while you're on a DLL that doesn't know its family.
+[*]Install path is [b]Synthesis only[/b] — there is no installer .exe.
+[/list]
+
+Report issues on the [b]Bugs[/b] tab or in Posts with your load order and, if a gem is involved, its name and the mod it came from. Thank you for testing.
