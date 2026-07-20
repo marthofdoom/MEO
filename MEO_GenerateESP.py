@@ -64,7 +64,7 @@ FID_GEM_BASE       = OWN | 0x900   # MISC gems allocated sequentially from here
 # Curated-catalog growth stays BELOW 0xB00 (0xA11-0xAFF headroom, ~47 more
 # families); allocate_gems() hard-fails before it can ever enter the pool band.
 FID_POOL_BASE      = OWN | 0xB00
-POOL_SLOTS         = 64
+POOL_SLOTS         = 128
 POOL_LEVELS        = 5
 RUNTIME_REL = "MEO/meo_runtime.json"   # under Data/SKSE/Plugins (JsonUtil root)
 
@@ -228,7 +228,7 @@ POOL_FREEZE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dat
 
 def allocate_pool():
     """Phase 3 reserved pool: POOL_SLOTS x 5 levels of placeholder MISC gems
-    from 0xB00 (64 slots -> 0xB00-0xC3F). Fids are pure arithmetic
+    from 0xB00 (128 slots -> 0xB00-0xD7F). Fids are pure arithmetic
     (base + slot*5 + level-1) but the
     committed anchor data/pool_forms.frozen.json is the CONTRACT both this
     generator and the installer's slot-assignment step read — one source of

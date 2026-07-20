@@ -930,12 +930,28 @@ static class Commands
         int noFamily = 0, pinned = 0, partial = 0, machineryWaived = 0;
         var pinnedByEnch = new Dictionary<FormKey, string>();
         var waivedFx = new Dictionary<string, int>();
+        var noFamilyFx = new Dictionary<string, int>();
         int mintedDomainSkip = 0;
         foreach (var r in data.Raw)
         {
             if (!honored.Contains(clsByItem[r.Key])) continue;
             if (!data.StripBase.TryGetValue(r.Key, out var baseKey)) continue;
-            if (!enchFamily.TryGetValue(r.Ench, out var famKey)) { noFamily++; continue; }
+            if (!enchFamily.TryGetValue(r.Ench, out var famKey))
+            {
+                // Attribute the residue: "N items have no family" is useless on
+                // its own — the actionable question is WHICH effects they carry,
+                // because that decides whether the answer is more pool slots, a
+                // new archetype, or accepting they can never be gems.
+                noFamily++;
+                if (cache.TryResolve<IObjectEffectGetter>(r.Ench, out var oe))
+                    foreach (var ef in oe.Effects)
+                        if (ef.BaseEffect.TryResolve(cache, out var bm))
+                        {
+                            var nm = bm.Name?.String ?? bm.EditorID ?? "?";
+                            noFamilyFx[nm] = noFamilyFx.GetValueOrDefault(nm) + 1;
+                        }
+                continue;
+            }
             // Minted families: only same-domain items convert — the cast-
             // shape guard validated the majority domain only, and a weapon
             // gem stamped onto armor (or vice-versa) misfires in the DLL.
@@ -995,6 +1011,8 @@ static class Commands
                           $"{pinned} PINNED lossy" +
                           (mintedDomainSkip > 0 ? $", {mintedDomainSkip} minted-domain-mismatch" : "") +
                           (noFamily > 0 ? $", {noFamily} no-family)" : ")"));
+        foreach (var kv in noFamilyFx.OrderByDescending(kv => kv.Value).Take(25))
+            Console.WriteLine($"  no-family fx: {kv.Value,6} x {kv.Key}");
         foreach (var (ench, lostFx) in pinnedByEnch.OrderBy(kv => kv.Value))
             Console.WriteLine($"  pinned: ench {ench} would lose [{lostFx}]");
         foreach (var (fx, n) in waivedFx.OrderByDescending(kv => kv.Value))
@@ -1352,7 +1370,18 @@ static class Commands
             {
                 var free = pool.Keys.Except(assignments.Values.Select(v => v.Slot))
                     .OrderBy(s => s).ToList();
-                if (free.Count == 0) { Skip("pool overflow (no free slot)"); continue; }
+                if (free.Count == 0)
+                {
+                    // Name the casualty and its blast radius: overflow is the one
+                    // skip reason that is arbitrary (capacity, not merit), so the
+                    // log must say WHICH families were dropped and how much loot
+                    // they would have covered — that is the number that decides
+                    // whether the pool needs widening.
+                    Skip("pool overflow (no free slot)");
+                    Console.WriteLine($"  OVERFLOW: '{MintName(m, gid)}' ({domain}) dropped for lack of a pool "
+                                      + $"slot — would have covered {convertibleItems} item(s)");
+                    continue;
+                }
                 slot = free[0];
                 assignments[gid] = (slot, mgefEcho);
                 newAssign++;
