@@ -441,7 +441,12 @@ capped low so player investment always outscales it:
   conversions re-equip and apply the worn ability — an enemy with a Fire I
   weapon deals Fire I damage), plus themed worn-socket rolls (m19). The
   whole world runs one ruleset for covered generics; only the uncovered
-  tail and artifacts keep vanilla ENCH.
+  tail and artifacts keep vanilla ENCH — and the uncovered tail only while
+  `bAllowUncoveredGenerics` stays ON (default). OFF strips tagged uncovered
+  generics to their plain bases at the same sweep points conversion uses
+  (base-swap only; instance enchants and artifacts/uniques/quest
+  untouchable; already-stripped instances stay plain if the toggle returns
+  to ON).
 
 ### Configuration & tunability (portability contract)
 

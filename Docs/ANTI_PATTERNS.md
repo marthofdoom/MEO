@@ -183,6 +183,13 @@ sibling project can audit itself against the list in one sitting.
   (`MutagenEncoding._utf8_1252`) so genuine UTF-8 decodes and legacy Western
   falls back; mojibake in a log is an ENCODING signal, never a structural
   failure (System.Text.Json keeps output valid JSON regardless).
+- **Tagging by KEYWORD what a later patch can override.** The
+  uncovered-strip tag is a calibration DATA ROW (fid + target), not a
+  keyword on the record: a keyword dies silently to any later override (the
+  m51b "presence is not integrity" class), while a calibration row
+  re-resolves per session and misses LOUD (the `[strip]` resolve counters).
+  Ship marks on foreign records beside the DLL, never inside the contested
+  record.
 
 ## Process
 

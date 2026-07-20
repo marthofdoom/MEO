@@ -216,6 +216,19 @@ Flow: `DeathSink` (:4842, act on `dead==true`, killer = player or teammate)
   open list is rebuilt with the engine's own inventory-update reloc
   (51911/52849; NG 3.7.0 predates the header helper) aimed at the menu's
   bound ref + vendor + chest.
+- **Uncovered strip** (m52 — `bAllowUncoveredGenerics` OFF): Synthesis TAGS
+  unconvertible enchanted generics (no-family + wrong-domain-minted +
+  pinned) in the additive `"uncovered"` calibration section (base fid +
+  plain-base target; never an ESP/LVLI edit, so the toggle is live).
+  `g_stripUncovered` resolves beside `g_convert` under INVARIANTS 28.
+  `StripUncoveredInventory` (Remove→Add plain, re-equip worn player gear, no
+  gem/uid/co-save) runs at the head of `ConvertInventory`; `StripWorldRef` on
+  the `ConvertWorldRef` g_convert miss. `NeedsSweep()` teaches the
+  cell-attach, container pre-scan, and ContainerSink gates that a strip-only
+  holder is worth sweeping. ReadConfig fires one player sweep on ON->OFF;
+  OFF->ON is source-resumes. Vendor PERSONAL stock is NOT strip-wired —
+  bought items strip on arrival via ContainerSink (accepted: barter shows
+  them enchanted).
 - **Hand-placed support gems**: `TryPlaceHandPlaced` (:4757), bitmask
   co-save v10.
 

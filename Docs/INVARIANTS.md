@@ -257,3 +257,20 @@ the portable "never again" digest for sibling projects.
     domain), not effect shape alone. Zero-mag companions that carry KEYWORDS
     are never waived as description — they ride at ratio 0 so the keyword's
     presence survives conversion.
+28. **The uncovered strip may only ever SWAP a base for a live plain base —
+    never remove-without-replace, never cross the conversion regime.**
+    `g_stripUncovered` rows resolve at catalog time with two drops: a fid
+    already in `g_convert` (conversion wins — DISJOINT by construction) and a
+    plain target that fails to resolve or is itself a strip/convert source
+    (cyclic — the add must never re-arm the arrival sink). At mutation time
+    the strip is a pure Remove→Add of the SAME count over a `GetInventory()`
+    snapshot; any stack/ref carrying its own kEnchantment or
+    kAliasInstanceArray is skipped whole (a player enchant, MEO socket stamp,
+    or EDU inject must never die to a base swap), and a living non-player
+    actor keeps what it wears (strips on death/loot). World refs inherit
+    conversion's deferrals (persistent/stacked/aliased/no-3D). Installer
+    side: `Tag()` may exist ONLY inside the honored-class + StripBase-present
+    loop — artifacts/uniques/quest (keep-named/keep-cast) and review-npc-twin
+    are structurally untaggable. The toggle is one-way live: ON->OFF queues
+    one player sweep; OFF->ON restores nothing (source-resumes — stripped
+    instances stay plain).

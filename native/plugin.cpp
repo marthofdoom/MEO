@@ -769,6 +769,9 @@ inline bool NeedsSweep(RE::FormID a_id) {
     return g_convert.contains(a_id) ||
            (!g_allowUncoveredGenerics && g_stripUncovered.contains(a_id));
 }
+// Defined far below with the conversion sweeps; ReadConfig's ON->OFF strip task
+// (above that definition) needs the declaration first — single TU, no header.
+int ConvertInventory(RE::TESObjectREFR* a_holder);
 
 // ── Phase 3: minted (runtime) gem families ────────────────────────────
 // The installer's MintFamilies promotes uncovered enchant clusters onto the
@@ -2355,7 +2358,12 @@ void ReadConfig() {
     // stripped; already-stripped instances stay plain (no per-instance restore).
     if (wasAllow && !g_allowUncoveredGenerics && !g_stripUncovered.empty()) {
         SKSE::GetTaskInterface()->AddTask([]() {
-            if (auto* pc = RE::PlayerCharacter::GetSingleton()) {
+            auto* pc = RE::PlayerCharacter::GetSingleton();
+            // P3 belt: the FIRST ReadConfig (kDataLoaded) sees wasAllow=default-true,
+            // so an ini already set OFF looks like a transition — but there's no
+            // save yet. parentCell is null at the main menu; the real work is the
+            // kPostLoadGame sweep. Only sweep an in-world player.
+            if (pc && pc->parentCell) {
                 spdlog::info("[strip] toggle ON->OFF — sweeping player inventory");
                 ConvertInventory(pc);
             }
@@ -5027,6 +5035,11 @@ int StripUncoveredInventory(RE::TESObjectREFR* a_holder) {
         }
         if (hasInstance) continue;
         bool worn = data.second && data.second->IsWorn();
+        // P2 (Fable): a chest-less vendor is swept as a LIVING actor via the
+        // ConvertInventory fallback. A living NPC keeps what it WEARS (m42 border,
+        // m48 vendor-unworn rule) — its worn enchant strips at death/loot like
+        // conversion, never mid-dialogue off its body. The player is exempt.
+        if (worn && actor && !actor->IsDead() && !actor->IsPlayerRef()) continue;
         hits.push_back({ obj, it->second, data.first, worn });
     }
     int stripped = 0;
