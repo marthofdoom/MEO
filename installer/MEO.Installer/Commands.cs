@@ -639,6 +639,42 @@ static class Commands
         // the moment absolute riders landed — wrong domain). Marked for a
         // deeper perk-vs-equipment classification pass later.
         var ruledWaived = new HashSet<FormKey>();
+        // BUNDLED DEFAULTS FIRST (shipped beside gem_catalog.json, same as the
+        // pool manifest). Some waivers are properties of a MOD, not of a user's
+        // list — Summermyst's 17 invisible Drain Skill workers block their own
+        // family from minting on EVERY install that has Summermyst, so shipping
+        // the ruling is the only way users get the fix. The per-list file below
+        // is layered on top and can still add (never remove) entries.
+        var bundledDir = Path.Combine(AppContext.BaseDirectory, "rulings");
+        int bundledCount = 0;
+        if (Directory.Exists(bundledDir))
+        {
+            foreach (var f in Directory.EnumerateFiles(bundledDir, "*.rulings.json").OrderBy(x => x))
+            {
+                try
+                {
+                    using var bd = System.Text.Json.JsonDocument.Parse(File.ReadAllText(f));
+                    if (!bd.RootElement.TryGetProperty("waivedEffects", out var barr)) continue;
+                    foreach (var e in barr.EnumerateArray())
+                    {
+                        var fk = e.GetProperty("formKey").GetString()!.Split(':');
+                        // A ruling for a mod this list does not have is inert, not
+                        // an error — ModKey still parses, the FormKey simply never
+                        // matches anything. No load-order coupling.
+                        if (ruledWaived.Add(new FormKey(ModKey.FromFileName(fk[1]),
+                                                        Convert.ToUInt32(fk[0], 16))))
+                            bundledCount++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // A malformed bundled ruling must not take the whole patch down.
+                    Console.WriteLine($"rulings: SKIPPED bundled {Path.GetFileName(f)} — {ex.Message}");
+                }
+            }
+            if (bundledCount > 0)
+                Console.WriteLine($"rulings: {bundledCount} waived effect(s) from bundled defaults");
+        }
         // Only the trailing extension — a parent dir containing ".json" must not
         // be rewritten (audit): meo_calibration.json -> meo_calibration.rulings.json.
         var rulingsPath = outPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
@@ -653,7 +689,8 @@ static class Commands
                     ruledWaived.Add(new FormKey(ModKey.FromFileName(fk[1]),
                                                 Convert.ToUInt32(fk[0], 16)));
                 }
-            Console.WriteLine($"rulings: {ruledWaived.Count} waived effect(s) from {rulingsPath}");
+            Console.WriteLine($"rulings: {ruledWaived.Count} waived effect(s) total "
+                              + $"(incl. {bundledCount} bundled) after {rulingsPath}");
         }
 
         var fams = new Dictionary<string, Dictionary<string, RecipeAgg>>();

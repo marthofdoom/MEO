@@ -35,6 +35,11 @@
          step assigns detected families to. Same single-source rule as the
          catalog; MintFamilies resolves it beside gem_catalog.json. -->
     <None Include="..\..\data\pool_forms.frozen.json" Link="pool_forms.frozen.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Bundled effect rulings: waivers that are properties of a MOD, not of a
+         user's list (e.g. Summermyst's invisible Drain Skill workers, which
+         otherwise block their own family from minting on every install that
+         has Summermyst). Loaded from <output>/rulings/*.rulings.json. -->
+    <None Include="..\..\data\rulings\*.rulings.json" Link="rulings\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

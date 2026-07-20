@@ -17,4 +17,13 @@
     <PackageReference Include="Mutagen.Bethesda.Skyrim" Version="0.54.2" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Bundled effect rulings: waivers that are properties of a MOD rather than
+         of a user's list (Summermyst's invisible Drain Skill workers, which
+         otherwise block their own family from minting). Loaded from
+         <output>/rulings/*.rulings.json. The dev/CLI path needs these too, or
+         local write-calibration runs silently differ from what users get. -->
+    <None Include="..\..\data\rulings\*.rulings.json" Link="rulings\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
