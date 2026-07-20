@@ -233,6 +233,15 @@ bool  g_fullGemNames = false;  // [UI] bFullGemNames — full effect names in so
 // escape hatch is the player's, not ours. Read by ConvertInstanceEnchant.
 bool  g_convertPlayerEnchants = true;
 
+// m52 (marth): whether enchanted generic loot MEO has no gem family for is left
+// alone (true — today's behavior, and the safe default) or stripped to plain
+// gear (false). Uniques/artifacts/quest items are NEVER in scope regardless —
+// the strip acts only on the same generic class the conversion loop already
+// touches. Read by the loot-conversion path. NOTE: the strip action itself is
+// pending (needs the un-gemmable classification + Fable review); this global and
+// its plumbing exist so the MCM control ships, but OFF is currently inert.
+bool  g_allowUncoveredGenerics = true;
+
 // Option A shorthand (m40, marth): trim the boilerplate from gem names in
 // socketed-item titles so multi-gem names stay readable — strip a trailing
 // " Damage" and a leading "Fortify ", abbreviate "Resist " -> "Res ".
@@ -2240,6 +2249,7 @@ static void ApplyIniFile(const char* a_path) {
         else if (key == "bXPNotify")          g_xpNotify = val != 0.0f;
         else if (key == "bFullGemNames")     g_fullGemNames = val != 0.0f;
         else if (key == "bConvertPlayerEnchants") g_convertPlayerEnchants = val != 0.0f;
+        else if (key == "bAllowUncoveredGenerics") g_allowUncoveredGenerics = val != 0.0f;
         else if (key == "bEnableLogging")     g_enableLogging = val != 0.0f;
         else if (key == "bStationTakeover")   g_stationTakeover = val != 0.0f;
         else if (key == "iMenuStyle")         g_menuStyle = std::clamp(static_cast<int>(val), 0, 3);
