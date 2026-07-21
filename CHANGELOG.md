@@ -4,6 +4,21 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.7-beta2 — gem-menu double-fire fix (2026-07-20)
+
+Point fix over beta1 from the first beta report. Same phase-3 feature set.
+
+- **Socketing no longer double-fires.** Clicking a gem, slot, or soul row in the
+  Gem Pouch menu could register as TWO actions from a single click — most
+  visible when you socketed a stack of two identical 0-XP gems and BOTH went in
+  at once, or a single-socket item socketed-then-swapped in one click. The menu
+  now fires exactly once per click (press or controller/keyboard activate),
+  never the trailing release. No gems were duplicated or lost by this — it was a
+  doubled action, not inventory corruption — but it also **fixes a soul gem being
+  spent twice on one feed** (that one was real resource loss). Latent since the
+  menu shipped; auto-minting made same-type 0-XP gem stacks common enough to
+  surface it.
+
 ## v1.0.7-beta1 — Phase 3: auto-minting + the uncovered-loot toggle (m45–m52, 2026-07-20)
 
 **PUBLIC BETA (Nexus preview file).** The first 1.0.7 build. It adds automatic
