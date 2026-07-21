@@ -1,0 +1,2 @@
+Phase 3 public BETA, point fix: gem-menu single-click double-fire (stacked-gem double-socket + soul double-feed). Same phase-3 feature set as beta1.
+built from native run 29794808636 (no executable packaged; installs via Synthesis)
