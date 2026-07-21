@@ -54,6 +54,16 @@ sibling project can audit itself against the list in one sitting.
 - **Single-writer for reversible global tweaks, deadline re-checked under the
   lock.** The sound-mute restore raced a concurrent window re-open until the
   restore re-verified the deadline inside the mutex.
+- **`press-signal || release-signal` is two events, not one robust event.**
+  Gem/slot/soul action rows fired on `IsItemClicked` (press) OR the `Selectable`
+  return (release); when the action task finished between those two frames — the
+  common case, since the task pump beats the next present — the release echoed a
+  second, fully VALID action against the rebuilt snapshot. Only reproduced
+  cleanly on stacked rows whose index-keyed ImGui ID survived the rebuild, so for
+  a year it masqueraded as misclicks; phase-3 auto-minting made same-type 0-XP
+  gem stacks common and beta1 surfaced it as a one-click double-socket (and a
+  double soul-feed). Fix: single-shot `IsItemActivated()`. An epoch/idempotence
+  check can't help — the echo is stale in intent, not in data.
 
 ## Persistence
 

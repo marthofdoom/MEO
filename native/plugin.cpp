@@ -158,7 +158,7 @@ constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPl
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.7-beta1";  // phase-3 public beta (Nexus preview file); community-tested
+constexpr const char* kMEOVersion = "1.0.7-beta2";  // phase-3 public beta; beta2 = stacked-gem double-fire fix
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -3666,7 +3666,13 @@ void FeedSoulToGem(RE::FormID a_itemBase, std::uint16_t a_uid, std::uint8_t a_sl
 }
 
 void QueueMenuTask(std::function<void()> a_fn) {
-    g_menu.busy = true;
+    // Belt (beta1 double-fire fix): claim the busy flag atomically so two action
+    // rows activated in the SAME frame (e.g. a mouse click and a pad-A on
+    // different rows) can't both queue against one snapshot. The single-shot
+    // IsItemActivated edges are the primary fix; this closes the same-frame gap.
+    if (g_menu.busy.exchange(true)) {
+        return;  // an action is already in flight — the pane is about to draw disabled
+    }
     SKSE::GetTaskInterface()->AddTask([fn = std::move(a_fn)]() {
         fn();
         // m24c (marth: adding a 2nd gem "changed" the 1st gem's magnitude):
@@ -4066,8 +4072,8 @@ namespace menuhook {
                 }
                 const ImVec4 tcol = ThemeCol(sel.slotTheme[s]);
                 const bool   picked = station && g_menu.selSlot == s;
-                const bool   nav = ImGui::Selectable("##slot", picked, 0, ImVec2(0.0f, rowH));
-                const bool   act = nav || ImGui::IsItemClicked(ImGuiMouseButton_Left);
+                ImGui::Selectable("##slot", picked, 0, ImVec2(0.0f, rowH));
+                const bool   act = ImGui::IsItemActivated();  // single-shot (INVARIANTS: no press||release double-fire)
                 rungTooltip(sel.slotGemIdx[s], sel.slotLevel[s],
                             std::string(station ? "Select " : "Remove ") + sel.slotGem[s]);
                 DrawDiamond(dlR, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 5.0f,
@@ -4151,8 +4157,8 @@ namespace menuhook {
                     ++shownSouls;
                     const ImVec2 rp = ImGui::GetCursorScreenPos();
                     ImGui::PushID(2000 + i);
-                    const bool nav = ImGui::Selectable("##soul", false, 0, ImVec2(0.0f, rowH));
-                    const bool act = nav || ImGui::IsItemClicked(ImGuiMouseButton_Left);
+                    ImGui::Selectable("##soul", false, 0, ImVec2(0.0f, rowH));
+                    const bool act = ImGui::IsItemActivated();  // single-shot: also fixes soul double-feed (resource loss)
                     ImGui::PopID();
                     // Bigger soul = bigger diamond; dimmed until a target gem
                     // is selected above.
@@ -4219,8 +4225,8 @@ namespace menuhook {
                 ++shown;
                 const ImVec2 rp = ImGui::GetCursorScreenPos();
                 ImGui::PushID(1000 + i);
-                const bool nav = ImGui::Selectable("##gem", false, 0, ImVec2(0.0f, rowH));
-                const bool act = nav || ImGui::IsItemClicked(ImGuiMouseButton_Left);
+                ImGui::Selectable("##gem", false, 0, ImVec2(0.0f, rowH));
+                const bool act = ImGui::IsItemActivated();  // single-shot: fixes the stacked-gem double-socket (beta1 report)
                 rungTooltip(gem.gemIdx, gem.level,
                             std::format("{} {}", swapping ? "Swap in" : "Socket", gem.label));
                 ImGui::PopID();

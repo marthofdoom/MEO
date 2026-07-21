@@ -188,6 +188,19 @@ the portable "never again" digest for sibling projects.
     `g_magMx` (:325) so a concurrent re-open wins. Set the deadline BEFORE
     applying on the load path (:5979) or a present tick between the two
     sees muted+expired and restores early.
+29. **Menu action rows fire SINGLE-SHOT via `ImGui::IsItemActivated()` — never
+    `Selectable-return || IsItemClicked`** (:4070/:4155/:4223, beta1 fix).
+    `IsItemClicked` reports the mouse PRESS frame; the `Selectable` return
+    reports the RELEASE frame — OR'ing them is TWO fires per physical click. The
+    `busy`-disable only masks the echo when a busy frame is actually DRAWN (ImGui
+    clears ActiveId only in `ItemHoverable` on a disabled draw), but the SKSE task
+    pump usually beats the next present, so no disabled frame is drawn and the
+    release re-fires against the REBUILT snapshot — a render-thread/task-pump
+    timing race (v1.0.7-beta1: one click socketed both units of a 0-XP gem stack;
+    the same edge burned a second soul gem on feed). A snapshot epoch/generation
+    check CANNOT catch it — the echo is stale in intent, not in data.
+    `QueueMenuTask` also claims `busy` via `exchange` (:3669) so two rows
+    activated in one frame can't both queue.
 
 ## Config & cross-artifact contracts
 
