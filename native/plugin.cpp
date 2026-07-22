@@ -1822,10 +1822,24 @@ void EquipCycleWorn(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDat
     const RE::BGSEquipSlot* slot = nullptr;
     if (a_base->Is(RE::FormType::Weapon)) {
         if (auto* dom = RE::BGSDefaultObjectManager::GetSingleton()) {
-            slot = dom->GetObject<RE::BGSEquipSlot>(
+            // NEVER dom->GetObject<T>() on our NG pin (3.7.0 / c4ab853d): it inlines
+            // IsObjectInitialized(), which reads objectInit (a bool[] at +0xB80 on
+            // SE/AE) through REL::RelocateMember<bool*> — it LOADS the bools as a
+            // POINTER and dereferences it (mov where lea was meant). On SE 1.5.97
+            // +0xB80 IS that array, so the load yields 0x0101010101010101 and the
+            // deref is a guaranteed CTD — 100% reproducible on any worn socketed
+            // WEAPON. AE survives only by accident (its DOM is larger, so that
+            // offset holds a real TESForm*). Upstream fixed it in 054cbcd4 (2024)
+            // but that is in NO tagged NG release, so EVERY shipped MEO build —
+            // including stable v1.0.6d — carries it. Index the DOM's own objects[]
+            // instead: same engine data, no broken inline.
+            const auto idx = static_cast<std::size_t>(
                 a_xList->HasType(RE::ExtraDataType::kWornLeft)
                     ? RE::DEFAULT_OBJECT::kLeftHandEquip
                     : RE::DEFAULT_OBJECT::kRightHandEquip);
+            if (auto* f = dom->objects[idx]) {
+                slot = f->As<RE::BGSEquipSlot>();
+            }
         }
     }
     const RE::FormID base = a_base->GetFormID();
