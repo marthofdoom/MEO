@@ -4,6 +4,38 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.6e — SE 1.5.97 crash fix + enchantment-transfer safety (m48–m51b, 2026-07-21)
+
+Stable-line point release over v1.0.6d. Bug fixes only — no new features, no
+phase-3 minting (that lives in the 1.0.7 beta). Save-safe; drop-in over v1.0.6d.
+
+Crash
+- **Fixes a crash on Skyrim SE 1.5.97 whenever a socketed WEAPON is equipped** —
+  including a few seconds after loading any save with one worn. This affected
+  **every previous MEO version**, v1.0.6d included: a bug in the library MEO is
+  built against reads an engine table incorrectly on 1.5.97 and crashes
+  (dereferencing what it should have taken the address of). AE (1.6.x) was never
+  affected — the same faulty read happens to land on valid memory there. Socketed
+  *armor* was always safe. MEO now reads that table directly.
+
+Enchantment-transfer mods (EDU-class)
+- **MEO no longer hijacks a transferred or upgraded enchantment into a gem.** New
+  MCM toggle **"Convert player-enchanted gear to gems"** (default ON) — turn it
+  OFF if you use a mod that MOVES or UPGRADES enchantments between items.
+- **Conversion is now lossless-or-skip:** if converting an item would lose any
+  effect MEO can't express, the item is left enchanted instead of being partially
+  converted. A converted item also keeps its custom name.
+
+Vendors, sockets, perks
+- **Vendor "personal stock"** (a merchant's own worn/sold gear) now converts (m48).
+- **Container transfers no longer mis-assign a socket record** between two items
+  sharing a base — the re-key now only adopts a record the arriving item's own
+  enchantment vouches for (m49/m51).
+- **MEO's perks follow whichever enchanting perk tree wins your load order**
+  (m51b), instead of assuming a patch filename; if another enchanting overhaul
+  overrides the tree, MEO falls back to granting its perks by Enchanting skill.
+- Packaging: the release contains **no executable** — Synthesis is the install path.
+
 ## v1.0.6d — crash hotfix: on-load CTD stripping a converted item (m50, 2026-07-17)
 
 **Strongly recommended update for everyone on v1.0.6b/c.** Fixes a crash that

@@ -1,2 +1,2 @@
-Hotfix: m48+m49 vendor conversion/rekey, m51 EDU-class enchant hijack + lossless conversion + tree-mode integrity, exe-free packaging
-built from native run 29704029931 (no executable packaged; installs via Synthesis)
+Stable point release: fixes an SE 1.5.97 crash on any worn socketed weapon (affected every prior version), plus enchantment-transfer safety (lossless-or-skip + opt-out toggle), vendor personal stock, re-key veto, and tree-mode integrity.
+built from native run 29890613094 (no executable packaged; installs via Synthesis)
