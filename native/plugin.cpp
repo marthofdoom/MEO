@@ -158,7 +158,7 @@ constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPl
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.7-beta2";  // phase-3 public beta; beta2 = stacked-gem double-fire fix
+constexpr const char* kMEOVersion = "1.0.7-beta3";  // phase-3 public beta; beta3 = NG DefaultObjectManager SE CTD fix
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -2211,10 +2211,24 @@ void EquipCycleWorn(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDat
     const RE::BGSEquipSlot* slot = nullptr;
     if (a_base->Is(RE::FormType::Weapon)) {
         if (auto* dom = RE::BGSDefaultObjectManager::GetSingleton()) {
-            slot = dom->GetObject<RE::BGSEquipSlot>(
+            // NEVER dom->GetObject<T>() on our NG pin (3.7.0 / c4ab853d): it inlines
+            // IsObjectInitialized(), which reads objectInit (a bool[] at +0xB80 on
+            // SE/AE) through REL::RelocateMember<bool*> — it LOADS the bools as a
+            // POINTER and dereferences it (mov where lea was meant). On SE 1.5.97
+            // +0xB80 IS that array, so the load yields 0x0101010101010101 and the
+            // deref is a guaranteed CTD — 100% reproducible on any worn socketed
+            // WEAPON (v1.0.7-beta2 field report, MEO.dll+0x4A62A). AE survives only
+            // by accident (that offset happens to hold a real TESForm*). Upstream
+            // fixed it in 054cbcd4 (2024) but that is in NO tagged NG release, so
+            // every MEO build carries it. Index the DOM's own objects[] instead —
+            // same engine data, no broken inline (follow-engine-flows intact).
+            const auto idx = static_cast<std::size_t>(
                 a_xList->HasType(RE::ExtraDataType::kWornLeft)
                     ? RE::DEFAULT_OBJECT::kLeftHandEquip
                     : RE::DEFAULT_OBJECT::kRightHandEquip);
+            if (auto* f = dom->objects[idx]) {
+                slot = f->As<RE::BGSEquipSlot>();
+            }
         }
     }
     const RE::FormID base = a_base->GetFormID();

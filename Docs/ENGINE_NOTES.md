@@ -255,6 +255,19 @@ The `- 4` offset on the callback message is the trap everyone hits.
   could have explained genuine on-load firing (persisted charge AVs) is now
   eliminated. The m16 deferred unequip→re-equip is therefore not a workaround
   but the engine's own required path.
+- **TRAP — never call `dom->GetObject<T>()` / `IsObjectInitialized()` on our
+  NG pin (3.7.0, REF c4ab853d).** Both read `objectInit` (a `bool[]` at
+  +0xB80 on SE/AE) via `REL::RelocateMember<bool*>` — the bools are LOADED AS
+  A POINTER and dereferenced (`mov` where `lea` was meant). On **SE 1.5.97**
+  +0xB80 *is* that array, so the load yields **`0x0101010101010101`** (the
+  tell — a register full of 0x01 bytes is a bool array read as a pointer)
+  and the deref is a guaranteed AV. On AE the same offset happens to hold a
+  populated `TESForm*`, so AE survives **by accident**. Upstream fix
+  `054cbcd4` (2024-07-28) exists only on NG main — never tagged — so every
+  MEO build carries the bug. Index `dom->objects[idx]` directly instead
+  (same engine data, no broken inline). Field-proven: v1.0.7-beta2 SE CTD at
+  `MEO.dll+0x4A62A` in `EquipCycleWorn`'s slot lookup; the v1.0.6 line's
+  equivalent site is `+0x458EA`.
 - **Weapons in containers, on racks/displays, or in NPC inventories are NOT
   born socketed.** `TESCellAttachDetachEvent` fires per *world reference*;
   container contents and carried items are inventory entries, not refs, and

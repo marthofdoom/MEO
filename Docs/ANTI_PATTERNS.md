@@ -33,6 +33,14 @@ sibling project can audit itself against the list in one sitting.
   else nullptrs — compiled clean, and read as "another mod overrode us".
   Worse: po3 Tweaks caches all editorIDs, so the flagship test order masks
   the failure — a deck pass proves nothing here (m51 F-T1).
+- **A vendored-header inline is OUR code at crash time.** A CommonLib bug
+  compiles into MEO.dll and faults at an *MEO* offset with no library frame
+  on the stack — it reads as "our bug" in every crash log. When a crash RVA
+  decodes to a runtime-kind dispatch (a byte at Module+0x118 selecting
+  between two offsets) followed by a member **LOAD** (`mov`, 48 8b) where an
+  **address-of** (`lea`, 48 8d) belongs, suspect a `RelocateMember<T*>`-vs-`T`
+  misuse in the pinned library rather than your own logic. A register full
+  of `0x01` bytes is a `bool[]` read as a pointer.
 
 ## Iteration & concurrency
 

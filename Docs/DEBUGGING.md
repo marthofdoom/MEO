@@ -74,3 +74,12 @@ Triage order for a CTD:
 A malformed *record* can still crash the loader before any code runs: diff
 against a vanilla twin (the universal method above) when a crash happens at
 data-load with no MEO.dll frames.
+
+**Byte-pattern hunting a known fault site across builds.** With no PDB,
+locate the NG DefaultObjectManager deref bug (see ENGINE_NOTES.md) in any
+shipped DLL by searching for the compiled dispatch+load sequence:
+`b8 a8 0b 00 00 74 05 b8 80 0b 00 00 48 8b 04 18 80 7c 07 13 00`
+(mov eax,0xBA8 / je / mov eax,0xB80 / mov rax,[rax+rbx] / cmp byte
+[rdi+rax+0x13],0). Maps to `MEO.dll+0x4A62A` in v1.0.7-beta2 and
+`+0x458EA` in v1.0.6. Disassemble with capstone against the exact shipped
+DLL — the release zip's DLL md5 identifies the build a reporter is running.
