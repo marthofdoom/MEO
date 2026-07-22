@@ -4,6 +4,23 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.7-beta3 — SE 1.5.97 crash fix (2026-07-21)
+
+Critical point fix over beta2 from the second beta report. Same phase-3 feature
+set. **If you play on Skyrim SE 1.5.97, update — beta2 crashes for you.**
+
+- **Fixes a crash on Skyrim SE 1.5.97 whenever a socketed WEAPON is equipped**,
+  including a few seconds after loading any save with one worn. The cause is a bug
+  in the library MEO is built against: it reads an engine table by dereferencing a
+  value it should have taken the address of. On 1.5.97 that lands exactly on a
+  block of `true` bytes and crashes 100% of the time; on AE (1.6.x) the same faulty
+  read happens to land on valid memory, which is why this went unnoticed — it has
+  been present in **every MEO version ever released**, v1.0.6d included. Socketed
+  *armor* was never affected. MEO now reads that table directly.
+  - AE players get a small bonus fix: in the rare case that faulty read returned
+    nothing, a left-hand weapon could re-equip to the wrong hand. That's gone too.
+  - The same fix ships in stable **v1.0.6e** for players not on the beta.
+
 ## v1.0.7-beta2 — gem-menu double-fire fix (2026-07-20)
 
 Point fix over beta1 from the first beta report. Same phase-3 feature set.

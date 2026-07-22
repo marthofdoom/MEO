@@ -1,0 +1,2 @@
+Phase 3 public BETA, critical fix: SE 1.5.97 CTD on any worn socketed weapon (NG DefaultObjectManager deref bug). Same phase-3 feature set as beta2.
+built from native run 29890568479 (no executable packaged; installs via Synthesis)
