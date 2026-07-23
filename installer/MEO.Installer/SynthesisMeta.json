@@ -1,0 +1,9 @@
+{
+  "Nickname": "MEO Installer (dev CLI — not a patcher)",
+  "Visibility": "Exclude",
+  "OneLineDescription": "Standalone dev tooling; the Synthesis patcher is MEO.Synthesis.",
+  "LongDescription": "Not a Synthesis patcher. This is the standalone CLI used for development. The Synthesis patcher users should install is MEO.Synthesis. Excluded from the patcher browser so it cannot be added by mistake.",
+  "PreferredAutoVersioning": "Default",
+  "RequiredMods": [],
+  "TargetedReleases": []
+}
