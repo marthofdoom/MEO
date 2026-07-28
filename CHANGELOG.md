@@ -19,6 +19,11 @@ Usability follow-ups from deck testing.
   gems pane (up/down still moves within a pane). The old scheme could trap the
   cursor in the right pane until you closed and reopened the pouch. (Tab-switching
   on LB/RB arrives with the per-follower pouch tabs.)
+- **Followers now level the gems they have equipped.** They almost never get the
+  engine's kill credit, so their gems used to sit at level 1 forever. Now a share
+  of the Gem XP from *your* kills also feeds nearby followers' socketed gems —
+  tunable in the MCM (Follower gem-XP share, default 50%; set 0 to disable). Only
+  followers close enough to the fight receive it.
 
 ## v1.0.7-beta5 — gem-XP reclaim refinements (2026-07-28)
 

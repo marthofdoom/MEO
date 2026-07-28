@@ -2278,6 +2278,8 @@ float g_vendorGemChance = 0.04f;  // [Loot] fVendorGemChance — per stock item,
 float g_supportDropChance = 0.03f;// [Loot] fSupportDropChance — support gem on a lvl15+ boss/dragon kill (m36h, very rare)
 int   g_supportMinLevel = 15;     // [Loot] iSupportMinLevel — no support gems before this player level
 float g_bossXPMult = 10.0f;       // [XP] fBossXPMult — boss/dragon kill multiplier
+float g_followerXpShare = 0.5f;   // [XP] fFollowerXpShare — bug3: fraction of a PLAYER kill's gem-xp also granted to each nearby follower's equipped gems (0 = off). Followers rarely get engine kill-credit, so their gems never level off their own kills; this shares the player's.
+float g_followerXpRange = 4096.0f;// [XP] fFollowerXpRange — max distance (units) from the player for a follower to receive the kill-xp share (0 = any loaded follower). ~58 m default = participated-in-the-fight radius.
 bool  g_xpNotify = true;          // [UI] bXPNotify — "Gem XP +N" on kills
 bool  g_enableLogging = true;     // [Debug] bEnableLogging — write MEO.log (default on); ReadConfig sets the spdlog level (m38d)
 bool  g_stationTakeover = true;   // [UI] bStationTakeover — gem menu REPLACES the vanilla enchanting menu
@@ -2338,6 +2340,8 @@ static void ApplyIniFile(const char* a_path) {
         else if (key == "iSupportMinLevel")    g_supportMinLevel = static_cast<int>(val);
         else if (key == "fVendorGemChance")   g_vendorGemChance = val;
         else if (key == "fBossXPMult")        g_bossXPMult = val;
+        else if (key == "fFollowerXpShare")   g_followerXpShare = val;   // bug3
+        else if (key == "fFollowerXpRange")   g_followerXpRange = val;   // bug3
         else if (key == "fMagnitudeMult")     g_magnitudeMult = val;
         else if (key == "bXPNotify")          g_xpNotify = val != 0.0f;
         else if (key == "bFullGemNames")     g_fullGemNames = val != 0.0f;
@@ -2920,6 +2924,49 @@ void AwardKillXP(RE::Actor* a_owner, float a_ap) {
     if (awarded > 0 && g_xpNotify && a_owner->IsPlayerRef()) {
         Notify(awarded == 1 ? std::format("Gem XP +{:.0f}", xp)
                             : std::format("Gem XP +{:.0f} (x{} gems)", xp, awarded));
+    }
+}
+
+// Bug 3 (marth's ruling 2026-07-28): a follower almost never gets the engine's
+// kill CREDIT (actorKiller), so its equipped gems never level off its own kills.
+// When the PLAYER lands a kill, share a reduced slice of that kill's Gem XP to
+// each NEARBY follower's socketed gems — mirrors the Echo follower-share so
+// companions actually progress. Teammate-only, range-gated to the player (i.e.
+// participated in the fight), and self-contained: AwardKillXP awards into the
+// follower's OWN worn gems (its player-only cosmetic branches simply don't fire).
+void AwardFollowerKillShare(float a_xp) {
+    if (g_followerXpShare <= 0.0f || a_xp <= 0.0f) {
+        return;
+    }
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    auto* lists = RE::ProcessLists::GetSingleton();
+    if (!player || !lists) {
+        return;
+    }
+    const float        shareXp = a_xp * g_followerXpShare;
+    const RE::NiPoint3 pp = player->GetPosition();
+    // Snapshot the recipients FIRST, then award — AwardKillXP -> GrantGemXP can
+    // synchronously AddObjectToContainer (mastered-gem birth) and Update*Ability,
+    // firing events into other SKSE mods that could add/remove a high-process actor
+    // and invalidate this BSTArray iterator mid-walk. Same "collect first, then act"
+    // invariant AwardKillXP itself uses over the inventory entryList (INVARIANTS #6).
+    std::vector<RE::NiPointer<RE::Actor>> targets;
+    for (auto& handle : lists->highActorHandles) {
+        auto a = handle.get();
+        if (!a || a.get() == player || !a->IsPlayerTeammate() || a->IsDead()) {
+            continue;
+        }
+        if (g_followerXpRange > 0.0f && a->GetPosition().GetDistance(pp) > g_followerXpRange) {
+            continue;  // too far from the fight to share the kill
+        }
+        targets.push_back(a);
+    }
+    for (auto& a : targets) {
+        AwardKillXP(a.get(), shareXp);
+    }
+    if (!targets.empty()) {
+        spdlog::info("[xp] shared {:.1f} kill-xp to {} nearby follower(s) (frac {:.2f})",
+                     shareXp, static_cast<int>(targets.size()), g_followerXpShare);
     }
 }
 
@@ -6465,6 +6512,7 @@ public:
                 }
             }
             if (fromPlayer) {  // corpse gems stay player-kill only
+                AwardFollowerKillShare(xp);  // bug3: share a slice to nearby followers' gems
                 if (auto ref = victim.get()) {
                     if (auto* v = ref->As<RE::Actor>()) {
                         RollCorpseGem(v);

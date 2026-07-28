@@ -52,6 +52,11 @@ the portable "never again" digest for sibling projects.
      are held by `ActorHandle` and re-resolved at cycle time.
    - `DispelStaleGemEffects` (:5432-5471): collect the dispel list fully
      before calling `Dispel(true)`.
+   - `AwardFollowerKillShare` (bug3): the rule is NOT inventory-specific — it
+     applies to ANY engine-owned list, `ProcessLists::highActorHandles` included.
+     `AwardKillXP` can `AddObjectToContainer`/`Update*Ability` and fire events into
+     other mods that add/remove a high-process actor, invalidating the `BSTArray`
+     iterator. Snapshot the teammate handles first, award second.
 6b. **Re-keying a `g_sockets` record is erase-then-insert, never
    insert-then-`erase(it)`** (Fable review 2026-07-28; latent in
    `RekeyTransferredSockets` since m19). `unordered_map` insertion can rehash and
