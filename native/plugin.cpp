@@ -158,7 +158,7 @@ constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPl
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.7-beta5";  // phase-3 public beta; beta5 = XP reclaim refinements (highest-first, skip no-XP strands)
+constexpr const char* kMEOVersion = "1.0.7-beta6";  // phase-3 public beta; beta6 = menu-open reclaim + deterministic d-pad pane nav (bundle in progress)
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -2512,6 +2512,7 @@ struct MenuState {
 MenuState g_menu;
 
 void OpenGemMenu(bool a_station = false);  // defined with the render hooks below
+void ReclaimStrandedForMenu();             // xp/hooks — defined after the reclaim helpers
 void ApplyTemperPerk();                    // m33b — defined before EnsurePlayerSetup
 void DispelStaleGemEffects();              // m24b/c — defined with the load-refresh code
 void StockVendorGems();                    // m19b — defined with the loot rolls below
@@ -3989,12 +3990,19 @@ namespace menuhook {
         // slotted gem — too geometry-dependent). Make left/right DETERMINISTICALLY
         // jump between the two panes: track which pane held nav focus last frame,
         // and on the opposite d-pad press request focus into the other pane.
-        static int s_navPane = 0;  // 0 = items, 1 = gems
+        static int s_navPane = 0;  // 0 = items, 1 = gems (kept for focus-land targeting)
         int        wantPane = -1;
+        // marth 2026-07-28: d-pad Left/Right ALWAYS switch panes — Left=items,
+        // Right=gems — never gated on the last-focused pane. The old gate
+        // (`&& s_navPane == N`) could desync from real focus (a right-pane row that
+        // didn't register as "items focused") and swallow the escape press, trapping
+        // the cursor in the right pane (close+reopen was the only way out). Both lists
+        // are vertical, so up/down owns row movement and L/R is free to mean "switch
+        // pane" deterministically. (LB/RB will switch follower TABS once those land.)
         if (!busy) {
-            if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, false) && s_navPane == 0) {
+            if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, false)) {
                 wantPane = 1;
-            } else if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft, false) && s_navPane == 1) {
+            } else if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft, false)) {
                 wantPane = 0;
             }
         }
@@ -4603,6 +4611,12 @@ void OpenGemMenu(bool a_station) {
     RefreshPerks();
     EnsurePouchRef();     // m27: gems present in the pouch before the snapshot
     RouteGemsToPouch();
+    // xp/hooks (marth, 2026-07-28 "picked-up sword doesn't show in the pouch until
+    // another save/load"): an in-session pickup can leave a socketed item record-less
+    // (its uid rewritten) before the next load's post-load sweep repairs it, so the
+    // snapshot below wouldn't list it. Reclaim the stranded record now, at open, so a
+    // just-picked-up item appears immediately.
+    ReclaimStrandedForMenu();
     if (g_needSeedDiscoveries) { SeedDiscoveries(); g_needSeedDiscoveries = false; }
     CheckGemDiscoveries();  // m37: study newly-acquired gem families
     g_menu.selBase = 0;  // fresh open: no remembered selection
@@ -5372,12 +5386,53 @@ void TryTransplantStrandedXP(RE::TESObjectREFR* a_owner, RE::TESBoundObject* a_b
     }
 }
 
-// xp/hooks: the post-load sweep is the ONLY window where stranded-record reclaim
-// runs (Fable review): its cross-container blind spot and its lack of an evUid hint
-// make it strictly worse than the event-driven RekeyTransferredSockets for in-
-// session transfers, so it is confined to the one pass where the legitimate
-// stranded/TRAP-2 case actually lives. Set around kPostLoadGame ConvertInventory.
+// xp/hooks: reclaim runs in exactly two deliberate windows — the kPostLoadGame
+// sweep (this flag, around ConvertInventory) and gem-pouch open
+// (ReclaimStrandedForMenu). Both are player-driven moments where the player's own
+// inventory is the right scope; neither has the evUid hint that makes the
+// event-driven RekeyTransferredSockets better for live container transfers, so
+// reclaim stays out of ContainerSink and confined to these two.
 bool g_postLoadSweep = false;
+
+// xp/hooks (marth 2026-07-28): reclaim stranded records for the player's OWN
+// record-less socketed gear at gem-pouch open, so an item picked up mid-session
+// (uid rewritten, in-session re-key missed) shows immediately instead of waiting
+// for the next load's sweep. Case A only (uid present) — the item is in hand, so
+// its ExtraUniqueID node is live; the uid-less TRAP-2 case is a load-time concern.
+void ReclaimStrandedForMenu() {
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    if (!player) {
+        return;
+    }
+    for (auto& [obj, data] : player->GetInventory()) {
+        if (data.first <= 0 || !obj || !data.second || !data.second->extraLists) {
+            continue;
+        }
+        if (!(obj->Is(RE::FormType::Weapon) || obj->Is(RE::FormType::Armor))) {
+            continue;
+        }
+        for (auto* xl : *data.second->extraLists) {
+            if (!xl || !xl->HasType(RE::ExtraDataType::kEnchantment)) {
+                continue;
+            }
+            auto* xid = xl->GetByType<RE::ExtraUniqueID>();
+            if (!xid) {
+                continue;
+            }
+            bool ours = false;
+            for (int s = 0; s < kMaxSockets; ++s) {
+                if (g_sockets.contains(MakeKey(obj->GetFormID(), xid->uniqueID,
+                                               static_cast<std::uint8_t>(s)))) {
+                    ours = true;
+                    break;
+                }
+            }
+            if (!ours) {
+                TryAdoptStrandedSocketRecord(player, obj, xl);  // MEO-only + highest-first inside
+            }
+        }
+    }
+}
 
 int ConvertInventory(RE::TESObjectREFR* a_holder) {
     auto* actor = a_holder ? a_holder->As<RE::Actor>() : nullptr;

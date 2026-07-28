@@ -4,6 +4,22 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.7-beta6 — pouch reflects picked-up gear + reliable pad pane-switching (2026-07-28)
+
+Usability follow-ups from deck testing.
+
+- **A socketed item picked up mid-session now shows in the Gem Pouch immediately.**
+  Previously, if an item's instance ID changed on pickup and the live re-key
+  missed it, the item wouldn't appear in the pouch until the next save/load
+  (whose post-load pass reclaims it). MEO now also reclaims stranded records when
+  you open the pouch, so a just-picked-up gemmed item is listed right away with its
+  banked XP intact.
+- **Controller: switching between the two panes is reliable and can no longer get
+  stuck.** D-pad Left always moves to the items pane, D-pad Right always to the
+  gems pane (up/down still moves within a pane). The old scheme could trap the
+  cursor in the right pane until you closed and reopened the pouch. (Tab-switching
+  on LB/RB arrives with the per-follower pouch tabs.)
+
 ## v1.0.7-beta5 — gem-XP reclaim refinements (2026-07-28)
 
 Follow-up to beta4 from deck-log analysis. The beta4 reclaim already recovered

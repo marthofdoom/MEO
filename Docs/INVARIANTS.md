@@ -144,11 +144,17 @@ the portable "never again" digest for sibling projects.
    §1 TRAP 2) is otherwise re-stamped L1/xp0 by the kPostLoadGame convert sweep
    and lost for good (`RecoverStrandedGems` is MISC-only). Reclaim shares 8b/8e's
    veto and 8b's `IsMEOBuiltEnchant` gate (family signature alone can't tell a MEO
-   orphan from a foreign inject), and runs ONLY inside the post-load sweep
-   (`g_postLoadSweep`) — its live-uid guard sees only the owner's inventory, so a
-   same-base twin in another container is indistinguishable from a strand;
-   in-session transfers keep using the better-informed, evUid-hinted
-   `RekeyTransferredSockets`. Case A (uid present) re-keys the record; Case B (uid
+   orphan from a foreign inject), and runs in exactly TWO player-driven windows —
+   the post-load sweep (`g_postLoadSweep`, around ConvertInventory) and gem-pouch
+   open (`ReclaimStrandedForMenu`, case A only, so a mid-session pickup shows in the
+   pouch without waiting for the next load). Its live-uid guard sees only the
+   owner's inventory, so a same-base twin in another container is indistinguishable
+   from a strand; LIVE container transfers still use the better-informed,
+   evUid-hinted `RekeyTransferredSockets` (reclaim stays out of ContainerSink).
+   Pouch-open reclaim raises the steal *frequency* (every open, not just per load)
+   but NOT the steal *class*: a reclaim is idempotent once the record lands on a
+   live uid, and any "steal" only shuffles XP between same-base items (a twin that
+   later goes record-less reclaims in its own turn) — never a net loss or dup. Case A (uid present) re-keys the record; Case B (uid
    node died) transplants level/xp onto the freshly-minted record and rebuilds.
    **Candidate selection (marth's ruling 2026-07-28):** an all-L1/xp0 strand carries
    nothing (a reset to L1/0 loses nothing) so it NEVER competes; among leveled
