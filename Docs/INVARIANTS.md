@@ -52,6 +52,14 @@ the portable "never again" digest for sibling projects.
      are held by `ActorHandle` and re-resolved at cycle time.
    - `DispelStaleGemEffects` (:5432-5471): collect the dispel list fully
      before calling `Dispel(true)`.
+6b. **Re-keying a `g_sockets` record is erase-then-insert, never
+   insert-then-`erase(it)`** (Fable review 2026-07-28; latent in
+   `RekeyTransferredSockets` since m19). `unordered_map` insertion can rehash and
+   invalidate ALL iterators, so `map[newKey] = std::move(it->second); map.erase(it)`
+   is UB the moment the insert crosses a load-factor boundary (long playthroughs,
+   thousands of NPC-stamped records). Move the value out, drop the iterator, THEN
+   insert — the pattern `RouteGemsToPouch` already uses. Sites: `RekeyTransferredSockets`,
+   `TryAdoptStrandedSocketRecord`, `TryTransplantStrandedXP`.
 7. **All engine mutation goes through `SKSE::GetTaskInterface()->AddTask`**
    (main thread). Sinks, sleeper threads, and menu actions only queue;
    the render thread only reads mutex-guarded snapshots.
@@ -120,6 +128,31 @@ the portable "never again" digest for sibling projects.
    and is TRANSIENT BY CONSTRUCTION: the next `RebuildInstanceEnchant` (level-up,
    socket change, worn reapply after load) recomposes `<gems> <plainBaseName>`
    and discards it. Making it durable needs a co-save field — deferred.
+8e. **The family veto matches base OR ranked-ladder variant, NEVER riders**
+   (`MgefInGemFamily`, xp/hooks 2026-07-28). `RebuildInstanceEnchant` emits
+   `mgefLv[level-1]` for a leveled gem (m28 rank ladder), so a veto comparing the
+   record's BASE mgef alone (the pre-fix 8b `recordMatches`) refuses a gem's own
+   legitimate transfer once it is L2+ on a rank-ladder family — a data-loss path.
+   Match base or ranked variant. Riders must NOT vouch: the primary `mgefLv` is
+   ALWAYS emitted by a genuine MEO enchant, so a rider is never needed for a true
+   positive, and rider signatures are generic enough (`SameEffectSig` =
+   archetype + AVs + 2 flags) to admit foreign enchants — widening 8b's hole.
+8f. **Load-time stranded-record reclaim is MEO-enchant-only, unambiguous, and
+   post-load-sweep-only** (`TryAdoptStrandedSocketRecord` / `TryTransplantStrandedXP`,
+   xp/hooks 2026-07-28). A socketed weapon/armor whose record stranded at a dead
+   uid (container round-trip the in-session rekey missed, or the uid NODE died —
+   §1 TRAP 2) is otherwise re-stamped L1/xp0 by the kPostLoadGame convert sweep
+   and lost for good (`RecoverStrandedGems` is MISC-only). Reclaim shares 8b/8e's
+   veto and 8b's `IsMEOBuiltEnchant` gate (family signature alone can't tell a MEO
+   orphan from a foreign inject), reclaims the SINGLE family-vouched stranded
+   record or skips, and runs ONLY inside the post-load sweep (`g_postLoadSweep`) —
+   its live-uid guard sees only the owner's inventory, so a same-base twin in
+   another container is indistinguishable from a strand; in-session transfers keep
+   using the better-informed, evUid-hinted `RekeyTransferredSockets`. Case A (uid
+   present) re-keys the record; Case B (uid node died) transplants level/xp onto
+   the freshly-minted record and rebuilds. All-support strands are NOT reclaimable
+   (nothing checkable = nothing vouches) — the intended asymmetry vs 8b's
+   permissive rekey.
 9. **Bound every count and bail on short read** (N2, :5867): a truncated
    record must stop the read, not fabricate keys from garbage.
 10. **Clamp deserialized values at the source**: level → [1,5] (:5891) —

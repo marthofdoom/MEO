@@ -4,6 +4,32 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.7-beta4 — perk sockets apply live + gem-XP data-loss reclaim (2026-07-28)
+
+Two fixes over beta3 from a beta report, plus a latent-crash fix. Same phase-3
+feature set. **Recommended for anyone testing socket-granting perks.**
+
+- **A socket-granting perk now takes effect immediately.** Taking Twinned Fitting
+  (chest 2nd socket) or Master Jeweler (weapon 2nd socket) only added the new
+  socket after a save/reload, because MEO re-read your perks on menu-close of the
+  vanilla Journal only — a perk taken through a perk-overhaul's own UI or a skill
+  book was missed. MEO now re-reads perks when you open the Gem Pouch, so capacity
+  is current the moment you go to socket.
+- **A socketed gem could reset to zero XP after a save/reload.** If a socketed
+  item's instance identity was lost — its unique-ID node dying across a save/load,
+  or a container round-trip the in-session re-key missed — MEO re-stamped the item
+  as a fresh level-1 gem on the next load and the banked XP was gone. MEO now
+  reclaims the stranded XP record and restores it onto the item (banked level and
+  XP intact), and no longer wrongly rejects a *leveled* gem's own transfer. This
+  was the data loss behind the perk report: the socket not appearing live led to
+  item-shuffling that tripped the reset.
+  - Saves that had **already** zeroed a gem before this build can't be recovered —
+    that value is gone — but no further loss occurs.
+  - The co-save format is unchanged, so this build is downgrade-safe as before.
+- **Fixes a latent crash** in the socket re-key path (an iterator invalidated by a
+  map growth on very long saves) — present since v0.27.0, never reported, closed
+  preemptively.
+
 ## v1.0.7-beta3 — SE 1.5.97 crash fix (2026-07-21)
 
 Critical point fix over beta2 from the second beta report. Same phase-3 feature

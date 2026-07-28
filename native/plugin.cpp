@@ -158,7 +158,7 @@ constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPl
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.7-beta3";  // phase-3 public beta; beta3 = NG DefaultObjectManager SE CTD fix
+constexpr const char* kMEOVersion = "1.0.7-beta4";  // phase-3 public beta; beta4 = perk-adds-socket-live + gem-XP data-loss reclaim
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -4594,6 +4594,13 @@ void OpenGemMenu(bool a_station) {
     }
     ReadConfig();  // m24c: MCM Helper flushes iMenuStyle on ITS close — read
                    // fresh at every open so the skin dropdown takes effect now
+    // xp/hooks (marth, 2026-07-28 "the perk was supposed to add a socket and did
+    // not"): RefreshPerks only fired on JournalMenu close, so a socket-granting
+    // perk (Twinned/Master Jeweler) taken through a perk-overhaul's own UI, a skill
+    // book, or with this menu already open left g_hasTwinned/g_hasJeweler false —
+    // SocketCapacity kept returning 1 until a reload re-ran RefreshPerks. Refresh
+    // here so capacity reflects current perks the instant the player goes to socket.
+    RefreshPerks();
     EnsurePouchRef();     // m27: gems present in the pouch before the snapshot
     RouteGemsToPouch();
     if (g_needSeedDiscoveries) { SeedDiscoveries(); g_needSeedDiscoveries = false; }
@@ -4783,12 +4790,52 @@ bool SameEffectSig(const RE::EffectSetting* a_a, const RE::EffectSetting* a_b) {
            a_a->data.flags.all(F::kHostile) == a_b->data.flags.all(F::kHostile);
 }
 
+// xp/hooks (marth's "gem reset to zero XP" data-loss, 2026-07-28): does MGEF
+// `a_fx` belong to gem family `a_rg` — its base mgef or ANY ranked-ladder variant
+// (mgefLv[], m28)? The family veto used to compare a record's BASE mgef only, but
+// RebuildInstanceEnchant emits mgefLv[level-1] for a leveled gem, so once a gem is
+// L2+ on a rank-ladder family its own legitimate transfer failed the veto and its
+// record was stranded (a data-loss path). Match base OR ranked variant so a ranked
+// emission still vouches. RIDERS deliberately do NOT vouch (Fable review): the
+// PRIMARY (mgefLv) is always emitted by a genuine MEO enchant, so a rider is never
+// needed for a true positive — and rider signatures are generic enough (SameEffectSig
+// is archetype+AVs+2 flags) to admit FOREIGN enchants, widening the 8b foreign-
+// adoption hole this veto exists to close. Base + ranked only.
+bool MgefInGemFamily(const ResolvedGem& a_rg, const RE::EffectSetting* a_fx) {
+    if (!a_fx) {
+        return false;
+    }
+    if (a_rg.mgef && (a_fx == a_rg.mgef || SameEffectSig(a_fx, a_rg.mgef))) {
+        return true;
+    }
+    for (auto* lv : a_rg.mgefLv) {
+        if (lv && (a_fx == lv || SameEffectSig(a_fx, lv))) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
                            RE::ExtraDataList* a_xList) {
     auto* xEnch = a_xList->GetByType<RE::ExtraEnchantment>();
     auto* ench = xEnch ? xEnch->enchantment : nullptr;
     if (!ench) {
         return 0;
+    }
+    // xp/hooks DIAGNOSTIC (marth's "gem reset to zero XP", 2026-07-28): reaching
+    // this path with MEO's OWN enchant means a socketed item lost its co-save
+    // record (its uid stopped resolving) and is about to be re-stamped at L1/xp0.
+    // TryAdoptStrandedSocketRecord should have reclaimed it upstream; if this fires,
+    // the stranded record was ambiguous, absent, or its family failed to match —
+    // the exact gate to inspect. (A genuine new player/foreign enchant is expected
+    // here and is not a loss.)
+    if (IsMEOBuiltEnchant(ench)) {
+        auto* xid = a_xList->GetByType<RE::ExtraUniqueID>();
+        spdlog::warn("[xp-loss?] '{}' base {:08X} uid {} — re-converting a record-less MEO "
+                     "enchant (banked XP will reset to L1/0 unless it was a fresh mint)",
+                     a_base->GetName(), a_base->GetFormID(),
+                     xid ? std::to_string(xid->uniqueID) : "none");
     }
     // m51 (marth's ruling 2026-07-17): adopting a PLAYER instance enchant is the
     // catch-all that stops stray enchanted gear slipping past MEO, so it stays ON
@@ -5082,6 +5129,209 @@ int StripUncoveredInventory(RE::TESObjectREFR* a_holder) {
     return stripped;
 }
 
+// xp/hooks (marth's "gem reset to zero XP" data-loss, 2026-07-28): a socketed
+// weapon/armor whose banked-XP record was stranded at a dead uid — the uid was
+// rewritten by a CONTAINER transfer (chest/mannequin/follower round-trip; NOT a
+// world drop/pickup, which preserves the uid — ENGINE_NOTES §1) and the in-session
+// rekey missed it, OR the ExtraUniqueID NODE ITSELF died across save/load (§1 TRAP
+// 2). Once saved, the record is dead weight: the next load's ConvertInventory
+// finds the live item record-less and ConvertInstanceEnchant re-stamps it at level
+// 1 / xp 0, and RecoverStrandedGems is MISC-only so it can't reclaim a worn base —
+// the XP is gone. The two helpers below are the LOAD-TIME safety net (caller gates
+// on the post-load sweep only: in-session transfers use the better-informed,
+// evUid-hinted RekeyTransferredSockets).
+//
+// Shared candidate finder: the SINGLE stranded record uid for `a_base` whose gem
+// famil(ies) all appear in `a_enchFx` and which sits on NO live instance of the
+// base in the owner's inventory. 0 if none or ambiguous (unambiguous-or-skip, the
+// §1 doctrine — a wrong reclaim silently corrupts, a skip only fails to help).
+std::uint16_t FindStrandedSourceUid(RE::TESObjectREFR* a_owner, RE::FormID a_base,
+                                    std::uint16_t a_liveUid,
+                                    const std::vector<const RE::EffectSetting*>& a_enchFx) {
+    // Live uids for this base in the owner's inventory — a record on one of these
+    // belongs to that live instance and must never be stolen.
+    std::unordered_set<std::uint16_t> liveUids;
+    if (auto* ch = a_owner->GetInventoryChanges(); ch && ch->entryList) {
+        for (auto* e : *ch->entryList) {
+            if (!e || !e->object || e->object->GetFormID() != a_base || !e->extraLists) {
+                continue;
+            }
+            for (auto* xl : *e->extraLists) {
+                if (auto* id = xl ? xl->GetByType<RE::ExtraUniqueID>() : nullptr) {
+                    liveUids.insert(id->uniqueID);
+                }
+            }
+        }
+    }
+    // Every non-support slot's gem family must appear in the live enchant (base or
+    // ranked variant). Mirrors RekeyTransferredSockets::recordMatches.
+    auto matches = [&](std::uint16_t uid) {
+        bool anyChecked = false;
+        for (int s = 0; s < kMaxSockets; ++s) {
+            auto it = g_sockets.find(MakeKey(a_base, uid, static_cast<std::uint8_t>(s)));
+            if (it == g_sockets.end()) {
+                continue;
+            }
+            auto gi = g_gemByGid.find(it->second.gid);
+            if (gi == g_gemByGid.end()) {
+                return false;  // unknown gem — can't vouch
+            }
+            const auto& rg = g_gems[gi->second];
+            if (!rg.mgef) {
+                continue;  // support gem — no mgef to compare
+            }
+            anyChecked = true;
+            bool inEnch = false;
+            for (auto* fx : a_enchFx) {
+                if (MgefInGemFamily(rg, fx)) {
+                    inEnch = true;
+                    break;
+                }
+            }
+            if (!inEnch) {
+                return false;
+            }
+        }
+        return anyChecked;
+    };
+    std::vector<std::uint16_t> cand;
+    for (const auto& [key, rec] : g_sockets) {
+        if (static_cast<RE::FormID>(key >> 24) != a_base) {
+            continue;
+        }
+        const auto uid = static_cast<std::uint16_t>((key >> 8) & 0xFFFF);
+        if (uid == a_liveUid || liveUids.contains(uid)) {
+            continue;  // belongs to a live instance
+        }
+        if (std::find(cand.begin(), cand.end(), uid) == cand.end() && matches(uid)) {
+            cand.push_back(uid);
+        }
+    }
+    if (cand.size() != 1) {
+        if (cand.size() > 1) {
+            spdlog::warn("[adopt] {:08X}: {} stranded records match live uid {} — ambiguous, "
+                         "skipped", a_base, cand.size(), a_liveUid);
+        }
+        return 0;
+    }
+    return cand[0];
+}
+
+// Build the live enchant's effect list AND confirm it is MEO's OWN work (created
+// FF + kCostOverride). Foreign enchants must NEVER reclaim a MEO record (INVARIANTS
+// 8b): family signature alone can't tell a MEO orphan from an EDU-class inject, and
+// the XP-loss class always involves a MEO-built enchant. Returns false (no fx) if
+// the enchant is absent or foreign.
+bool MeoEnchantEffects(RE::ExtraDataList* a_xList,
+                       std::vector<const RE::EffectSetting*>& a_out) {
+    auto* xe = a_xList ? a_xList->GetByType<RE::ExtraEnchantment>() : nullptr;
+    if (!xe || !xe->enchantment || !IsMEOBuiltEnchant(xe->enchantment)) {
+        return false;
+    }
+    for (auto* eff : xe->enchantment->effects) {
+        if (eff && eff->baseEffect) {
+            a_out.push_back(eff->baseEffect);
+        }
+    }
+    return !a_out.empty();
+}
+
+// Case A — the live item HAS a uid but no record: re-key the stranded record onto
+// it (the traveling enchant was built from that record, so re-keying alone keeps
+// level/magnitude correct — no rebuild needed). Returns true iff reclaimed.
+bool TryAdoptStrandedSocketRecord(RE::TESObjectREFR* a_owner, RE::TESBoundObject* a_base,
+                                  RE::ExtraDataList* a_xList) {
+    if (!a_owner || !a_base || !a_xList) {
+        return false;
+    }
+    auto* xid = a_xList->GetByType<RE::ExtraUniqueID>();
+    if (!xid) {
+        return false;  // no instance id to key a reclaimed record onto (case B)
+    }
+    std::vector<const RE::EffectSetting*> enchFx;
+    if (!MeoEnchantEffects(a_xList, enchFx)) {
+        return false;  // absent or foreign enchant — never reclaim onto it
+    }
+    const RE::FormID    base = a_base->GetFormID();
+    const std::uint16_t liveUid = xid->uniqueID;
+    const std::uint16_t fromUid = FindStrandedSourceUid(a_owner, base, liveUid, enchFx);
+    if (!fromUid) {
+        return false;
+    }
+    int moved = 0;
+    for (int s = 0; s < kMaxSockets; ++s) {
+        auto it = g_sockets.find(MakeKey(base, fromUid, static_cast<std::uint8_t>(s)));
+        if (it == g_sockets.end()) {
+            continue;
+        }
+        spdlog::info("[adopt] {:08X}: reclaimed stranded '{}' L{} xp={:.0f} uid {} -> {} (slot {})",
+                     base, it->second.gid, it->second.level, it->second.xp, fromUid, liveUid, s);
+        // erase-then-insert: an unordered_map insert can rehash and invalidate `it`,
+        // so move the value out and drop the iterator BEFORE inserting (Fable review;
+        // the safe pattern used by RouteGemsToPouch).
+        auto rec = std::move(it->second);
+        g_sockets.erase(it);
+        g_sockets[MakeKey(base, liveUid, static_cast<std::uint8_t>(s))] = std::move(rec);
+        ++moved;
+    }
+    if (moved > 0) {
+        Notify("MEO: recovered a socketed gem's banked XP.");
+        return true;
+    }
+    return false;
+}
+
+// Case B — the ExtraUniqueID NODE died across save/load (§1 TRAP 2), so
+// ConvertInstanceEnchant already MINTED a fresh uid and stamped the item at L1/xp0.
+// Transplant the single matching stranded record's level/xp onto that fresh record,
+// then rebuild so magnitude/name reflect the restored level. Call AFTER a successful
+// convert, with the item's freshly-minted uid live on a_xList.
+void TryTransplantStrandedXP(RE::TESObjectREFR* a_owner, RE::TESBoundObject* a_base,
+                             RE::ExtraDataList* a_xList) {
+    auto* xid = a_xList ? a_xList->GetByType<RE::ExtraUniqueID>() : nullptr;
+    if (!a_owner || !a_base || !xid) {
+        return;
+    }
+    std::vector<const RE::EffectSetting*> enchFx;
+    if (!MeoEnchantEffects(a_xList, enchFx)) {
+        return;
+    }
+    const RE::FormID    base = a_base->GetFormID();
+    const std::uint16_t liveUid = xid->uniqueID;
+    const std::uint16_t fromUid = FindStrandedSourceUid(a_owner, base, liveUid, enchFx);
+    if (!fromUid) {
+        return;
+    }
+    // Replace the fresh L1 record(s) at the live uid wholesale with the stranded
+    // originals (restores gid + level + xp + multi-gem layout), erase-then-insert.
+    int moved = 0;
+    for (int s = 0; s < kMaxSockets; ++s) {
+        auto src = g_sockets.find(MakeKey(base, fromUid, static_cast<std::uint8_t>(s)));
+        if (src == g_sockets.end()) {
+            continue;
+        }
+        spdlog::info("[adopt] {:08X}: transplanted stranded '{}' L{} xp={:.0f} (uid-node died) "
+                     "uid {} -> fresh {} (slot {})",
+                     base, src->second.gid, src->second.level, src->second.xp, fromUid, liveUid, s);
+        auto rec = std::move(src->second);
+        g_sockets.erase(src);
+        g_sockets[MakeKey(base, liveUid, static_cast<std::uint8_t>(s))] = std::move(rec);
+        ++moved;
+    }
+    if (moved > 0) {
+        RebuildInstanceEnchant(a_base, a_xList,
+                               a_owner ? a_owner->As<RE::Actor>() : nullptr);
+        Notify("MEO: recovered a socketed gem's banked XP.");
+    }
+}
+
+// xp/hooks: the post-load sweep is the ONLY window where stranded-record reclaim
+// runs (Fable review): its cross-container blind spot and its lack of an evUid hint
+// make it strictly worse than the event-driven RekeyTransferredSockets for in-
+// session transfers, so it is confined to the one pass where the legitimate
+// stranded/TRAP-2 case actually lives. Set around kPostLoadGame ConvertInventory.
+bool g_postLoadSweep = false;
+
 int ConvertInventory(RE::TESObjectREFR* a_holder) {
     auto* actor = a_holder ? a_holder->As<RE::Actor>() : nullptr;
     if (!a_holder) {
@@ -5169,7 +5419,29 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
                     }
                 }
                 if (!ours) {
-                    converted += ConvertInstanceEnchant(actor, obj, xl);  // m26: marth's ruling
+                    // xp/hooks (post-load sweep only — Fable review): reclaim banked
+                    // XP a stranded record would otherwise lose to the L1/xp0 restamp.
+                    const bool hadUid = xid != nullptr;
+                    // Case B's MEO gate must be read BEFORE convert — after it, the
+                    // enchant is MEO-built by construction and the gate is vacuous. A
+                    // genuine vanilla-table enchant (uid-less FF) must NOT let a
+                    // subset-family stranded MEO record graft onto it (Fable NEW-1
+                    // cross-instance steal). Only a MEO-built enchant that lost its
+                    // uid node (§1 TRAP 2) is a legitimate transplant target.
+                    auto* xePre = xl->GetByType<RE::ExtraEnchantment>();
+                    const bool wasMeo = xePre && xePre->enchantment &&
+                                        IsMEOBuiltEnchant(xePre->enchantment);
+                    if (g_postLoadSweep && hadUid &&
+                        TryAdoptStrandedSocketRecord(actor, obj, xl)) {
+                        break;  // case A: re-keyed onto the live uid — do NOT convert
+                    }
+                    const int c = ConvertInstanceEnchant(actor, obj, xl);  // m26: marth's ruling
+                    converted += c;
+                    if (g_postLoadSweep && !hadUid && wasMeo && c > 0) {
+                        // case B (§1 TRAP 2): a MEO enchant whose uid node died; convert
+                        // minted a fresh uid at L1/xp0 — restore the stranded XP onto it.
+                        TryTransplantStrandedXP(actor, obj, xl);
+                    }
                     break;
                 }
             }
@@ -5712,14 +5984,14 @@ void RekeyTransferredSockets(RE::FormID a_base, RE::FormID a_oldC, RE::FormID a_
             if (gi == g_gemByGid.end()) {
                 return false;  // unknown gem — can't vouch
             }
-            auto* mgef = g_gems[gi->second].mgef;
-            if (!mgef) {
+            const auto& rg = g_gems[gi->second];
+            if (!rg.mgef) {
                 continue;  // support gem (no mgef of its own) — excluded
             }
             anyChecked = true;
             bool inEnch = false;
             for (auto* fx : enchFx) {
-                if (fx == mgef || SameEffectSig(fx, mgef)) {
+                if (MgefInGemFamily(rg, fx)) {  // xp/hooks: base OR ranked variant (never rider)
                     inEnch = true;
                     break;
                 }
@@ -5779,8 +6051,11 @@ void RekeyTransferredSockets(RE::FormID a_base, RE::FormID a_oldC, RE::FormID a_
         if (it == g_sockets.end()) {
             continue;
         }
-        g_sockets[MakeKey(a_base, toUid, static_cast<std::uint8_t>(s))] = std::move(it->second);
+        // erase-then-insert: an unordered_map insert can rehash and invalidate `it`
+        // (Fable review, 2026-07-28 — latent since m19; safe pattern: RouteGemsToPouch).
+        auto rec = std::move(it->second);
         g_sockets.erase(it);
+        g_sockets[MakeKey(a_base, toUid, static_cast<std::uint8_t>(s))] = std::move(rec);
     }
     spdlog::info("[rekey] {:08X}: uid {} -> {} (evUid={}; {} orphan(s), {} stranded)",
                  a_base, fromUid, toUid, a_evUid, orphans.size(), stranded.size());
@@ -7205,8 +7480,13 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
             RefreshPerks();
             // m23: convert enchanted generics the player already owns
             // (mid-save installs; new acquisitions convert via ContainerSink).
+            // xp/hooks: this is the ONE pass where stranded-record reclaim runs —
+            // the legitimate stranded/TRAP-2 case lives here, and confining it here
+            // keeps it out of in-session transfers (RekeyTransferredSockets owns those).
             if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+                g_postLoadSweep = true;
                 ConvertInventory(player);
+                g_postLoadSweep = false;
             }
             EnsurePouchRef();     // m27: gems live in the hidden pouch container
             RouteGemsToPouch();

@@ -93,7 +93,19 @@ sibling project can audit itself against the list in one sitting.
 - **Key per-instance data on (base, uid), never uid alone — and expect the
   engine to REWRITE uids on container transfer.** The pouch-container menu
   orphaned every banked-XP record in one day (v0.11.0); the rekey sink is
-  the only cure.
+  the only cure. World-ref drop/pickup PRESERVES the uid; only container
+  round-trips rewrite it (a 2026-07-28 field report was first mis-narrated as
+  "drop/pickup rewrites the uid" — check §1 before blaming a drop).
+- **Never insert into an `unordered_map` while holding an iterator you still
+  intend to `erase` — rehash invalidates it.** `map[newKey] = std::move(it->second);
+  map.erase(it)` is UB on the load that crosses a load-factor boundary. Move the
+  value out, drop the iterator, then insert. Latent in the socket-rekey path since
+  m19 (Fable review 2026-07-28).
+- **Never widen an identity veto with auxiliary signatures (riders) "to be
+  safe".** A genuine emission always carries its PRIMARY effect, so an auxiliary
+  match is never needed for a true positive — it only adds foreign-collision
+  surface and can flip a unique disambiguation to ambiguous (→ skip → strand),
+  the very loss it was meant to prevent (`MgefInGemFamily`, INVARIANTS 8e).
 - **Never assume a library mutator is total over its input shapes — read the
   impl before feeding it a boundary case.** NG's `ExtraDataList::RemoveByType`
   null-derefs when the removal empties the list; it sat compiled into every
