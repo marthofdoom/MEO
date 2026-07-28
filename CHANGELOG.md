@@ -24,6 +24,10 @@ Usability follow-ups from deck testing.
   of the Gem XP from *your* kills also feeds nearby followers' socketed gems —
   tunable in the MCM (Follower gem-XP share, default 50%; set 0 to disable). Only
   followers close enough to the fight receive it.
+- **Followers no longer accumulate loose gems.** When a follower's gem masters
+  (hits level 5) it births a fresh gem — that now goes to your shared pouch instead
+  of piling up in the follower's inventory. (A deep dive confirmed this mastery
+  birth was the *only* way gems ended up on followers — they never loot them.)
 
 ## v1.0.7-beta5 — gem-XP reclaim refinements (2026-07-28)
 

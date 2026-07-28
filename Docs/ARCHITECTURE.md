@@ -161,7 +161,14 @@ Flow: `DeathSink` (:4842, act on `dead==true`, killer = player or teammate)
   worn-activation — the cheap `ApplyWornAbility` unless the gid has >2 worn
   copies (`WornGidCount` :1177) where the cap must redistribute via
   `ReapplyWornSockets(true,true)` (:2213). Level 5 births a level-I copy of
-  the gem into the owner's inventory (:2238).
+  the gem — into the PLAYER's inventory for a player owner, but for a FOLLOWER
+  owner into the PLAYER (0x14 → ContainerSink → RouteGemsToPouch → shared pouch),
+  NOT the follower's pack (xp/hooks 2026-07-28). This is the ONLY native path that
+  can put a loose gem into a living follower (deep-dive verified: corpse/boss rolls
+  land on the corpse, spawn-stamp excludes teammates, ESP/Synthesis distribute
+  nothing to NPCs) — so routing the follower birth to the shared pouch closes the
+  "followers accumulate gems" source at its single origin. Do not reopen by
+  depositing a follower birth into the follower.
 - **Enchanting SKILL XP model (m37/v1.0.6)** — every rate is a **baked base
   constant × a 1.0-default MCM multiplier**, master-gated by `fEnchSkillXP`
   (`GrantEnchantingXP` :2109 — `mult <= 0` kills all of it):

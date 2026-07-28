@@ -2815,11 +2815,26 @@ bool GrantGemXP(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataLis
         }
     }
     if (newLevel == 5 && rg.items[0]) {
-        a_owner->AddObjectToContainer(rg.items[0], nullptr, 1, nullptr);
+        // The mastered gem births a fresh L1 copy. For the PLAYER it lands in
+        // inventory and ContainerSink routes it to the pouch. For a FOLLOWER, send it
+        // to the PLAYER (→ shared pouch) instead of the follower's pack: the deep
+        // dive (2026-07-28) proved THIS line is the ONLY native path that deposits a
+        // loose gem into a living follower — with follower gem-leveling now enabled
+        // it fires routinely, and a follower has no pouch and never clears births, so
+        // depositing here is exactly the "followers accumulate gems" source. Routing
+        // to the one shared pouch fixes the accumulation at its root (marth's design).
+        RE::TESObjectREFR* birthTo = a_owner;
+        if (!isPlayer) {
+            if (auto* pc = RE::PlayerCharacter::GetSingleton()) {
+                birthTo = pc;  // 0x14 → ContainerSink → RouteGemsToPouch (shared pouch)
+            }
+        }
+        birthTo->AddObjectToContainer(rg.items[0], nullptr, 1, nullptr);
         Notify(isPlayer ? std::format("Your mastered {} gem births a new gem.", GemName(rg))
-                        : std::format("{}'s mastered {} gem births a new gem.",
+                        : std::format("{}'s mastered {} gem births a new gem — sent to your pouch.",
                                       who && *who ? who : "Your follower", GemName(rg)));
-        spdlog::info("[birth] mastered '{}' birthed a level-I copy", a_rec.gid);
+        spdlog::info("[birth] mastered '{}' birthed a level-I copy → {}", a_rec.gid,
+                     isPlayer ? "owner" : "player pouch (follower birth)");
     }
     return true;
 }
