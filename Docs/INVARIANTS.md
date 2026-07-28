@@ -144,15 +144,23 @@ the portable "never again" digest for sibling projects.
    §1 TRAP 2) is otherwise re-stamped L1/xp0 by the kPostLoadGame convert sweep
    and lost for good (`RecoverStrandedGems` is MISC-only). Reclaim shares 8b/8e's
    veto and 8b's `IsMEOBuiltEnchant` gate (family signature alone can't tell a MEO
-   orphan from a foreign inject), reclaims the SINGLE family-vouched stranded
-   record or skips, and runs ONLY inside the post-load sweep (`g_postLoadSweep`) —
-   its live-uid guard sees only the owner's inventory, so a same-base twin in
-   another container is indistinguishable from a strand; in-session transfers keep
-   using the better-informed, evUid-hinted `RekeyTransferredSockets`. Case A (uid
-   present) re-keys the record; Case B (uid node died) transplants level/xp onto
-   the freshly-minted record and rebuilds. All-support strands are NOT reclaimable
-   (nothing checkable = nothing vouches) — the intended asymmetry vs 8b's
-   permissive rekey.
+   orphan from a foreign inject), and runs ONLY inside the post-load sweep
+   (`g_postLoadSweep`) — its live-uid guard sees only the owner's inventory, so a
+   same-base twin in another container is indistinguishable from a strand;
+   in-session transfers keep using the better-informed, evUid-hinted
+   `RekeyTransferredSockets`. Case A (uid present) re-keys the record; Case B (uid
+   node died) transplants level/xp onto the freshly-minted record and rebuilds.
+   **Candidate selection (marth's ruling 2026-07-28):** an all-L1/xp0 strand carries
+   nothing (a reset to L1/0 loses nothing) so it NEVER competes; among leveled
+   strands restore the HIGHEST level first (xp then uid as deterministic
+   tiebreaks) — each reclaim erases the record it claims, so remaining strands
+   recover onto later same-base items in turn. No ambiguous-skip. A leveled strand
+   that fails the family veto is the only real-loss signal and is logged. All-support
+   strands are NOT reclaimable (nothing checkable) — the intended asymmetry vs 8b's
+   permissive rekey. Gems retired through MEO (`DestroyGem`, unsocket) erase their
+   record at retirement, so they are never reclaim candidates; only overlay-mode
+   vanilla disenchant (non-default; takeover replaces the table) can leave a retired
+   strand, a documented edge.
 9. **Bound every count and bail on short read** (N2, :5867): a truncated
    record must stop the read, not fabricate keys from garbage.
 10. **Clamp deserialized values at the source**: level → [1,5] (:5891) —

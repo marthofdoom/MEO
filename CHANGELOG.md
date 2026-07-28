@@ -4,6 +4,25 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.7-beta5 — gem-XP reclaim refinements (2026-07-28)
+
+Follow-up to beta4 from deck-log analysis. The beta4 reclaim already recovered
+real banked XP (a level-2 gem whose ID node died on load came back at L2/600 —
+confirmed in the log); beta5 sharpens the edges that made it *look* incomplete:
+
+- **No more false "XP will reset" alarm.** The diagnostic warning fired even when
+  the record being re-stamped was level 1 with zero XP (nothing to lose) — e.g.
+  several identical looted robes. It's now a calm info line, and only a genuinely
+  unrecoverable leveled record is flagged.
+- **Zero-XP records never block recovery.** A level-1/0-XP strand carries nothing,
+  so it no longer counts toward "ambiguous" — a single leveled gem among a pile of
+  fresh duplicates is now recovered cleanly.
+- **Competing leveled records restore highest-first.** In the rare case where more
+  than one leveled record of the same base is stranded, MEO restores the highest
+  level first and the rest recover onto later same-base items in turn, instead of
+  skipping. Retired gems (Destroy button, unsocket) erased their record at
+  retirement, so they never masquerade as recoverable.
+
 ## v1.0.7-beta4 — perk sockets apply live + gem-XP data-loss reclaim (2026-07-28)
 
 Two fixes over beta3 from a beta report, plus a latent-crash fix. Same phase-3

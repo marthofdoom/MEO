@@ -158,7 +158,7 @@ constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPl
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.7-beta4";  // phase-3 public beta; beta4 = perk-adds-socket-live + gem-XP data-loss reclaim
+constexpr const char* kMEOVersion = "1.0.7-beta5";  // phase-3 public beta; beta5 = XP reclaim refinements (highest-first, skip no-XP strands)
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -4824,16 +4824,16 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
         return 0;
     }
     // xp/hooks DIAGNOSTIC (marth's "gem reset to zero XP", 2026-07-28): reaching
-    // this path with MEO's OWN enchant means a socketed item lost its co-save
-    // record (its uid stopped resolving) and is about to be re-stamped at L1/xp0.
-    // TryAdoptStrandedSocketRecord should have reclaimed it upstream; if this fires,
-    // the stranded record was ambiguous, absent, or its family failed to match —
-    // the exact gate to inspect. (A genuine new player/foreign enchant is expected
-    // here and is not a loss.)
+    // this path with MEO's OWN enchant means a socketed item lost its co-save record
+    // (its uid stopped resolving / the node died — §1 TRAP 2). The post-load reclaim
+    // (TryAdopt / TryTransplant) restores banked XP from the highest matching strand
+    // right after; info-level only, since the common cases (fresh mint, or an
+    // immediately-reclaimed record) are NOT losses. Real unrecovered loss now shows
+    // as the "[adopt] … family isn't in the live enchant" line in FindStrandedSourceUid.
     if (IsMEOBuiltEnchant(ench)) {
         auto* xid = a_xList->GetByType<RE::ExtraUniqueID>();
-        spdlog::warn("[xp-loss?] '{}' base {:08X} uid {} — re-converting a record-less MEO "
-                     "enchant (banked XP will reset to L1/0 unless it was a fresh mint)",
+        spdlog::info("[reclaim] '{}' base {:08X} uid {} — record-less MEO enchant re-converting; "
+                     "post-load reclaim will restore banked XP if any is stranded",
                      a_base->GetName(), a_base->GetFormID(),
                      xid ? std::to_string(xid->uniqueID) : "none");
     }
@@ -5141,10 +5141,14 @@ int StripUncoveredInventory(RE::TESObjectREFR* a_holder) {
 // on the post-load sweep only: in-session transfers use the better-informed,
 // evUid-hinted RekeyTransferredSockets).
 //
-// Shared candidate finder: the SINGLE stranded record uid for `a_base` whose gem
-// famil(ies) all appear in `a_enchFx` and which sits on NO live instance of the
-// base in the owner's inventory. 0 if none or ambiguous (unambiguous-or-skip, the
-// §1 doctrine — a wrong reclaim silently corrupts, a skip only fails to help).
+// Shared candidate finder: the HIGHEST-progress stranded record uid for `a_base`
+// whose gem famil(ies) all appear in `a_enchFx` and which sits on NO live instance
+// of the base in the owner's inventory. Returns 0 when nothing worth recovering is
+// stranded. When several leveled records compete, the highest wins (xp then uid as
+// tiebreaks); each reclaim erases the record it claims, so the sweep's next
+// record-less same-base item gets the next-highest (marth's ruling 2026-07-28,
+// INVARIANTS 8f). Records carrying nothing recreatable (L1/xp0, single non-support
+// slot) never compete.
 std::uint16_t FindStrandedSourceUid(RE::TESObjectREFR* a_owner, RE::FormID a_base,
                                     std::uint16_t a_liveUid,
                                     const std::vector<const RE::EffectSetting*>& a_enchFx) {
@@ -5194,27 +5198,70 @@ std::uint16_t FindStrandedSourceUid(RE::TESObjectREFR* a_owner, RE::FormID a_bas
         }
         return anyChecked;
     };
-    std::vector<std::uint16_t> cand;
+    // Is a candidate uid worth reclaiming, and what is its score (level, then xp)?
+    // A single-slot L1/xp0 non-support record carries NOTHING recreatable (a reset
+    // to L1/0 loses nothing) so it never competes. But a record that carries
+    // something the convert can't rebuild DOES count even at L1/xp0 (Fable B2):
+    //   - a multi-gem layout (>=2 filled slots — a linked pair), and
+    //   - a support gem (Echo/Conduit/Focus — rare boss loot, mgef-less, so
+    //     ConvertInstanceEnchant can never re-mint it from enchant effects).
+    auto worthRecovering = [&](std::uint16_t uid, int& a_lvl, float& a_xp) {
+        a_lvl = 0;
+        a_xp = 0.0f;
+        int  filled = 0;
+        bool hasSupport = false;
+        for (int s = 0; s < kMaxSockets; ++s) {
+            auto it = g_sockets.find(MakeKey(a_base, uid, static_cast<std::uint8_t>(s)));
+            if (it == g_sockets.end()) {
+                continue;
+            }
+            ++filled;
+            a_lvl = std::max<int>(a_lvl, it->second.level);
+            a_xp += it->second.xp;
+            auto gi = g_gemByGid.find(it->second.gid);
+            if (gi != g_gemByGid.end() && g_gems[gi->second].def->isSupport) {
+                hasSupport = true;
+            }
+        }
+        return a_lvl > 1 || a_xp > 0.0f || filled >= 2 || hasSupport;
+    };
+    // marth's ruling 2026-07-28: when >1 leveled record competes (rare), restore
+    // the HIGHEST level first; the rest recover onto later same-base items in turn
+    // (each reclaim erases the record it claims, so the next record-less item of
+    // this base gets the next-highest on the same or a following pass). No skip.
+    std::uint16_t best = 0;
+    int           bestLvl = 0;
+    float         bestXp = 0.0f;
     for (const auto& [key, rec] : g_sockets) {
         if (static_cast<RE::FormID>(key >> 24) != a_base) {
             continue;
         }
         const auto uid = static_cast<std::uint16_t>((key >> 8) & 0xFFFF);
-        if (uid == a_liveUid || liveUids.contains(uid)) {
-            continue;  // belongs to a live instance
+        if (uid == a_liveUid || liveUids.contains(uid) || uid == best) {
+            continue;  // live instance, or already the current best
         }
-        if (std::find(cand.begin(), cand.end(), uid) == cand.end() && matches(uid)) {
-            cand.push_back(uid);
+        int   lvl = 0;
+        float xp = 0.0f;
+        if (!worthRecovering(uid, lvl, xp)) {
+            continue;  // duplicate looted gear (L1/0, single non-support slot) — noise
+        }
+        if (!matches(uid)) {
+            // A recoverable record we can't vouch for: an all-support strand (nothing
+            // checkable) is the expected/benign case; a strand whose main-gem family
+            // is genuinely absent from the live enchant is the only real-loss signal
+            // left. Log either way for diagnosis — it was already non-adoptable.
+            spdlog::info("[adopt] {:08X}: stranded uid {} (L{} xp {:.0f}) not reclaimed — its "
+                         "gem famil(ies) aren't vouched by the live enchant", a_base, uid, lvl, xp);
+            continue;
+        }
+        if (lvl > bestLvl || (lvl == bestLvl && xp > bestXp) ||
+            (lvl == bestLvl && xp == bestXp && uid > best)) {  // deterministic tiebreak
+            best = uid;
+            bestLvl = lvl;
+            bestXp = xp;
         }
     }
-    if (cand.size() != 1) {
-        if (cand.size() > 1) {
-            spdlog::warn("[adopt] {:08X}: {} stranded records match live uid {} — ambiguous, "
-                         "skipped", a_base, cand.size(), a_liveUid);
-        }
-        return 0;
-    }
-    return cand[0];
+    return best;  // 0 = no leveled candidate (fresh mint / nothing banked) — no loss
 }
 
 // Build the live enchant's effect list AND confirm it is MEO's OWN work (created
@@ -5283,9 +5330,9 @@ bool TryAdoptStrandedSocketRecord(RE::TESObjectREFR* a_owner, RE::TESBoundObject
 
 // Case B — the ExtraUniqueID NODE died across save/load (§1 TRAP 2), so
 // ConvertInstanceEnchant already MINTED a fresh uid and stamped the item at L1/xp0.
-// Transplant the single matching stranded record's level/xp onto that fresh record,
-// then rebuild so magnitude/name reflect the restored level. Call AFTER a successful
-// convert, with the item's freshly-minted uid live on a_xList.
+// Transplant the highest-progress matching stranded record's level/xp onto that
+// fresh record, then rebuild so magnitude/name reflect the restored level. Call
+// AFTER a successful convert, with the item's freshly-minted uid live on a_xList.
 void TryTransplantStrandedXP(RE::TESObjectREFR* a_owner, RE::TESBoundObject* a_base,
                              RE::ExtraDataList* a_xList) {
     auto* xid = a_xList ? a_xList->GetByType<RE::ExtraUniqueID>() : nullptr;
