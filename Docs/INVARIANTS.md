@@ -67,7 +67,12 @@ the portable "never again" digest for sibling projects.
    `TryAdoptStrandedSocketRecord`, `TryTransplantStrandedXP`.
 7. **All engine mutation goes through `SKSE::GetTaskInterface()->AddTask`**
    (main thread). Sinks, sleeper threads, and menu actions only queue;
-   the render thread only reads mutex-guarded snapshots.
+   the render thread only reads mutex-guarded snapshots. Corollary for the pouch
+   tabs: per-actor snapshots (player + follower `MenuItemRow` lists) are BUILT on
+   the task thread BEFORE taking `g_menu.lock`, then `std::move`d in under it; the
+   render reads `items`/`followerTabs`/`activeTab` only while holding that lock for
+   the whole frame and NEVER touches a live inventory. `activeTab` is clamped on
+   both the publish and render sides so a follower leaving between frames can't OOB.
 7b. **Any `ExtraDataList*` handed to an ownership-taking inventory API
    (`AddObjectToContainer`'s `a_extraList`) must be a RELINQUISHABLE HEAP list
    from the engine's own ctor (`MakeEngineXList`, `RELOCATION_ID(11437,

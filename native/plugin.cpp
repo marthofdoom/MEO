@@ -2512,6 +2512,18 @@ struct MenuState {
     // on a DIFFERENT item (marth: "frost disappeared", phantom-empty sockets).
     RE::FormID               selBase = 0;
     std::uint16_t            selUid = 0;
+    // Follower pouch tabs (xp/hooks 2026-07-28, marth's design): ONE shared pouch;
+    // tabs only switch WHOSE gear the left pane shows. Tab 0 is always the player
+    // (its items live in `items` above — the untouched player path). followerTabs
+    // holds one entry per nearby teammate. activeTab: 0 = player, 1.. = followerTabs
+    // index+1. Stage 1 = display + LB/RB nav; follower socketing is Stage 2.
+    struct FollowerTab {
+        std::string              name;   // follower display name
+        std::vector<MenuItemRow> items;  // that follower's socketable gear
+    };
+    std::string              playerTabName;   // player->GetName() (marth: "use player name")
+    std::vector<FollowerTab> followerTabs;
+    int                      activeTab = 0;   // 0 = player; 1.. = followerTabs[activeTab-1]
 };
 MenuState g_menu;
 
@@ -3073,6 +3085,106 @@ bool IsWornXList(const RE::ExtraDataList* a_xl) {
            a_xl->HasType(RE::ExtraDataType::kWornLeft);
 }
 
+// xp/hooks (follower pouch tabs, Stage 1): collect an actor's socketable gear as
+// MenuItemRows for that actor's tab. READ-ONLY by design — unlike the player path
+// it NEVER mints a uid onto plain gear (a follower's gear must not be mutated just
+// by opening the pouch; Stage-2 socketing will mint on demand). Lists each of the
+// actor's OURS-socketed instances (a g_sockets record on its uid) with per-slot gem
+// detail, plus one row per eligible plain (un-socketed) gear so it's visible.
+void CollectSocketableItems(RE::TESObjectREFR* a_holder, std::vector<MenuItemRow>& a_out) {
+    if (!a_holder) {
+        return;
+    }
+    auto inv = a_holder->GetInventory([](RE::TESBoundObject& o) {
+        return o.Is(RE::FormType::Weapon) || o.Is(RE::FormType::Armor);
+    });
+    for (const auto& [obj, data] : inv) {
+        if (data.first <= 0 || !obj) {
+            continue;
+        }
+        const bool  isArmor = obj->Is(RE::FormType::Armor);
+        const bool  eligible = isArmor ? IsSocketableArmorBase(obj->As<RE::TESObjectARMO>())
+                                       : IsSocketableWeaponBase(obj->As<RE::TESObjectWEAP>());
+        const char* baseName = obj->GetName();
+        if (!baseName || !*baseName) {
+            continue;
+        }
+        std::int32_t socketed = 0;
+        if (data.second && data.second->extraLists) {
+            for (auto* xl : *data.second->extraLists) {
+                if (!xl || !xl->HasType(RE::ExtraDataType::kEnchantment)) {
+                    continue;  // plain unit → counted in the plain pool below
+                }
+                // ANY enchanted unit is distinct — exclude it from the plain pool
+                // whether or not it's ours (a follower's own player-enchant too), so
+                // it's never mislabeled as plain socketable (Fable Stage-1 Issue-1;
+                // mirrors the player collector). Only OURS gets a detail row.
+                socketed += std::max(xl->GetCount(), 1);
+                auto* xid = xl->GetByType<RE::ExtraUniqueID>();
+                if (!xid) {
+                    continue;  // enchanted, never stamped by us
+                }
+                bool ours = false;
+                for (int s = 0; s < kMaxSockets; ++s) {
+                    if (g_sockets.contains(MakeKey(obj->GetFormID(), xid->uniqueID,
+                                                   static_cast<std::uint8_t>(s)))) {
+                        ours = true;
+                        break;
+                    }
+                }
+                if (!ours) {
+                    continue;  // foreign/player enchant — excluded, no row
+                }
+                MenuItemRow row;
+                row.base = obj->GetFormID();
+                row.isArmor = isArmor;
+                row.worn = IsWornXList(xl);
+                row.uid = xid->uniqueID;
+                row.capacity = SocketCapacity(obj);
+                for (int s = 0; s < row.capacity && s < kMaxSockets; ++s) {
+                    auto it = g_sockets.find(MakeKey(row.base, xid->uniqueID,
+                                                     static_cast<std::uint8_t>(s)));
+                    if (it == g_sockets.end()) {
+                        continue;
+                    }
+                    if (auto gemIt = g_gemByGid.find(it->second.gid); gemIt != g_gemByGid.end()) {
+                        const auto& rg = g_gems[gemIt->second];
+                        if (rg.def->isSupport &&
+                            rg.def->supportType == meo::SupportType::kConduit) {
+                            row.hasConduit = true;
+                        }
+                        row.slotGem[s] = std::format("{} {}", GemName(rg),
+                                                     meo::kRoman[it->second.level - 1]);
+                        row.slotGemIdx[s] = gemIt->second;
+                        row.slotLevel[s] = it->second.level;
+                        row.slotTheme[s] = static_cast<int>(rg.def->theme);
+                        row.slotXp[s] = it->second.xp;
+                        row.slotNeed[s] = NextThreshold(rg.def, it->second.level);
+                    } else {
+                        row.slotGem[s] = "gem from a missing master";
+                    }
+                }
+                row.label = baseName;
+                if (row.worn) {
+                    row.label += "  (worn)";
+                }
+                a_out.push_back(std::move(row));
+            }
+        }
+        if (eligible && data.first - socketed > 0) {
+            MenuItemRow row;
+            row.base = obj->GetFormID();
+            row.isArmor = isArmor;
+            row.capacity = SocketCapacity(obj);
+            row.label = baseName;
+            if (data.first - socketed > 1) {
+                row.label += std::format("  x{}", data.first - socketed);
+            }
+            a_out.push_back(std::move(row));
+        }
+    }
+}
+
 // Main thread only. Rebuilds both panes from the live inventory. Weapon
 // instances without a uid get one stamped eagerly (Wheeler does the same
 // for all weapons/armor) so every listed row has a stable identity.
@@ -3310,6 +3422,42 @@ void BuildMenuSnapshot() {
     std::sort(gems.begin(), gems.end(), [](const MenuGemRow& a, const MenuGemRow& b) {
         return a.label < b.label;
     });
+    // Follower pouch tabs (Stage 1, read-only): one tab per NEARBY teammate (all of
+    // them, even gem-less, per marth), built with the no-mint collector. The shared
+    // pouch (gems/souls) is unchanged — tabs only switch whose gear the left pane
+    // shows. Same nearby-range as the kill-XP share.
+    std::string pName;
+    if (const char* pn = player->GetName()) {
+        pName = pn;
+    }
+    if (pName.empty()) {
+        pName = "You";
+    }
+    std::vector<MenuState::FollowerTab> fTabs;
+    if (auto* lists = RE::ProcessLists::GetSingleton()) {
+        const RE::NiPoint3 pp = player->GetPosition();
+        for (auto& handle : lists->highActorHandles) {
+            auto a = handle.get();
+            if (!a || a.get() == player || !a->IsPlayerTeammate() || a->IsDead()) {
+                continue;
+            }
+            if (g_followerXpRange > 0.0f && a->GetPosition().GetDistance(pp) > g_followerXpRange) {
+                continue;  // same "nearby" radius as the kill-XP share (0 = any loaded)
+            }
+            MenuState::FollowerTab tab;
+            const char* nm = a->GetName();
+            tab.name = (nm && *nm) ? nm : "Follower";
+            CollectSocketableItems(a.get(), tab.items);
+            std::sort(tab.items.begin(), tab.items.end(),
+                      [](const MenuItemRow& x, const MenuItemRow& y) {
+                          if (x.worn != y.worn) {
+                              return x.worn;
+                          }
+                          return x.label < y.label;
+                      });
+            fTabs.push_back(std::move(tab));
+        }
+    }
     std::scoped_lock lk(g_menu.lock);
     std::sort(souls.begin(), souls.end(), [](const MenuSoulRow& a, const MenuSoulRow& b) {
         return a.soul != b.soul ? a.soul < b.soul : a.label < b.label;
@@ -3317,6 +3465,10 @@ void BuildMenuSnapshot() {
     g_menu.items = std::move(items);
     g_menu.souls = std::move(souls);
     g_menu.gems = std::move(gems);
+    g_menu.playerTabName = std::move(pName);
+    g_menu.followerTabs = std::move(fTabs);
+    g_menu.activeTab = std::clamp(g_menu.activeTab, 0,
+                                  static_cast<int>(g_menu.followerTabs.size()));
     int found = -1;
     if (g_menu.selBase) {  // re-locate the selected ITEM after the resort
         for (int i = 0; i < static_cast<int>(g_menu.items.size()); ++i) {
@@ -4048,6 +4200,50 @@ namespace menuhook {
         const float footer = ImGui::GetFrameHeightWithSpacing() + 6.0f;
         const float half = ImGui::GetContentRegionAvail().x * 0.5f;
         const float rowH = lineH + 10.0f;
+        // ── Follower pouch tabs (Stage 1): "You" + one tab per nearby follower.
+        // LB/RB (GamepadL1/R1) cycle tabs; clicking a tab switches too. Tab 0 is the
+        // player (the full socketing UI below); follower tabs render a READ-ONLY view
+        // (interactive follower socketing is Stage 2). Switching a tab resets the
+        // selection so the panes don't carry a stale player-item highlight.
+        const int tabCount = 1 + static_cast<int>(g_menu.followerTabs.size());
+        auto pickTab = [&](int t) {
+            g_menu.activeTab = t;
+            g_menu.selItem = 0;
+            g_menu.selBase = 0;
+            g_menu.selUid = 0;
+            g_menu.selSlot = -1;
+        };
+        if (tabCount > 1) {
+            if (!busy) {
+                if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) {
+                    pickTab((g_menu.activeTab + 1) % tabCount);
+                } else if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
+                    pickTab((g_menu.activeTab + tabCount - 1) % tabCount);
+                }
+            }
+            for (int t = 0; t < tabCount; ++t) {
+                if (t > 0) {
+                    ImGui::SameLine();
+                }
+                const bool        cur = (t == g_menu.activeTab);
+                const std::string tname =
+                    (t == 0) ? (g_menu.playerTabName.empty() ? "You" : g_menu.playerTabName)
+                             : g_menu.followerTabs[t - 1].name;
+                if (cur) {
+                    ImGui::PushStyleColor(ImGuiCol_Button,
+                                          ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                }
+                if (ImGui::Button(std::format("{}##tab{}", tname, t).c_str()) && !busy) {
+                    pickTab(t);
+                }
+                if (cur) {
+                    ImGui::PopStyleColor();
+                }
+            }
+            ImGui::Separator();
+        }
+        g_menu.activeTab = std::clamp(g_menu.activeTab, 0, tabCount - 1);
+        if (g_menu.activeTab == 0) {  // ── player tab: the full socketing UI ──
         // m36e (marth: d-pad left/right only crossed panes when aligned with a
         // slotted gem — too geometry-dependent). Make left/right DETERMINISTICALLY
         // jump between the two panes: track which pane held nav focus last frame,
@@ -4351,6 +4547,39 @@ namespace menuhook {
         // m36e: remember which pane holds the nav cursor for next frame's jump.
         // A jump this frame settles next frame, so honour the request immediately.
         s_navPane = (wantPane >= 0) ? wantPane : (itemsFocused ? 0 : 1);
+        } else {  // ── follower tab (Stage 1): READ-ONLY view of this follower's gear ──
+            const auto& ftab = g_menu.followerTabs[g_menu.activeTab - 1];
+            ImGui::BeginChild("fitems", ImVec2(0, -footer), ImGuiChildFlags_Borders);
+            ImGui::TextDisabled("%s", (ftab.name + "  —  SOCKETED GEAR").c_str());
+            ImGui::Separator();
+            auto* dlf = ImGui::GetWindowDrawList();
+            for (const auto& row : ftab.items) {
+                const ImVec2 rp = ImGui::GetCursorScreenPos();
+                float        cx = rp.x + 12.0f;
+                for (int s = 0; s < row.capacity && s < kMaxSockets; ++s) {
+                    const bool  has = !row.slotGem[s].empty();
+                    const ImU32 col = ImGui::GetColorU32(
+                        has ? ThemeCol(row.slotTheme[s])
+                            : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                    DrawDiamond(dlf, ImVec2(cx, rp.y + rowH * 0.5f), 4.5f, col, has);
+                    cx += 13.0f;
+                }
+                std::string line = row.label;
+                for (int s = 0; s < row.capacity && s < kMaxSockets; ++s) {
+                    if (!row.slotGem[s].empty()) {
+                        line += (s == 0 ? "  —  " : ", ") + row.slotGem[s];
+                    }
+                }
+                ImGui::Dummy(ImVec2(0.0f, rowH));
+                dlf->AddText(ImVec2(rp.x + 42.0f, rp.y + (rowH - lineH) * 0.5f),
+                             ImGui::GetColorU32(ImGuiCol_Text), line.c_str());
+            }
+            if (ftab.items.empty()) {
+                ImGui::TextDisabled("No socketable gear on this follower.");
+            }
+            ImGui::EndChild();
+            ImGui::TextDisabled("Socketing followers from here arrives in the next update.");
+        }
         if (busy) {
             ImGui::TextDisabled("Working...");
         } else if (g_menu.station.load()) {
@@ -4685,6 +4914,7 @@ void OpenGemMenu(bool a_station) {
     g_menu.selUid = 0;
     g_menu.selItem = 0;
     g_menu.selSlot = -1;
+    g_menu.activeTab = 0;  // fresh open lands on the player tab (Fable Stage-1 Issue-3)
     BuildMenuSnapshot();
     g_menu.wantClose = false;
     g_menu.station = a_station;

@@ -106,6 +106,12 @@ sibling project can audit itself against the list in one sitting.
   match is never needed for a true positive — it only adds foreign-collision
   surface and can flip a unique disambiguation to ambiguous (→ skip → strand),
   the very loss it was meant to prevent (`MgefInGemFamily`, INVARIANTS 8e).
+- **Never mint an `ExtraUniqueID` (or otherwise mutate gear) onto a NON-player
+  actor as a side effect of merely VIEWING it.** The player item collector eagerly
+  stamps a uid on plain singletons (Wheeler-style) — fine for the player, but doing
+  that to a follower's gear just because the pouch opened silently rewrites their
+  inventory. The follower-tab collector (`CollectSocketableItems`) is read-only;
+  Stage-2 socketing mints on the deliberate socket action, never on display.
 - **Never assume a library mutator is total over its input shapes — read the
   impl before feeding it a boundary case.** NG's `ExtraDataList::RemoveByType`
   null-derefs when the removal empties the list; it sat compiled into every
