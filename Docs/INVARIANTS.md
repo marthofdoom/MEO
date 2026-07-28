@@ -172,6 +172,15 @@ the portable "never again" digest for sibling projects.
    record at retirement, so they are never reclaim candidates; only overlay-mode
    vanilla disenchant (non-default; takeover replaces the table) can leave a retired
    strand, a documented edge.
+8g. **`RebuildInstanceEnchant` NEVER reapplies the worn ability — any call site that
+   CHANGES a worn item's enchant level/form must follow with `EquipCycleWorn` (or be
+   covered by a scheduled reapply).** Rebuild swaps `ExtraEnchantment` to the new
+   form but leaves ability reactivation to the caller (m23c). The kPostLoadGame sweep
+   is trued up by `ScheduleReapplyWornSockets`; ad-hoc callers are not. If skipped, a
+   worn item keeps the stale ability, and the next `DispelStaleGemEffects` computes
+   allowance 0 for the now-unvouched old form and DISPELS it — the item's gem effect
+   silently goes dead until re-equip/reload. `TryTransplantStrandedXP` equip-cycles
+   worn items for exactly this reason (xp/hooks, Fable 2026-07-28).
 9. **Bound every count and bail on short read** (N2, :5867): a truncated
    record must stop the read, not fabricate keys from garbage.
 10. **Clamp deserialized values at the source**: level → [1,5] (:5891) —

@@ -8,12 +8,13 @@ arc; point fixes are folded into their feature entry unless load-bearing.
 
 Usability follow-ups from deck testing.
 
-- **A socketed item picked up mid-session now shows in the Gem Pouch immediately.**
-  Previously, if an item's instance ID changed on pickup and the live re-key
-  missed it, the item wouldn't appear in the pouch until the next save/load
-  (whose post-load pass reclaims it). MEO now also reclaims stranded records when
-  you open the pouch, so a just-picked-up gemmed item is listed right away with its
-  banked XP intact.
+- **A socketed item picked up mid-session now shows in the Gem Pouch immediately** —
+  including one that was **saved on the ground** and picked up after loading.
+  Previously such an item wouldn't appear in the pouch until another save/load
+  (the post-load pass only sees items in your inventory, and a ground item's
+  instance ID dies across the save). MEO now reclaims the stranded record when you
+  open the pouch — restoring the gem and its banked XP right away, and re-applying
+  the effect if the item is worn.
 - **Controller: switching between the two panes is reliable and can no longer get
   stuck.** D-pad Left always moves to the items pane, D-pad Right always to the
   gems pane (up/down still moves within a pane). The old scheme could trap the

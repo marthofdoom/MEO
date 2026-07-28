@@ -5442,8 +5442,18 @@ void TryTransplantStrandedXP(RE::TESObjectREFR* a_owner, RE::TESBoundObject* a_b
         ++moved;
     }
     if (moved > 0) {
-        RebuildInstanceEnchant(a_base, a_xList,
-                               a_owner ? a_owner->As<RE::Actor>() : nullptr);
+        auto* actor = a_owner ? a_owner->As<RE::Actor>() : nullptr;
+        RebuildInstanceEnchant(a_base, a_xList, actor);
+        // RebuildInstanceEnchant swaps the worn enchant to the RESTORED level's form
+        // but by contract does NOT reapply the worn ability. The post-load path is
+        // trued up later by ScheduleReapplyWornSockets; the menu/pickup path has no
+        // such follow-up, so a WORN item would keep the fresh-L1 ability (or, once
+        // DispelStaleGemEffects runs, NO ability — allowance 0 for the old form) until
+        // re-equip/reload. Full m23c equip cycle reapplies exactly one at the restored
+        // level now (idempotent; harmless at the post-load site too). Fable Issue-1.
+        if (actor && IsWornXList(a_xList)) {
+            EquipCycleWorn(actor, a_base, a_xList);
+        }
         Notify("MEO: recovered a socketed gem's banked XP.");
     }
 }
@@ -5457,10 +5467,16 @@ void TryTransplantStrandedXP(RE::TESObjectREFR* a_owner, RE::TESBoundObject* a_b
 bool g_postLoadSweep = false;
 
 // xp/hooks (marth 2026-07-28): reclaim stranded records for the player's OWN
-// record-less socketed gear at gem-pouch open, so an item picked up mid-session
-// (uid rewritten, in-session re-key missed) shows immediately instead of waiting
-// for the next load's sweep. Case A only (uid present) — the item is in hand, so
-// its ExtraUniqueID node is live; the uid-less TRAP-2 case is a load-time concern.
+// record-less socketed gear at gem-pouch open, so an item destranded mid-session
+// shows immediately instead of waiting for the next load's sweep. Handles BOTH
+// cases, mirroring the kPostLoadGame dispatch:
+//   A) uid present, record-less -> re-key the stranded record (TryAdopt).
+//   B) uid NODE DIED across save/load (TRAP-2) -> the item arrives with NO uid;
+//      convert mints a fresh uid + L1, then transplant restores the banked XP.
+//      marth's repro: a socketed sword saved ON THE GROUND then picked up after
+//      load is exactly case B — the post-load sweep never saw it (it was a world
+//      ref, not in inventory), and its uid node died like any worn TRAP-2 item, so
+//      case B MUST run here or the item never lists until another save/load.
 void ReclaimStrandedForMenu() {
     auto* player = RE::PlayerCharacter::GetSingleton();
     if (!player) {
@@ -5477,20 +5493,29 @@ void ReclaimStrandedForMenu() {
             if (!xl || !xl->HasType(RE::ExtraDataType::kEnchantment)) {
                 continue;
             }
-            auto* xid = xl->GetByType<RE::ExtraUniqueID>();
-            if (!xid) {
-                continue;
-            }
-            bool ours = false;
-            for (int s = 0; s < kMaxSockets; ++s) {
-                if (g_sockets.contains(MakeKey(obj->GetFormID(), xid->uniqueID,
-                                               static_cast<std::uint8_t>(s)))) {
-                    ours = true;
-                    break;
+            if (auto* xid = xl->GetByType<RE::ExtraUniqueID>()) {
+                bool ours = false;
+                for (int s = 0; s < kMaxSockets; ++s) {
+                    if (g_sockets.contains(MakeKey(obj->GetFormID(), xid->uniqueID,
+                                                   static_cast<std::uint8_t>(s)))) {
+                        ours = true;
+                        break;
+                    }
                 }
-            }
-            if (!ours) {
-                TryAdoptStrandedSocketRecord(player, obj, xl);  // MEO-only + highest-first inside
+                if (!ours) {
+                    TryAdoptStrandedSocketRecord(player, obj, xl);  // case A (MEO-only inside)
+                }
+            } else {
+                // case B: no uid node (TRAP-2). Only MEO's OWN enchant qualifies
+                // (MeoEnchantEffects gates it); convert mints a uid + L1, then
+                // transplant restores the banked XP. Idempotent on success: once
+                // minted, the next open takes the case-A path and the `ours` check
+                // skips it. (A lossless-gate refusal returns 0 and the item stays
+                // uid-less, harmlessly re-tried each open — a log line, no state change.)
+                std::vector<const RE::EffectSetting*> fx;
+                if (MeoEnchantEffects(xl, fx) && ConvertInstanceEnchant(player, obj, xl) > 0) {
+                    TryTransplantStrandedXP(player, obj, xl);
+                }
             }
         }
     }

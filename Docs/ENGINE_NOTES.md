@@ -174,6 +174,14 @@ The `- 4` offset on the callback message is the trap everyone hits.
   (`BSSimpleList`); snapshot targets first, re-find records by key, hold
   actors by handle (INVARIANTS.md has the full rule set; cross-repo copy
   §17-§20 of the Linux-Native-Tools notes).
+- **`GetInventory()` returns a SNAPSHOT — entry AND its `extraLists` node list are
+  copies** (the `InventoryEntryData` copy ctor allocates a fresh
+  `BSSimpleList<ExtraDataList*>`); only the `ExtraDataList` pointees are live. So
+  converting/equip-cycling an item *inside* a `for (xl : *data.second->extraLists)`
+  walk over a `GetInventory()` map is safe (the node list you iterate can't be
+  invalidated) — unlike the same walk over a live `changes->entryList`, which must
+  snapshot first. This is why `ConvertInventory` and `ReclaimStrandedForMenu`
+  convert-inside-the-walk without a pre-pass. (Verified 2026-07-28.)
 
 ## 7. Ops traps (test protocol)
 
