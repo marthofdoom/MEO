@@ -2516,7 +2516,7 @@ struct MenuState {
     // tabs only switch WHOSE gear the left pane shows. Tab 0 is always the player
     // (its items live in `items` above — the untouched player path). followerTabs
     // holds one entry per nearby teammate. activeTab: 0 = player, 1.. = followerTabs
-    // index+1. Stage 1 = display + LB/RB nav; follower socketing is Stage 2.
+    // index+1. Tabs switch on the triggers (LT/RT); follower socketing is Stage 2.
     struct FollowerTab {
         std::string              name;      // follower display name
         RE::FormID               refID = 0; // Stage 2 socket target (re-resolved at action time;
@@ -4278,7 +4278,7 @@ namespace menuhook {
         const float half = ImGui::GetContentRegionAvail().x * 0.5f;
         const float rowH = lineH + 10.0f;
         // ── Follower pouch tabs (Stage 1): "You" + one tab per nearby follower.
-        // LB/RB (GamepadL1/R1) cycle tabs; clicking a tab switches too. Tab 0 is the
+        // Triggers (LT/RT) cycle tabs; clicking a tab switches too. Tab 0 is the
         // player (the full socketing UI below); follower tabs render a READ-ONLY view
         // (interactive follower socketing is Stage 2). Switching a tab resets the
         // selection so the panes don't carry a stale player-item highlight.
@@ -4292,9 +4292,13 @@ namespace menuhook {
         };
         if (tabCount > 1) {
             if (!busy) {
-                if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) {
+                // TRIGGERS switch tabs (RT next / LT prev). NOT LB/RB: the pouch
+                // shout key is commonly bound to RB, and the menu's close-toggle
+                // intercepts the shout key before ImGui sees it — so RB always
+                // closes and could never switch (marth, 2026-07-28).
+                if (ImGui::IsKeyPressed(ImGuiKey_GamepadR2, false)) {
                     pickTab((g_menu.activeTab + 1) % tabCount);
-                } else if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
+                } else if (ImGui::IsKeyPressed(ImGuiKey_GamepadL2, false)) {
                     pickTab((g_menu.activeTab + tabCount - 1) % tabCount);
                 }
             }
@@ -4352,7 +4356,7 @@ namespace menuhook {
         // didn't register as "items focused") and swallow the escape press, trapping
         // the cursor in the right pane (close+reopen was the only way out). Both lists
         // are vertical, so up/down owns row movement and L/R is free to mean "switch
-        // pane" deterministically. (LB/RB will switch follower TABS once those land.)
+        // pane" deterministically. (Triggers LT/RT switch follower TABS.)
         if (!busy) {
             if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, false)) {
                 wantPane = 1;
@@ -4809,6 +4813,8 @@ namespace menuhook {
         case K::kY:     return ImGuiKey_GamepadFaceUp;
         case K::kLeftShoulder:  return ImGuiKey_GamepadL1;
         case K::kRightShoulder: return ImGuiKey_GamepadR1;
+        case K::kLeftTrigger:   return ImGuiKey_GamepadL2;  // tab switch (RB is the shout/close key)
+        case K::kRightTrigger:  return ImGuiKey_GamepadR2;
         default:        return ImGuiKey_None;
         }
     }

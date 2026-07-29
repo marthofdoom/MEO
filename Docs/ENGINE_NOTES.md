@@ -349,6 +349,16 @@ installed in `SKSEPluginLoad` — before the renderer exists):
   on gear you don't own; and the drop/pickup fallback for a plain stack still needs
   the m51 F-A1 belt (`PickUpObject` refuses silently → reclaim the ref, don't leave
   it on the floor).
+- **Gamepad analog triggers arrive as `kButton` ButtonEvents** with synthetic IDs
+  `RE::BSWin32GamepadDevice::Key::kLeftTrigger` (0x0009) / `kRightTrigger` (0x000A)
+  — the header even comments them "arbitrary values, IDs meant to be used with
+  ButtonEvent." `value` is the analog magnitude, so the standard `IsDown()`/`IsUp()`
+  edge logic applies (first past-threshold frame is down, release is up). Map them
+  to `ImGuiKey_GamepadL2`/`R2` for menu use. NOTE the face/dpad/shoulder codes are
+  XInput bitmasks (kA=0x1000, kRightShoulder=0x200, kUp=0x1…) but each ButtonEvent
+  carries ONE exact code, so an exact-match switch is correct. Used for the pouch
+  tab switch — LB/RB is unusable there because the pouch shout key is commonly RB
+  and the menu's close-toggle eats the shout key before ImGui sees it.
 - **Build traps**: NG 3.7 declares but does not export
   `RE::ExtraDataList::ExtraDataList()` → LNK2019; never `new` an xList —
   mint instances via the engine (`RemoveItem(kDropping)` → stamp uid on

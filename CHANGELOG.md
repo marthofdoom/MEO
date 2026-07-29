@@ -30,8 +30,8 @@ Usability follow-ups from deck testing.
   of piling up in the follower's inventory. (A deep dive confirmed this mastery
   birth was the *only* way gems ended up on followers — they never loot them.)
 - **Gem Pouch now has per-follower tabs — fully interactive.** The pouch opens on a
-  "You" tab (your name) plus one tab per nearby follower; **LB/RB** switch tabs (or
-  click them). Each tab is the same two-pane socketing UI: pick one of that actor's
+  "You" tab (your name) plus one tab per nearby follower; the **triggers (LT/RT)**
+  switch tabs (or click them). Each tab is the same two-pane socketing UI: pick one of that actor's
   items on the left, socket a gem from your shared pouch on the right, or click a
   filled socket to pull the gem back to the pouch. One shared pouch throughout —
   followers have no pouch of their own; soul-feeding and destroying stay on your own
