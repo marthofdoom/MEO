@@ -1,0 +1,2 @@
+Phase-3 beta6: perk-adds-socket-live + gem-XP data-loss reclaim (incl. TRAP-2 + ground-pickup) + follower gem-XP share + follower no-hoard + per-follower pouch tabs (interactive socketing, LT/RT) + deterministic d-pad panes
+built from native run 30412354010 (no executable packaged; installs via Synthesis)
