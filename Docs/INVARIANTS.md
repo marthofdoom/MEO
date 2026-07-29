@@ -73,6 +73,26 @@ the portable "never again" digest for sibling projects.
    render reads `items`/`followerTabs`/`activeTab` only while holding that lock for
    the whole frame and NEVER touches a live inventory. `activeTab` is clamped on
    both the publish and render sides so a follower leaving between frames can't OOB.
+7c. **Socketing onto a non-player actor: the GEM is always shared-pouch, only the
+   ITEM is the actor's** (`MenuSocket`/`MenuUnsocket` `a_ownerRefID`, Stage 2).
+   Followers have no pouch — the gem is taken from / returned to the PLAYER's pouch
+   (`GiveGemInstance`, the pouch holder), while the item find/mint/rebuild/equip
+   target the owner. Pass the owner to `StampInstance`/`RebuildInstanceEnchant` so
+   the player-only 2-of-a-kind cap (`applyCap = worn && (!owner || owner->IsPlayerRef())`)
+   never strips follower gear (the m38e/B1 class), and gate `WornGidCount`/
+   `ReapplyWornSockets` and station feed/destroy on `owner->IsPlayerRef()` — those
+   are player stat-stacking / station concerns. Minting a uid onto a follower's WORN
+   gear is done IN PLACE on its existing worn xList (never the drop/pickup mint,
+   which would unequip it); the drop/pickup mint is only for a plain UNWORN stack.
+   Three guards (Fable Stage-2): (a) the in-place scan must SKIP a worn xList with a
+   FOREIGN `kEnchantment` (uid-less player/base enchant) — minting there strands a
+   stray uid on non-MEO gear and aborts at the already-enchanted guard; (b) the
+   drop/pickup fallback applies the m51 F-A1 belt — `PickUpObject` can refuse
+   silently, so if the item didn't return, delete the world ref + `AddObjectToContainer`
+   the plain item back and abort (never leave it on the floor); (c) resolve the owner
+   from a stored `refID`, NOT an `ActorHandle` — a released handle degrades the target
+   to 0 = player and misfires onto the player's own gear, whereas a refID that no
+   longer resolves aborts safely.
 7b. **Any `ExtraDataList*` handed to an ownership-taking inventory API
    (`AddObjectToContainer`'s `a_extraList`) must be a RELINQUISHABLE HEAP list
    from the engine's own ctor (`MakeEngineXList`, `RELOCATION_ID(11437,

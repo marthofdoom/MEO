@@ -2518,8 +2518,11 @@ struct MenuState {
     // holds one entry per nearby teammate. activeTab: 0 = player, 1.. = followerTabs
     // index+1. Stage 1 = display + LB/RB nav; follower socketing is Stage 2.
     struct FollowerTab {
-        std::string              name;   // follower display name
-        std::vector<MenuItemRow> items;  // that follower's socketable gear
+        std::string              name;      // follower display name
+        RE::FormID               refID = 0; // Stage 2 socket target (re-resolved at action time;
+                                            // a stored refID, not a handle, so a released handle
+                                            // can't silently degrade the target to the player)
+        std::vector<MenuItemRow> items;     // that follower's socketable gear
     };
     std::string              playerTabName;   // player->GetName() (marth: "use player name")
     std::vector<FollowerTab> followerTabs;
@@ -3447,6 +3450,7 @@ void BuildMenuSnapshot() {
             MenuState::FollowerTab tab;
             const char* nm = a->GetName();
             tab.name = (nm && *nm) ? nm : "Follower";
+            tab.refID = a->GetFormID();  // Stage 2 socket target (stored refID, not a handle)
             CollectSocketableItems(a.get(), tab.items);
             std::sort(tab.items.begin(), tab.items.end(),
                       [](const MenuItemRow& x, const MenuItemRow& y) {
@@ -3469,10 +3473,18 @@ void BuildMenuSnapshot() {
     g_menu.followerTabs = std::move(fTabs);
     g_menu.activeTab = std::clamp(g_menu.activeTab, 0,
                                   static_cast<int>(g_menu.followerTabs.size()));
+    // Re-derive the selection against the ACTIVE tab's items (player or follower),
+    // so a socket/unsocket rebuild on a follower tab keeps its selection (Stage 2).
+    std::vector<MenuItemRow>& reItems =
+        (g_menu.activeTab == 0 || g_menu.followerTabs.empty())
+            ? g_menu.items
+            : g_menu.followerTabs[std::clamp(g_menu.activeTab - 1, 0,
+                                             static_cast<int>(g_menu.followerTabs.size()) - 1)]
+                  .items;
     int found = -1;
     if (g_menu.selBase) {  // re-locate the selected ITEM after the resort
-        for (int i = 0; i < static_cast<int>(g_menu.items.size()); ++i) {
-            if (g_menu.items[i].base == g_menu.selBase && g_menu.items[i].uid == g_menu.selUid) {
+        for (int i = 0; i < static_cast<int>(reItems.size()); ++i) {
+            if (reItems[i].base == g_menu.selBase && reItems[i].uid == g_menu.selUid) {
                 found = i;
                 break;
             }
@@ -3480,21 +3492,30 @@ void BuildMenuSnapshot() {
     }
     g_menu.selItem = (found >= 0) ? found
                                   : std::clamp(g_menu.selItem, 0,
-                                               std::max(0, static_cast<int>(g_menu.items.size()) - 1));
-    if (found < 0 && g_menu.selItem < static_cast<int>(g_menu.items.size()) &&
-        !g_menu.items.empty()) {  // keep identity in sync with the fallback row
-        g_menu.selBase = g_menu.items[g_menu.selItem].base;
-        g_menu.selUid = g_menu.items[g_menu.selItem].uid;
+                                               std::max(0, static_cast<int>(reItems.size()) - 1));
+    if (found < 0 && g_menu.selItem < static_cast<int>(reItems.size()) &&
+        !reItems.empty()) {  // keep identity in sync with the fallback row
+        g_menu.selBase = reItems[g_menu.selItem].base;
+        g_menu.selUid = reItems[g_menu.selItem].uid;
     }
 }
 
 // ── Menu actions (SKSE tasks — main thread; all M4b-proven flows) ─────
-void MenuUnsocket(RE::FormID a_base, std::uint16_t a_uid, std::uint8_t a_slot) {
+// Stage 2: a_ownerRefID names WHOSE gear the socketed item is on (0 = player). The
+// gem itself always returns to the shared pouch (GiveGemInstance → player pouch) —
+// followers have no pouch. Only the ITEM lookup + rebuild/equip target the owner.
+void MenuUnsocket(RE::FormID a_base, std::uint16_t a_uid, std::uint8_t a_slot,
+                  RE::FormID a_ownerRefID = 0) {
     auto* player = RE::PlayerCharacter::GetSingleton();
+    RE::Actor* owner = player;
+    if (a_ownerRefID) {
+        auto* r = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_ownerRefID);
+        owner = r ? r->As<RE::Actor>() : nullptr;
+    }
     auto* form = RE::TESForm::LookupByID<RE::TESBoundObject>(a_base);
     auto  it = g_sockets.find(MakeKey(a_base, a_uid, a_slot));
-    auto* xl = form ? FindInstanceXList(player, form, a_uid) : nullptr;
-    if (!player || it == g_sockets.end() || !xl) {
+    auto* xl = (form && owner) ? FindInstanceXList(owner, form, a_uid) : nullptr;
+    if (!player || !owner || it == g_sockets.end() || !xl) {
         spdlog::warn("[menu] unsocket failed: {:08X}/{}[{}] rec={} xl={}", a_base, a_uid, a_slot,
                      it != g_sockets.end(), xl != nullptr);
         return;
@@ -3518,11 +3539,12 @@ void MenuUnsocket(RE::FormID a_base, std::uint16_t a_uid, std::uint8_t a_slot) {
     }
     g_sockets.erase(it);
     // Rebuild from whatever slots remain (strips the enchant + name if none).
-    RebuildInstanceEnchant(form, xl);
+    RebuildInstanceEnchant(form, xl, owner);  // owner-correct: no follower cap-strip
     if (IsWornXList(xl)) {
-        EquipCycleWorn(player, form, xl);  // m23c: real teardown — Update alone
-                                           // leaves the removed gem's ability live
-        if (WornGidCount(rec.gid) >= 2) {  // m35c: removal may un-cap a 3rd copy elsewhere
+        EquipCycleWorn(owner, form, xl);  // m23c: real teardown — Update alone
+                                          // leaves the removed gem's ability live
+        // m35c cap redistribution is a PLAYER stat-stacking concern only.
+        if (owner->IsPlayerRef() && WornGidCount(rec.gid) >= 2) {
             ReapplyWornSockets(true, true, false);
         }
     }
@@ -3572,13 +3594,22 @@ void DestroyGem(RE::FormID a_base, std::uint16_t a_uid, std::uint8_t a_slot) {
                  rec.level, rec.xp, tier);
 }
 
+// Stage 2: a_ownerRefID names WHOSE gear receives the gem (0 = player). The GEM
+// always comes from the shared pouch (player's pouch) — followers have no pouch;
+// only the ITEM (find/mint/rebuild/equip) targets the owner, with the owner passed
+// to StampInstance so the player-only 2-of-a-kind cap never strips follower gear.
 void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gemBase,
-                std::uint16_t a_gemUid, int a_targetSlot = -1) {
+                std::uint16_t a_gemUid, int a_targetSlot = -1, RE::FormID a_ownerRefID = 0) {
     auto* player = RE::PlayerCharacter::GetSingleton();
+    RE::Actor* owner = player;
+    if (a_ownerRefID) {
+        auto* r = RE::TESForm::LookupByID<RE::TESObjectREFR>(a_ownerRefID);
+        owner = r ? r->As<RE::Actor>() : nullptr;
+    }
     auto* itemForm = RE::TESForm::LookupByID<RE::TESBoundObject>(a_itemBase);
     auto* gemForm = RE::TESForm::LookupByID<RE::TESObjectMISC>(a_gemBase);
     auto  gemMapIt = g_gemByItem.find(a_gemBase);
-    if (!player || !itemForm || !gemForm || gemMapIt == g_gemByItem.end()) {
+    if (!player || !owner || !itemForm || !gemForm || gemMapIt == g_gemByItem.end()) {
         return;
     }
     const bool gemIsSupport = g_gems[gemMapIt->second.first].def->isSupport;
@@ -3592,21 +3623,64 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
     }
     RE::ExtraDataList* xl = nullptr;
     if (a_itemUid) {
-        xl = FindInstanceXList(player, itemForm, a_itemUid);
+        xl = FindInstanceXList(owner, itemForm, a_itemUid);
     } else {
-        // A never-touched plain stack: run one unit through the proven
-        // drop-stamp-pickup flow so the ENGINE mints its extra list (NG 3.7
-        // declares but does not export the ExtraDataList constructor, and
-        // hand-building one would break the engine-flows rule anyway).
-        const auto dropped = player->RemoveItem(itemForm, 1, RE::ITEM_REMOVE_REASON::kDropping,
-                                                nullptr, nullptr);
-        if (auto ref = dropped.get()) {
-            ref->extraList.SetOwner(player->GetActorBase());  // never theft (m17b)
-            const std::uint16_t uid = MintUID(a_itemBase);
-            ref->extraList.Add(new RE::ExtraUniqueID(a_itemBase, uid));
-            player->PickUpObject(ref.get(), 1, false, false);
-            xl = FindInstanceXList(player, itemForm, uid);
-            spdlog::info("[menu] minted instance {:08X}/{} via drop/pickup", a_itemBase, uid);
+        // Stage 2: a follower's WORN gear is displayed without a minted uid (the
+        // collector is read-only). Socketing it must NOT drop/unequip it, so mint
+        // the uid IN PLACE onto its existing worn xList. (Player worn gear is already
+        // pre-minted at display time, so this branch is a follower path in practice.)
+        if (auto* changes = owner->GetInventoryChanges(); changes && changes->entryList) {
+            for (auto* e : *changes->entryList) {
+                if (!e || e->object != itemForm || !e->extraLists) {
+                    continue;
+                }
+                for (auto* xw : *e->extraLists) {
+                    // Never mint onto a worn xList carrying a FOREIGN enchant (Fable
+                    // Issue-1): a player/base-enchanted worn item has kEnchantment +
+                    // no uid, and minting there would strand a stray uid on gear MEO
+                    // doesn't own and then abort at the "already enchanted" guard.
+                    if (xw && IsWornXList(xw) && !xw->GetByType<RE::ExtraUniqueID>() &&
+                        !xw->HasType(RE::ExtraDataType::kEnchantment)) {
+                        const std::uint16_t uid = MintUID(a_itemBase);
+                        xw->Add(new RE::ExtraUniqueID(a_itemBase, uid));
+                        xl = xw;
+                        spdlog::info("[menu] minted worn instance {:08X}/{} in place", a_itemBase,
+                                     uid);
+                        break;
+                    }
+                }
+                if (xl) {
+                    break;
+                }
+            }
+        }
+        if (!xl) {
+            // A never-touched plain (UNWORN) stack: run one unit through the proven
+            // drop-stamp-pickup flow so the ENGINE mints its extra list (NG 3.7
+            // declares but does not export the ExtraDataList constructor, and
+            // hand-building one would break the engine-flows rule anyway).
+            const auto dropped = owner->RemoveItem(itemForm, 1, RE::ITEM_REMOVE_REASON::kDropping,
+                                                   nullptr, nullptr);
+            if (auto ref = dropped.get()) {
+                ref->extraList.SetOwner(owner->GetActorBase());  // never theft (m17b)
+                const std::uint16_t uid = MintUID(a_itemBase);
+                ref->extraList.Add(new RE::ExtraUniqueID(a_itemBase, uid));
+                owner->PickUpObject(ref.get(), 1, false, false);
+                xl = FindInstanceXList(owner, itemForm, uid);
+                if (xl) {
+                    spdlog::info("[menu] minted instance {:08X}/{} via drop/pickup", a_itemBase, uid);
+                } else {
+                    // m51 F-A1: PickUpObject can refuse SILENTLY (mid-attach actor,
+                    // 3D not loaded). Never leave the item as a dropped world ref —
+                    // delete it and hand the plain item back (no g_sockets record
+                    // exists yet), then the abort below leaves the gem untouched.
+                    ref->Disable();
+                    ref->SetDelete(true);
+                    owner->AddObjectToContainer(itemForm, nullptr, 1, nullptr);
+                    spdlog::warn("[menu] PickUpObject refused for {:08X} — item returned, "
+                                 "socket aborted", a_itemBase);
+                }
+            }
         }
     }
     if (!xl) {
@@ -3782,17 +3856,20 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
         spdlog::info("[menu] swap: evicted '{}' L{} from {:08X}/{}[{}]", oldRec.gid,
                      oldRec.level, a_itemBase, uid, freeSlot);
     }
-    if (!StampInstance(itemForm, xl, gemIdx, level, static_cast<std::uint8_t>(freeSlot), xp)) {
+    if (!StampInstance(itemForm, xl, gemIdx, level, static_cast<std::uint8_t>(freeSlot), xp,
+                       owner)) {  // owner-correct: no follower cap-strip
         if (hadRec) {
             g_sockets[MakeKey(a_gemBase, useUid)] = saved;  // m35: restore under the drift-corrected key
         }
         return;
     }
     if (IsWornXList(xl)) {
-        if (WornGidCount(g_gems[gemIdx].def->gid) > 2) {
+        // m35c cap redistribution scans the PLAYER's worn gear — a player concern
+        // only; a follower just gets the ability applied to its own worn item.
+        if (owner->IsPlayerRef() && WornGidCount(g_gems[gemIdx].def->gid) > 2) {
             ReapplyWornSockets(true, true, false);  // m35c: a 3rd copy — redistribute the cap
         } else {
-            ApplyWornAbility(player, itemForm, xl, xl->HasType(RE::ExtraDataType::kWornLeft));
+            ApplyWornAbility(owner, itemForm, xl, xl->HasType(RE::ExtraDataType::kWornLeft));
         }
     }
     gemHolder->RemoveItem(gemForm, 1, RE::ITEM_REMOVE_REASON::kRemove, gemXL, nullptr);
@@ -4243,7 +4320,26 @@ namespace menuhook {
             ImGui::Separator();
         }
         g_menu.activeTab = std::clamp(g_menu.activeTab, 0, tabCount - 1);
-        if (g_menu.activeTab == 0) {  // ── player tab: the full socketing UI ──
+        // Unified tab render (Stage 2): the SAME two-pane socketing UI serves EVERY
+        // tab. `activeItems` is the current tab's gear (player or follower);
+        // `activeOwner` is the socket target refID (0 = player). The gem pane is the
+        // one shared pouch throughout; station feed/destroy is player-only (the
+        // `station` flag below is ANDed with the player tab).
+        std::vector<MenuItemRow>& activeItems =
+            (g_menu.activeTab == 0 || g_menu.followerTabs.empty())
+                ? g_menu.items
+                : g_menu.followerTabs[std::clamp(g_menu.activeTab - 1, 0,
+                                                 static_cast<int>(g_menu.followerTabs.size()) - 1)]
+                      .items;
+        RE::FormID activeOwner = 0;  // 0 = player; else the active follower's refID
+        if (g_menu.activeTab > 0 && !g_menu.followerTabs.empty()) {
+            activeOwner = g_menu.followerTabs[std::clamp(g_menu.activeTab - 1, 0,
+                              static_cast<int>(g_menu.followerTabs.size()) - 1)]
+                              .refID;
+            // A truly-gone follower degrades to a SAFE abort inside MenuSocket/
+            // MenuUnsocket (their LookupByID owner-resolve fails), never a player
+            // misfire — because activeOwner is the follower's refID, not 0 (Fable Issue-3).
+        }
         // m36e (marth: d-pad left/right only crossed panes when aligned with a
         // slotted gem — too geometry-dependent). Make left/right DETERMINISTICALLY
         // jump between the two panes: track which pane held nav focus last frame,
@@ -4276,8 +4372,8 @@ namespace menuhook {
         auto* dlL = ImGui::GetWindowDrawList();
         ImGui::TextDisabled("SOCKETABLE ITEMS");
         ImGui::Separator();
-        for (int i = 0; i < static_cast<int>(g_menu.items.size()); ++i) {
-            const auto&  row = g_menu.items[i];
+        for (int i = 0; i < static_cast<int>(activeItems.size()); ++i) {
+            const auto&  row = activeItems[i];
             const ImVec2 rp = ImGui::GetCursorScreenPos();
             // Selection acts on mouse PRESS (IsItemClicked), not release:
             // raw-delta cursor motion between press and release could leave
@@ -4311,7 +4407,7 @@ namespace menuhook {
             dlL->AddText(ImVec2(rp.x + 42.0f, rp.y + (rowH - lineH) * 0.5f),
                         ImGui::GetColorU32(ImGuiCol_Text), row.label.c_str());
         }
-        if (g_menu.items.empty()) {
+        if (activeItems.empty()) {
             ImGui::TextDisabled("No socketable items.");
         }
         ImGui::EndChild();
@@ -4326,8 +4422,8 @@ namespace menuhook {
         if (busy) {
             ImGui::BeginDisabled();
         }
-        if (g_menu.selItem >= 0 && g_menu.selItem < static_cast<int>(g_menu.items.size())) {
-            const auto sel = g_menu.items[g_menu.selItem];  // copy: queue may rebuild
+        if (g_menu.selItem >= 0 && g_menu.selItem < static_cast<int>(activeItems.size())) {
+            const auto sel = activeItems[g_menu.selItem];  // copy: queue may rebuild
             ImGui::TextDisabled("%s%s", sel.label.c_str(),
                                 sel.capacity > 1 ? "  — 2 linked sockets" : "");
             ImGui::Separator();
@@ -4336,7 +4432,7 @@ namespace menuhook {
             // list (below) — click a soul to burn it into the selected gem.
             // Pouch mode: click a filled socket to remove; pick a loose gem to
             // socket an empty slot OR swap into a full one (m35e).
-            const bool station = g_menu.station.load();
+            const bool station = g_menu.station.load() && g_menu.activeTab == 0;  // feed/destroy: player only
             for (int s = 0; s < sel.capacity && s < kMaxSockets; ++s) {
                 ImGui::PushID(s);
                 const ImVec2 rp = ImGui::GetCursorScreenPos();
@@ -4389,7 +4485,9 @@ namespace menuhook {
                     } else {
                         const std::uint8_t slot = static_cast<std::uint8_t>(s);
                         g_destroyArm = 0;
-                        QueueMenuTask([sel, slot]() { MenuUnsocket(sel.base, sel.uid, slot); });
+                        QueueMenuTask([sel, slot, activeOwner]() {
+                            MenuUnsocket(sel.base, sel.uid, slot, activeOwner);
+                        });
                     }
                 }
                 ImGui::PopID();
@@ -4403,7 +4501,9 @@ namespace menuhook {
                     if (ImGui::SmallButton("Unsocket")) {
                         g_destroyArm = 0;
                         g_menu.selSlot = -1;
-                        QueueMenuTask([sel, slot]() { MenuUnsocket(sel.base, sel.uid, slot); });
+                        QueueMenuTask([sel, slot, activeOwner]() {
+                            MenuUnsocket(sel.base, sel.uid, slot, activeOwner);
+                        });
                     }
                     ImGui::SameLine();
                     // Destroy stays the menu's one irreversible act — 2-click.
@@ -4528,8 +4628,8 @@ namespace menuhook {
                 }
                 if (act) {
                     g_destroyArm = 0;
-                    QueueMenuTask([sel, gem, target]() {
-                        MenuSocket(sel.base, sel.uid, gem.base, gem.uid, target);
+                    QueueMenuTask([sel, gem, target, activeOwner]() {
+                        MenuSocket(sel.base, sel.uid, gem.base, gem.uid, target, activeOwner);
                     });
                 }
             }
@@ -4547,42 +4647,9 @@ namespace menuhook {
         // m36e: remember which pane holds the nav cursor for next frame's jump.
         // A jump this frame settles next frame, so honour the request immediately.
         s_navPane = (wantPane >= 0) ? wantPane : (itemsFocused ? 0 : 1);
-        } else {  // ── follower tab (Stage 1): READ-ONLY view of this follower's gear ──
-            const auto& ftab = g_menu.followerTabs[g_menu.activeTab - 1];
-            ImGui::BeginChild("fitems", ImVec2(0, -footer), ImGuiChildFlags_Borders);
-            ImGui::TextDisabled("%s", (ftab.name + "  —  SOCKETED GEAR").c_str());
-            ImGui::Separator();
-            auto* dlf = ImGui::GetWindowDrawList();
-            for (const auto& row : ftab.items) {
-                const ImVec2 rp = ImGui::GetCursorScreenPos();
-                float        cx = rp.x + 12.0f;
-                for (int s = 0; s < row.capacity && s < kMaxSockets; ++s) {
-                    const bool  has = !row.slotGem[s].empty();
-                    const ImU32 col = ImGui::GetColorU32(
-                        has ? ThemeCol(row.slotTheme[s])
-                            : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-                    DrawDiamond(dlf, ImVec2(cx, rp.y + rowH * 0.5f), 4.5f, col, has);
-                    cx += 13.0f;
-                }
-                std::string line = row.label;
-                for (int s = 0; s < row.capacity && s < kMaxSockets; ++s) {
-                    if (!row.slotGem[s].empty()) {
-                        line += (s == 0 ? "  —  " : ", ") + row.slotGem[s];
-                    }
-                }
-                ImGui::Dummy(ImVec2(0.0f, rowH));
-                dlf->AddText(ImVec2(rp.x + 42.0f, rp.y + (rowH - lineH) * 0.5f),
-                             ImGui::GetColorU32(ImGuiCol_Text), line.c_str());
-            }
-            if (ftab.items.empty()) {
-                ImGui::TextDisabled("No socketable gear on this follower.");
-            }
-            ImGui::EndChild();
-            ImGui::TextDisabled("Socketing followers from here arrives in the next update.");
-        }
         if (busy) {
             ImGui::TextDisabled("Working...");
-        } else if (g_menu.station.load()) {
+        } else if (g_menu.station.load() && g_menu.activeTab == 0) {
             ImGui::TextDisabled("Click an item, then a gem. Filled sockets: click to remove; feed souls or destroy here.");
         } else {
             ImGui::TextDisabled("Click an item, then a gem to socket it. Pad: stick/d-pad move, "

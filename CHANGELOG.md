@@ -29,11 +29,13 @@ Usability follow-ups from deck testing.
   (hits level 5) it births a fresh gem — that now goes to your shared pouch instead
   of piling up in the follower's inventory. (A deep dive confirmed this mastery
   birth was the *only* way gems ended up on followers — they never loot them.)
-- **Gem Pouch now has per-follower tabs.** The pouch opens on a "You" tab (your
-  name) plus one tab per nearby follower; **LB/RB** switch tabs (or click them).
-  This first pass shows each follower's socketed gear and gem levels so you can see
-  their progression at a glance; socketing directly onto a follower's gear from
-  their tab comes in the next update. One shared pouch throughout.
+- **Gem Pouch now has per-follower tabs — fully interactive.** The pouch opens on a
+  "You" tab (your name) plus one tab per nearby follower; **LB/RB** switch tabs (or
+  click them). Each tab is the same two-pane socketing UI: pick one of that actor's
+  items on the left, socket a gem from your shared pouch on the right, or click a
+  filled socket to pull the gem back to the pouch. One shared pouch throughout —
+  followers have no pouch of their own; soul-feeding and destroying stay on your own
+  tab at an enchanting station.
 
 ## v1.0.7-beta5 — gem-XP reclaim refinements (2026-07-28)
 

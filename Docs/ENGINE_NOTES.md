@@ -336,6 +336,19 @@ installed in `SKSEPluginLoad` — before the renderer exists):
   Fix: cache `sd.BufferDesc.{Width,Height}` at init and overwrite
   `io.DisplaySize` every frame between `ImGui_ImplWin32_NewFrame()` and
   `ImGui::NewFrame()` (shipped v0.13.0, validation pending).
+- **Minting a uid onto WORN gear: add it IN PLACE, don't drop/pickup** (Stage-2
+  follower socketing, 2026-07-28). The drop/pickup mint (`RemoveItem(kDropping)` →
+  stamp → `PickUpObject`) is only for a PLAIN, UNWORN stack that has no xList of its
+  own. A worn item ALREADY has an xList (the `kWorn`/`kWornLeft` extra), so mint by
+  `xl->Add(new RE::ExtraUniqueID(base, MintUID(base)))` directly onto it — dropping
+  a worn item unequips it (and, on a follower, invites an AI re-equip race). The
+  player's worn gear is pre-minted at menu-display time so it never hits the mint
+  path; a follower's worn gear is displayed read-only (no mint) and mints in place
+  only on the deliberate socket action. **Skip a worn xList carrying a FOREIGN
+  `kEnchantment`** (player/base-enchanted, uid-less) — minting there strands a uid
+  on gear you don't own; and the drop/pickup fallback for a plain stack still needs
+  the m51 F-A1 belt (`PickUpObject` refuses silently → reclaim the ref, don't leave
+  it on the floor).
 - **Build traps**: NG 3.7 declares but does not export
   `RE::ExtraDataList::ExtraDataList()` → LNK2019; never `new` an xList —
   mint instances via the engine (`RemoveItem(kDropping)` → stamp uid on
