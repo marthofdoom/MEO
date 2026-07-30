@@ -1,0 +1,2 @@
+SKSE inter-plugin C++ API (IMEO) for MFO etc. — GetSocketCapacity / GetActorGems / MoveGems; additive, no gameplay change over beta6
+built from native run 30516034066 (no executable packaged; installs via Synthesis)
