@@ -349,6 +349,19 @@ installed in `SKSEPluginLoad` — before the renderer exists):
   on gear you don't own; and the drop/pickup fallback for a plain stack still needs
   the m51 F-A1 belt (`PickUpObject` refuses silently → reclaim the ref, don't leave
   it on the floor).
+- **SKSE messaging is bucketed by SENDER, not receiver** (2026-07-29, providing the
+  MEO inter-plugin API). `RegisterListener(cb)` == `RegisterListener("SKSE", cb)` —
+  it only lands in SKSE's bucket. `Dispatch(type,data,len,receiver)` iterates ONLY
+  the DISPATCHER's own bucket and uses `receiver` as a filter WITHIN it — it does not
+  route across buckets. So a consumer's directed `Dispatch(..., receiver="MEO")` never
+  reaches MEO's "SKSE"-registered `OnMessage`. To PROVIDE a message-exchange API you
+  must add a WILDCARD listener: `RegisterListener(OnApiMessage, nullptr)` — a null
+  sender sits in every plugin's bucket (the SKEE/RaceMenu pattern). Gate it on your
+  own magic message type so the SKSE lifecycle broadcasts it also receives are no-ops.
+  (TrueHUD/TDM/Precision-style APIs are NOT messaging — they're `GetModuleHandle` +
+  `GetProcAddress("RequestPluginAPI")` exports; different mechanism.) The plugin name
+  a consumer dispatches to is the CommonLibSSE-NG version-data name (from CMake
+  `project(NAME)` via `add_commonlibsse_plugin`), matched case-insensitively.
 - **Gamepad analog triggers arrive as `kButton` ButtonEvents** with synthetic IDs
   `RE::BSWin32GamepadDevice::Key::kLeftTrigger` (0x0009) / `kRightTrigger` (0x000A)
   — the header even comments them "arbitrary values, IDs meant to be used with

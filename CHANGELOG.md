@@ -4,6 +4,18 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.7-beta7 — SKSE inter-plugin API for other mods (2026-07-29)
+
+Additive only — no gameplay change. Opens MEO up to other SKSE plugins.
+
+- **New C++ API (`MEO_API.h`)** so mods like MFO can integrate with MEO. A consumer
+  requests MEO's interface over SKSE messaging and can: read an actor's socketed gems
+  (family, level, magnitude), check what socket capacity an item would have, and
+  **move a follower's gems onto newly-equipped looted gear** — the enabler for
+  "followers re-socket their own picked-up gear." Gems that don't fit the new item
+  return to your shared pouch with their XP. Header + docs ship in the repo for
+  plugin authors; nothing changes in-game for players.
+
 ## v1.0.7-beta6 — pouch reflects picked-up gear + reliable pad pane-switching (2026-07-28)
 
 Usability follow-ups from deck testing.

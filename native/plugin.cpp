@@ -83,6 +83,7 @@
 #include <array>
 #include <cstdint>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <cctype>
 #include <cstdlib>
@@ -97,6 +98,7 @@
 #include <vector>
 
 #include "GemCatalog.h"
+#include "MEO_API.h"  // SKSE inter-plugin C++ API (v1) — consumer header + IMEO
 
 namespace {
 
@@ -158,7 +160,7 @@ constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPl
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.7-beta6";  // phase-3 public beta; beta6 = menu-open reclaim + deterministic d-pad pane nav (bundle in progress)
+constexpr const char* kMEOVersion = "1.0.7-beta7";  // phase-3 public beta; beta7 = SKSE inter-plugin C++ API (IMEO) for MFO etc. (additive; no gameplay change)
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -7928,6 +7930,221 @@ void RevertCallback(SKSE::SerializationInterface*) {
     spdlog::info("[revert] socket index cleared");
 }
 
+// ── SKSE inter-plugin C++ API (MEO_API.h) ────────────────────────────────────
+// Consumers (e.g. MFO) request MEO_API::IMEO via SKSE messaging (the
+// kMessage_RequestInterface case in OnMessage) and call it. Design: ONE shared
+// pouch — only the ITEM is the actor's; gems that don't fit return to the pouch.
+
+// Move a_actor's socketed gems from (fromBase,fromUid) to (toBase,toUid). MAIN
+// THREAD (queued from IMEO::MoveGems). Mints the destination uid IN PLACE if it
+// has none (never drop/pickup — that would unequip the looted item; never a
+// foreign-enchanted worn xList — INVARIANTS 7c). Domain/capacity-checked; a gem
+// that doesn't fit returns to the shared pouch with its banked XP.
+void ApiMoveGems(RE::FormID a_actorID, RE::FormID a_fromBase, std::uint16_t a_fromUid,
+                 RE::FormID a_toBase, std::uint16_t a_toUid) {
+    auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_actorID);
+    auto* fromForm = RE::TESForm::LookupByID<RE::TESBoundObject>(a_fromBase);
+    auto* toForm = RE::TESForm::LookupByID<RE::TESBoundObject>(a_toBase);
+    if (!actor || !fromForm || !toForm) {
+        return;
+    }
+    auto* fromXL = FindInstanceXList(actor, fromForm, a_fromUid);
+    if (!fromXL) {
+        spdlog::warn("[api] MoveGems: source {:08X}/{} not on actor {:08X}", a_fromBase, a_fromUid,
+                     a_actorID);
+        return;
+    }
+    std::uint16_t      toUid = a_toUid;
+    RE::ExtraDataList* toXL = a_toUid ? FindInstanceXList(actor, toForm, a_toUid) : nullptr;
+    // Mint ONLY when the caller gave no uid (a_toUid==0). A non-zero a_toUid that
+    // failed to resolve must ABORT, never mint onto some OTHER worn copy of the base
+    // (Fable P2-5; the header promises minting only for a_toUid==0).
+    if (!toXL && a_toUid == 0) {  // mint the destination uid in place on its worn xList
+        if (auto* ch = actor->GetInventoryChanges(); ch && ch->entryList) {
+            for (auto* e : *ch->entryList) {
+                if (!e || e->object != toForm || !e->extraLists) {
+                    continue;
+                }
+                for (auto* xw : *e->extraLists) {
+                    if (xw && IsWornXList(xw) && !xw->GetByType<RE::ExtraUniqueID>() &&
+                        !xw->HasType(RE::ExtraDataType::kEnchantment)) {
+                        toUid = MintUID(a_toBase);
+                        xw->Add(new RE::ExtraUniqueID(a_toBase, toUid));
+                        toXL = xw;
+                        break;
+                    }
+                }
+                if (toXL) {
+                    break;
+                }
+            }
+        }
+    }
+    if (!toXL) {
+        spdlog::warn("[api] MoveGems: dest {:08X}/{} not resolvable on actor {:08X} "
+                     "(mint only when uid==0)", a_toBase, a_toUid, a_actorID);
+        return;
+    }
+    if (fromXL == toXL) {
+        return;  // source == destination — nothing to do
+    }
+    const bool toArmor = toForm->Is(RE::FormType::Armor);
+    const int  toCap = SocketCapacity(toForm);
+    int        moved = 0, toPouch = 0;
+    for (int s = 0; s < kMaxSockets; ++s) {
+        auto it = g_sockets.find(MakeKey(a_fromBase, a_fromUid, static_cast<std::uint8_t>(s)));
+        if (it == g_sockets.end()) {
+            continue;
+        }
+        const SocketRecord rec = it->second;
+        // GUARD BEFORE ERASING (Fable P1-3/P1-4; mirrors MenuUnsocket :3527-3541):
+        // an unknown gid, or a known family whose gem form doesn't resolve on THIS
+        // load order, would be DESTROYED (erase then a no-op move/GiveGemInstance).
+        // Leave such a record on the source instead — RebuildInstanceEnchant tolerates
+        // an unknown/disabled slot, so the gem is preserved, just not moved.
+        auto gi = g_gemByGid.find(rec.gid);
+        if (gi == g_gemByGid.end()) {
+            spdlog::warn("[api] MoveGems: unknown gem '{}' — left on source", rec.gid);
+            continue;
+        }
+        int li = std::clamp<int>(rec.level, 1, 5) - 1;
+        while (li > 0 && !g_gems[gi->second].items[li]) {
+            --li;
+        }
+        if (!g_gems[gi->second].items[li]) {
+            spdlog::warn("[api] MoveGems: gem '{}' has no form this load order — left on source",
+                         rec.gid);
+            continue;
+        }
+        const bool gemSupport = g_gems[gi->second].def->isSupport;
+        const bool gemArmor = g_gems[gi->second].def->isArmor;
+        const bool domainOk = gemSupport || gemArmor == toArmor;
+        int        freeDest = -1;
+        for (int d = 0; d < toCap && d < kMaxSockets; ++d) {
+            if (!g_sockets.contains(MakeKey(a_toBase, toUid, static_cast<std::uint8_t>(d)))) {
+                freeDest = d;
+                break;
+            }
+        }
+        g_sockets.erase(it);  // taken off the source either way (erase-then-insert)
+        if (domainOk && freeDest >= 0) {
+            g_sockets[MakeKey(a_toBase, toUid, static_cast<std::uint8_t>(freeDest))] = rec;
+            ++moved;
+        } else {
+            GiveGemInstance(gi->second, rec.level, rec.xp);  // doesn't fit -> pouch, XP intact
+            ++toPouch;
+        }
+    }
+    RebuildInstanceEnchant(fromForm, fromXL, actor);  // owner-correct (no follower cap-strip)
+    RebuildInstanceEnchant(toForm, toXL, actor);
+    if (IsWornXList(fromXL)) {
+        EquipCycleWorn(actor, fromForm, fromXL);
+    }
+    if (IsWornXList(toXL)) {
+        EquipCycleWorn(actor, toForm, toXL);
+    }
+    spdlog::info("[api] MoveGems {:08X}: {:08X}/{} -> {:08X}/{} ({} moved, {} to pouch)", a_actorID,
+                 a_fromBase, a_fromUid, a_toBase, toUid, moved, toPouch);
+}
+
+class MEOInterface : public MEO_API::IMEO {
+public:
+    std::uint32_t Version() override { return MEO_API::kABIVersion; }
+
+    int GetSocketCapacity(RE::TESBoundObject* a_itemBase) override {
+        return a_itemBase ? SocketCapacity(a_itemBase) : 0;
+    }
+
+    std::uint32_t GetActorGems(RE::Actor* a_actor, MEO_API::GemInfo* a_out,
+                               std::uint32_t a_max) override {
+        auto* changes = a_actor ? a_actor->GetInventoryChanges() : nullptr;
+        if (!changes || !changes->entryList) {
+            return 0;
+        }
+        std::uint32_t n = 0;
+        for (auto* entry : *changes->entryList) {
+            if (!entry || !entry->object || !entry->extraLists ||
+                !(entry->object->Is(RE::FormType::Weapon) ||
+                  entry->object->Is(RE::FormType::Armor))) {
+                continue;
+            }
+            for (auto* xl : *entry->extraLists) {
+                if (!xl || !IsWornXList(xl)) {
+                    continue;
+                }
+                auto* xid = xl->GetByType<RE::ExtraUniqueID>();
+                if (!xid) {
+                    continue;
+                }
+                for (int s = 0; s < kMaxSockets; ++s) {
+                    auto it = g_sockets.find(MakeKey(entry->object->GetFormID(), xid->uniqueID,
+                                                     static_cast<std::uint8_t>(s)));
+                    if (it == g_sockets.end()) {
+                        continue;
+                    }
+                    auto gi = g_gemByGid.find(it->second.gid);
+                    if (gi == g_gemByGid.end()) {
+                        continue;
+                    }
+                    if (a_out && n < a_max) {
+                        const auto&       rg = g_gems[gi->second];
+                        MEO_API::GemInfo& g = a_out[n];
+                        std::snprintf(g.gid, sizeof(g.gid), "%s", it->second.gid.c_str());
+                        std::snprintf(g.name, sizeof(g.name), "%s", GemName(rg));
+                        g.level = it->second.level;
+                        g.isArmor = rg.def->isArmor;
+                        g.isSupport = rg.def->isSupport;
+                        g.magnitude =
+                            rg.def->isSupport
+                                ? 0.0f
+                                : GemBaseMag(rg.def, std::clamp<int>(it->second.level, 1, 5) - 1) *
+                                      g_magnitudeMult * (1.0f + 0.05f * g_attuneRank) *
+                                      GemPerkMult(rg.def);
+                        g.itemBase = entry->object->GetFormID();
+                        g.itemUid = xid->uniqueID;
+                        g.slot = static_cast<std::uint8_t>(s);
+                    }
+                    ++n;
+                }
+            }
+        }
+        return n;
+    }
+
+    bool MoveGems(RE::Actor* a_actor, RE::FormID a_fromBase, std::uint16_t a_fromUid,
+                  RE::FormID a_toBase, std::uint16_t a_toUid) override {
+        if (!a_actor) {
+            return false;
+        }
+        const RE::FormID actorID = a_actor->GetFormID();
+        SKSE::GetTaskInterface()->AddTask([actorID, a_fromBase, a_fromUid, a_toBase, a_toUid]() {
+            ApiMoveGems(actorID, a_fromBase, a_fromUid, a_toBase, a_toUid);
+        });
+        return true;
+    }
+};
+MEOInterface g_meoInterface;
+
+// Inter-plugin API request handler — registered as a WILDCARD listener
+// (RegisterListener(OnApiMessage, nullptr)). SKSE buckets listeners by SENDER and a
+// directed Dispatch(receiver="MEO") is delivered only WITHIN the dispatcher's own
+// bucket, so MEO's "SKSE"-bucket OnMessage never sees an inter-plugin request. A
+// nullptr-sender listener sits in every plugin's bucket and receives them (the
+// SKEE/RaceMenu pattern; TrueHUD/TDM-style APIs are GetProcAddress exports, not
+// messaging). It ignores every type but our own magic value, so the SKSE lifecycle
+// messages it also receives here are no-ops (OnMessage owns those).
+void OnApiMessage(SKSE::MessagingInterface::Message* message) {
+    if (!message || message->type != MEO_API::kMessage_RequestInterface) {
+        return;
+    }
+    if (message->data && message->dataLen >= sizeof(MEO_API::InterfaceRequest)) {
+        auto* req = static_cast<MEO_API::InterfaceRequest*>(message->data);
+        req->out = (req->abiVersion >= 1) ? &g_meoInterface : nullptr;
+        spdlog::info("[api] IMEO handed to '{}' (abi {})",
+                     message->sender ? message->sender : "?", req->abiVersion);
+    }
+}
+
 void OnMessage(SKSE::MessagingInterface::Message* message) {
     switch (message->type) {
     case SKSE::MessagingInterface::kDataLoaded:
@@ -8063,6 +8280,11 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     serialization->SetRevertCallback(RevertCallback);
 
     SKSE::GetMessagingInterface()->RegisterListener(OnMessage);
-    spdlog::info("SKSEPluginLoad complete; serialization + messaging registered");
+    // Second, WILDCARD listener for inter-plugin API requests (SKEE pattern): SKSE
+    // routes a directed Dispatch only within the dispatcher's own sender-bucket, so
+    // the "SKSE"-bucket OnMessage above never receives them (Fable, ENGINE_NOTES §"SKSE
+    // messaging routing"). A nullptr sender sits in every bucket.
+    SKSE::GetMessagingInterface()->RegisterListener(OnApiMessage, nullptr);
+    spdlog::info("SKSEPluginLoad complete; serialization + messaging (+ inter-plugin API) registered");
     return true;
 }
