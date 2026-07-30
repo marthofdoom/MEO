@@ -8284,7 +8284,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     // routes a directed Dispatch only within the dispatcher's own sender-bucket, so
     // the "SKSE"-bucket OnMessage above never receives them (Fable, ENGINE_NOTES §"SKSE
     // messaging routing"). A nullptr sender sits in every bucket.
-    SKSE::GetMessagingInterface()->RegisterListener(OnApiMessage, nullptr);
+    SKSE::GetMessagingInterface()->RegisterListener(nullptr, OnApiMessage);  // (sender, callback): null = wildcard bucket
     spdlog::info("SKSEPluginLoad complete; serialization + messaging (+ inter-plugin API) registered");
     return true;
 }
