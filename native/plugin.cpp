@@ -160,7 +160,7 @@ constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPl
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.7-beta7";  // phase-3 public beta; beta7 = SKSE inter-plugin C++ API (IMEO) for MFO etc. (additive; no gameplay change)
+constexpr const char* kMEOVersion = "1.0.7-beta8";  // phase-3 public beta; beta8 = follower tab shows worn-but-unsocketed gear as "(worn)"
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -3117,8 +3117,30 @@ void CollectSocketableItems(RE::TESObjectREFR* a_holder, std::vector<MenuItemRow
         std::int32_t socketed = 0;
         if (data.second && data.second->extraLists) {
             for (auto* xl : *data.second->extraLists) {
-                if (!xl || !xl->HasType(RE::ExtraDataType::kEnchantment)) {
-                    continue;  // plain unit → counted in the plain pool below
+                if (!xl) {
+                    continue;
+                }
+                if (!xl->HasType(RE::ExtraDataType::kEnchantment)) {
+                    // A WORN but UN-socketed eligible piece (e.g. gear the follower
+                    // just equipped): surface it as its own "(worn)" row so the player
+                    // sees what they're wearing and can socket it. The player tab gets
+                    // this for free (worn gear is pre-minted); the follower collector
+                    // is read-only, so emit it WITHOUT minting (uid may be 0 — Stage-2
+                    // socketing mints in place). Count it so the plain-pool aggregate
+                    // below excludes it (marth's MFO report; Fable Issue-5).
+                    if (eligible && IsWornXList(xl)) {
+                        socketed += std::max(xl->GetCount(), 1);
+                        auto*       wxid = xl->GetByType<RE::ExtraUniqueID>();
+                        MenuItemRow row;
+                        row.base = obj->GetFormID();
+                        row.isArmor = isArmor;
+                        row.worn = true;
+                        row.uid = wxid ? wxid->uniqueID : 0;
+                        row.capacity = SocketCapacity(obj);
+                        row.label = std::string(baseName) + "  (worn)";
+                        a_out.push_back(std::move(row));
+                    }
+                    continue;  // other plain units → plain pool below
                 }
                 // ANY enchanted unit is distinct — exclude it from the plain pool
                 // whether or not it's ours (a follower's own player-enchant too), so
@@ -3601,7 +3623,8 @@ void DestroyGem(RE::FormID a_base, std::uint16_t a_uid, std::uint8_t a_slot) {
 // only the ITEM (find/mint/rebuild/equip) targets the owner, with the owner passed
 // to StampInstance so the player-only 2-of-a-kind cap never strips follower gear.
 void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gemBase,
-                std::uint16_t a_gemUid, int a_targetSlot = -1, RE::FormID a_ownerRefID = 0) {
+                std::uint16_t a_gemUid, int a_targetSlot = -1, RE::FormID a_ownerRefID = 0,
+                bool a_preferWorn = true) {
     auto* player = RE::PlayerCharacter::GetSingleton();
     RE::Actor* owner = player;
     if (a_ownerRefID) {
@@ -3631,6 +3654,10 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
         // collector is read-only). Socketing it must NOT drop/unequip it, so mint
         // the uid IN PLACE onto its existing worn xList. (Player worn gear is already
         // pre-minted at display time, so this branch is a follower path in practice.)
+        // a_preferWorn=false means the player picked a SPARE (unworn) row for a base
+        // whose worn copy is also uid-less — skip the worn-first scan so the spare is
+        // minted, not the equipped piece (Fable Issue-1, worn/spare same-base UI).
+        if (a_preferWorn) {
         if (auto* changes = owner->GetInventoryChanges(); changes && changes->entryList) {
             for (auto* e : *changes->entryList) {
                 if (!e || e->object != itemForm || !e->extraLists) {
@@ -3656,6 +3683,7 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
                 }
             }
         }
+        }  // a_preferWorn (skipped for a spare row so the drop-mint below runs)
         if (!xl) {
             // A never-touched plain (UNWORN) stack: run one unit through the proven
             // drop-stamp-pickup flow so the ENGINE mints its extra list (NG 3.7
@@ -4635,7 +4663,8 @@ namespace menuhook {
                 if (act) {
                     g_destroyArm = 0;
                     QueueMenuTask([sel, gem, target, activeOwner]() {
-                        MenuSocket(sel.base, sel.uid, gem.base, gem.uid, target, activeOwner);
+                        MenuSocket(sel.base, sel.uid, gem.base, gem.uid, target, activeOwner,
+                                   sel.worn);  // spare (unworn) row must not mint the worn copy
                     });
                 }
             }

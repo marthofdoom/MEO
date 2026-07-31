@@ -4,6 +4,14 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.7-beta8 — follower tab shows worn-but-unsocketed gear (2026-07-30)
+
+- **A follower's newly-equipped gear now shows as "(worn)" on their pouch tab**, even
+  before it has any gems. Previously only *socketed* gear was flagged worn, so gear a
+  follower equipped (e.g. via MFO) blended into the unsocketed pile — you couldn't
+  tell what they were actually wearing. Now their equipped piece is listed as its own
+  "(worn)" row, ready to socket. (Your own tab already did this.)
+
 ## v1.0.7-beta7 — SKSE inter-plugin API for other mods (2026-07-29)
 
 Additive only — no gameplay change. Opens MEO up to other SKSE plugins.

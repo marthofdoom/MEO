@@ -197,6 +197,14 @@ the portable "never again" digest for sibling projects.
    record at retirement, so they are never reclaim candidates; only overlay-mode
    vanilla disenchant (non-default; takeover replaces the table) can leave a retired
    strand, a documented edge.
+7d. **A uid==0 menu row is AMBIGUOUS per base; MenuSocket's uid==0 resolution is
+   WORN-FIRST, so any UI showing >1 uid==0 row for one base must pass a disambiguating
+   hint** (`a_preferWorn`, Fable 2026-07-30). The follower collector emits both a
+   "(worn)" row and a spare "xN" row for the same base, both uid==0; without the hint,
+   socketing the SPARE would mint onto the EQUIPPED piece (worn-first scan). The gem
+   pane passes `sel.worn` → a spare row (`false`) skips the worn-in-place scan and
+   drop-mints an unworn unit. Player worn gear is pre-minted (uid!=0) so it never hit
+   this, but the hint makes the contract explicit for both.
 8g. **`RebuildInstanceEnchant` NEVER reapplies the worn ability — any call site that
    CHANGES a worn item's enchant level/form must follow with `EquipCycleWorn` (or be
    covered by a scheduled reapply).** Rebuild swaps `ExtraEnchantment` to the new
