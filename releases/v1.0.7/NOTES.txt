@@ -1,0 +1,2 @@
+Phase 3: auto-minting from your load order + follower gem leveling/tabs/socketing + gem-XP data-loss fixes + SE 1.5.97 crash fix + SKSE API
+built from native run 30595941670 (no executable packaged; installs via Synthesis)
