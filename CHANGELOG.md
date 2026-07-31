@@ -4,6 +4,29 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.7 — Phase 3: auto-minting, follower gems & socketing (2026-07-30)
+
+Official release, promoted from beta8 (code-identical, deck-confirmed). The headline
+is **Phase 3 auto-minting** — the Synthesis patcher scans your load order's enchanted
+loot and mints new gem families for it, so MEO covers *your* list, not just its ~54
+hand-built families. On top of that, everything the beta cycle (beta1–beta8) added and
+fixed, now consolidated:
+
+- **Auto-minting** + multi-effect gems + the "Allow uncovered enchanted loot" toggle.
+- **Followers**: their equipped gems now LEVEL (a share of your nearby kills); their
+  gear + gem levels show on **per-follower pouch tabs** (triggers switch tabs) where
+  you can socket/unsocket directly, worn gear included; mastered-gem births route to
+  your shared pouch instead of piling up on the follower.
+- **Gem-XP data-loss fixes**: perks add sockets live; a socketed gem's banked XP is
+  reclaimed after save/load (including ID-node death and gear saved on the ground);
+  picked-up gear shows in the pouch immediately.
+- **SKSE inter-plugin API** (`MEO_API.h`) so mods like MFO can read/move a follower's
+  gems.
+- **Crash/robustness**: the SE 1.5.97 socketed-weapon CTD, the gem-menu double-fire,
+  and a latent socket-rekey CTD — all fixed.
+
+See the per-beta entries below for the detailed history.
+
 ## v1.0.7-beta8 — follower tab shows worn-but-unsocketed gear (2026-07-30)
 
 - **A follower's newly-equipped gear now shows as "(worn)" on their pouch tab**, even

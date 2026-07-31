@@ -160,7 +160,7 @@ constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPl
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.7-beta8";  // phase-3 public beta; beta8 = follower tab shows worn-but-unsocketed gear as "(worn)"
+constexpr const char* kMEOVersion = "1.0.7";  // OFFICIAL phase-3 release (promoted from beta8, code-identical; deck-confirmed 2026-07-30)
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
