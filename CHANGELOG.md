@@ -4,6 +4,29 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.8 — fix: two-handed follower weapons went invisible (equip-slot mismatch, m37) (2026-07-31)
+
+`EquipCycleWorn` (the worn-socket re-equip cycle) forced an explicit right/left HAND
+slot derived from the worn flag. A bow/crossbow/greatsword/2h-axe is worn as `kWorn`
+(never `kWornLeft`), so it was shoved into `kRightHandEquip` — a slot the weapon
+can't occupy. The `applyNow` un/re-equip then set only the process COMBAT slot and
+SKIPPED the `ExtraWorn` stamp + the 3D/biped attach. The weapon still **fired** but
+was **invisible** and showed **unequipped** in the menu. And because
+`ReapplyFollowerSockets` (m36, the follower socket re-apply) re-runs this cycle on
+**every load**, it re-corrupted after any manual re-equip and baked into saves.
+Worst on bows (deterministic); one-hand weapons got their correct slot, so were
+milder/unaffected.
+
+Surfaced via MFO's follower gem-transfer feeding this path on looted weapon swaps
+(an MFO follower's bow **and** mace showed it); MFO's native code was audited clean —
+the fault was entirely MEO's.
+
+- `EquipCycleWorn` now gives every weapon its PROPER slot: two-handers pass
+  `slot=nullptr` so the engine resolves their own BothHands slot and equips them
+  FULLY (ExtraWorn + mesh); one-handers keep the hand-preserving pick (dual-wield).
+  The every-load `ReapplyFollowerSockets` pass then **heals already-broken saves** by
+  re-cycling correctly on the next load. See ENGINE_NOTES §13.
+
 ## v1.0.7 — Phase 3: auto-minting, follower gems & socketing (2026-07-30)
 
 Official release, promoted from beta8 (code-identical, deck-confirmed). The headline

@@ -596,3 +596,33 @@ references the winning MGEF record and the engine runs its script; do NOT
 classify enchantments as non-replicable by archetype. The real
 "casting implement" signals are `ENCH.EnchantType == StaffEnchantment` and
 Concentration/Aimed effects.
+
+## 13. Equip-cycle slot must match the weapon's hand count (m37, field-verified)
+
+`EquipCycleWorn` re-seats a socketed WORN item with `UnequipObject` + `EquipObject`
+at `applyNow=true` — the real teardown that clears a removed gem's stale ability
+(the m23c teardown). For WEAPONS it passed an explicit `BGSEquipSlot`, picked from
+the worn flag: `kLeftHandEquip` if the xList had `kWornLeft`, else `kRightHandEquip`.
+
+TRAP — that pick is valid ONLY for one-handed weapons. A two-handed weapon
+(`WEAPON_TYPE::{kTwoHandSword, kTwoHandAxe, kBow, kCrossbow}`) is worn as `kWorn`,
+never `kWornLeft`, so the else-branch handed it **`kRightHandEquip` — a slot it
+cannot occupy**. An `applyNow` equip with a MISMATCHED slot completes only the
+PROCESS half (the AIProcess combat equip slot is set, so the weapon still fires) and
+silently SKIPS the `ExtraWorn` stamp AND the biped/3D attach. Symptom: the weapon
+works in combat but is **invisible** and the inventory menu shows it **unequipped**.
+It is persistent and save-baked — `ReapplyFollowerSockets` (m36) re-runs the cycle on
+every load, so it re-corrupts after any manual re-equip. Deterministic on bows;
+one-handers get their correct slot and are unaffected.
+
+RULE: never force a hand slot on a two-hander. Pass `slot = nullptr` for the
+two-handed weapon types so `ActorEquipManager` resolves the weapon's OWN BothHands
+slot and does the FULL equip (ExtraWorn + mesh); keep the explicit left/right pick
+only for one-handers (they dual-wield, so the worn hand matters). Fixed m37 in
+`EquipCycleWorn`. The every-load `ReapplyFollowerSockets` pass then self-heals
+already-broken saves by re-cycling correctly.
+
+Cross-mod note: this surfaced on MFO followers (invisible bow AND mace that still
+fired) because MFO's follower gem-transfer (#17) calls this path on looted weapon
+swaps. MFO's native code was audited clean; the fault was entirely here. When MEO
+touches a follower's WORN weapon, assume a two-hander and never assume a hand.
