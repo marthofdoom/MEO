@@ -7566,6 +7566,47 @@ void ReapplyFollowerSockets() {
             }
         }
     }
+    // DIAGNOSTIC (m37, invisible-weapon hunt): the re-cycle above only touches items
+    // whose xList IsWornXList. A weapon left EQUIPPED-but-NOT-worn (the invisible-
+    // weapon corruption: process combat slot set, ExtraWorn + 3D missing) is therefore
+    // SKIPPED and can never self-heal. Log each follower's ACTUALLY-equipped weapons
+    // and whether the engine still sees ExtraWorn, to confirm the desync in the field
+    // before we heal it. Read-only.
+    for (auto& h : lists->highActorHandles) {
+        auto a = h.get();
+        if (!a || a->IsPlayerRef() || !a->IsPlayerTeammate() || a->IsDead()) {
+            continue;
+        }
+        auto* changes = a->GetInventoryChanges();
+        for (int hand = 0; hand < 2; ++hand) {
+            auto* eq = a->GetEquippedObject(hand == 1);  // false = right, true = left
+            auto* weap = eq ? eq->As<RE::TESObjectWEAP>() : nullptr;
+            if (!weap) {
+                continue;
+            }
+            bool worn = false;
+            if (changes && changes->entryList) {
+                for (auto* entry : *changes->entryList) {
+                    if (!entry || entry->object != eq || !entry->extraLists) {
+                        continue;
+                    }
+                    for (auto* xl : *entry->extraLists) {
+                        if (xl && IsWornXList(xl)) {
+                            worn = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            spdlog::info("[wdiag] {:08X} '{}' {}-hand equipped '{}' wtype={} ExtraWorn={}",
+                         a->GetFormID(), a->GetName() ? a->GetName() : "?",
+                         hand == 1 ? "L" : "R",
+                         weap->GetName() ? weap->GetName() : "?",
+                         static_cast<int>(weap->GetWeaponType()),
+                         worn ? "YES" : "NO <-- INVISIBLE-WEAPON STATE");
+        }
+    }
+
     int done = 0;
     for (auto& t : targets) {
         auto a = t.handle.get();
