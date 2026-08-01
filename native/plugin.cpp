@@ -2211,7 +2211,21 @@ void EquipCycleWorn(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDat
         return;
     }
     const RE::BGSEquipSlot* slot = nullptr;
-    if (a_base->Is(RE::FormType::Weapon)) {
+    // Only ONE-HANDED weapons take an explicit hand slot here. A TWO-HANDED weapon
+    // (bow/crossbow/greatsword/2h-axe) occupies BOTH hands and is worn as kWorn
+    // (never kWornLeft), so the right/left pick below would force it kRightHandEquip
+    // -- a SLOT MISMATCH whose applyNow un/re-equip completes only the PROCESS half
+    // (combat slot set) and skips the ExtraWorn stamp + the 3D/biped attach: the
+    // weapon still FIRES but is INVISIBLE and shows UNEQUIPPED, baked into the save
+    // (m36 ReapplyFollowerSockets re-runs this every load, so it can't be cleared by
+    // hand), worst on bows. Leave slot=nullptr for two-handers so the engine resolves
+    // the weapon's OWN BothHands slot and equips it fully; one-handers keep the
+    // hand-preserving pick (they can be dual-wielded, so the worn hand matters).
+    if (auto* weap = a_base->As<RE::TESObjectWEAP>();
+        weap && weap->GetWeaponType() != RE::WEAPON_TYPE::kTwoHandSword
+             && weap->GetWeaponType() != RE::WEAPON_TYPE::kTwoHandAxe
+             && weap->GetWeaponType() != RE::WEAPON_TYPE::kBow
+             && weap->GetWeaponType() != RE::WEAPON_TYPE::kCrossbow) {
         if (auto* dom = RE::BGSDefaultObjectManager::GetSingleton()) {
             // NEVER dom->GetObject<T>() on our NG pin (3.7.0 / c4ab853d): it inlines
             // IsObjectInitialized(), which reads objectInit (a bool[] at +0xB80 on
