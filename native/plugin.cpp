@@ -160,7 +160,7 @@ constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPl
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.8";  // + never equip-cycle while in/entering furniture (CTD)
+constexpr const char* kMEOVersion = "1.0.8";  // + defensive: no equip-cycle while in/entering furniture
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -2210,18 +2210,17 @@ void EquipCycleWorn(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDat
     if (!em || !a_owner || !a_base || !a_xList) {
         return;
     }
-    // EMERGENCY (marth's root-cause, 2026-07-30): NEVER run an unequip/re-equip cycle
-    // while the actor is IN or ENTERING furniture. Seated/lean/crouch furniture uses a
-    // SYNCHRONIZED enter-loop transition (BSSynchronizedClipGenerator) that needs the
-    // actor to hold a stable graph state through the hand-off; an equip event forces a
-    // graph state change that ABORTS the transition — the actor plays the sit-down idle
-    // then is instantly ejected. MEO's 3D/drawn-gated load-refresh pass re-fires that
-    // equip cycle on EVERY 3D rebuild (why resurrect / disable-enable never helped, and
-    // why the save is byte-identical), and it sweeps INVENTORY not just worn slots (why
-    // un-equipping the item didn't stop it). Standing crafting stations are idle-only
-    // (sit-state kNormal), so the forge/enchanter are unaffected. Skip for ANY non-
-    // normal sit/sleep state; the worn ability refreshes on the next cycle once
-    // standing. Chokepoint guard — covers the refresh pass and every other caller.
+    // DEFENSIVE (2026-08): don't run an unequip/re-equip cycle while the actor is IN or
+    // ENTERING furniture. Seated/lean/crouch furniture uses a SYNCHRONIZED enter-loop
+    // transition (BSSynchronizedClipGenerator) that wants a stable anim-graph state
+    // through the sit-down -> seated-loop hand-off; an equip event emits graph state
+    // changes that could disturb that window, so MEO stays out of it. Skip for ANY
+    // non-normal sit/sleep state; the worn ability refreshes on the next cycle once
+    // standing. Standing crafting stations are idle-only (sit-state kNormal), so the
+    // forge/enchanter are unaffected. Chokepoint guard — covers every caller.
+    // NOTE: this was first written chasing a Fire III furniture-eject report; that eject
+    // was later RULED NOT MEO (the socketed enchant is a well-formed vanilla on-hit fire
+    // effect, and it reproduced with the DLL disabled). Retained purely as hardening.
     if (auto* st = a_owner->AsActorState()) {
         const auto ss = st->GetSitSleepState();
         if (ss != RE::SIT_SLEEP_STATE::kNormal) {  // in or entering furniture (sit/lean/sleep)

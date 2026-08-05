@@ -27,18 +27,15 @@ the fault was entirely MEO's.
   The every-load `ReapplyFollowerSockets` pass then **heals already-broken saves** by
   re-cycling correctly on the next load. See ENGINE_NOTES §13.
 
-**Also in v1.0.8 — no equip-cycle while in/entering furniture (emergency fix).**
+**Also in v1.0.8 — defensive: don't equip-cycle while in/entering furniture.**
 
-- **Fixes a crash/eject when entering seated furniture** (chairs, beds, lean/crouch
-  markers). If you carried a socketed item, MEO's load/refresh pass could run a
-  worn-gear re-equip cycle during the furniture-enter animation. Seated furniture uses
-  a synchronized enter→loop hand-off, and an equip event mid-transition aborts it — you
-  played the sit-down idle then were instantly ejected. Because the pass is gated on 3D
-  readiness it re-fired on every 3D rebuild, so resurrect / disable-enable never fixed
-  it and the save looked identical. MEO now skips the cycle whenever the actor is in or
-  entering any sit/lean/sleep state and refreshes the effect once standing / on the next
-  load. Standing crafting stations (forge/enchanter) are idle-only and unaffected, so
-  socketing at a station still works.
+- MEO no longer runs a worn-gear un/re-equip cycle while an actor is in or entering any
+  sit/lean/sleep state. Equip events emit anim-graph state changes, and seated furniture
+  uses a synchronized enter→loop hand-off (`BSSynchronizedClipGenerator`) that such a
+  change could disturb, so MEO simply stays out of that window. Purely defensive
+  hardening — the worn ability refreshes on the next cycle once standing / on the next
+  load, and standing crafting stations (forge/enchanter, sit-state normal) are
+  unaffected, so socketing at a station still works.
 
 ## v1.0.7 — Phase 3: auto-minting, follower gems & socketing (2026-07-30)
 
