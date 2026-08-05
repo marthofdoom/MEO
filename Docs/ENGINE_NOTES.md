@@ -117,7 +117,7 @@ and FX apply immediately on stamp — see §8.
 
 | Event | Shape | Notes |
 |---|---|---|
-| `RE::TESEquipEvent` | `{actor, baseObject, uniqueID, equipped}` | plain unenchanted items report `uniqueID=0` |
+| `RE::TESEquipEvent` | `{actor, baseObject, uniqueID, equipped}` | plain unenchanted items report `uniqueID=0`; `actor` is `NiPointer<TESObjectREFR>` → reach the actor via `->As<RE::Actor>()`; fires for **all** NPCs, so gate to player/teammate to avoid churn (m37) |
 | `RE::TESSpellCastEvent` | `{NiPointer<TESObjectREFR> object; FormID spell}` | fires for lesser powers too → menu-less "cast a power" UX |
 | `RE::TESDeathEvent` | `{actorDying, actorKiller, bool dead}` | fires twice; act on `dead == true` |
 | `RE::TESCellAttachDetachEvent` | `{NiPointer<TESObjectREFR> reference; bool attached}` | **fires per reference**, not per cell — ideal for stamping world loot at load |

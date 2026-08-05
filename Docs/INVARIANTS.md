@@ -18,9 +18,18 @@ the portable "never again" digest for sibling projects.
    deliberate, scoped, reversible:
    - the windowed SNDR `staticAttenuation` mute (:262-360) — form data, saved
      originals restored exactly, single-writer restore;
-   - the Echo share-spell effect rewrite (:4975-4985) — ONE persistent ESP
-     spell's effect mutated each tick, self-expiring, so follower saves never
-     reference a runtime form.
+   - the Echo share-spell effect rewrite (`EchoFollowerShareTick`) — ONE
+     persistent ESP spell's single effect, rewritten **per recipient** then cast
+     immediately (m37 bidirectional aura), self-expiring (12s), so no actor's save
+     ever references a runtime form. Correctness relies on `CastSpellImmediate`
+     being synchronous (each cast captures the then-current effect values before
+     the next recipient overwrites them).
+   - **Echo cache-dirty invariant (m37):** any change to *who wears a linked
+     Echo gem* (or its magnitude) MUST set `g_echoDirty` so the aura cache
+     recomputes. Covered: `RebuildInstanceEnchant` (socket/unsocket/level-up/
+     load-reapply) + `EchoEquipSink` (equip/unequip of player/teammate). Group
+     add/remove is caught in-tick by an order-independent membership signature
+     (a recruited-already-equipped follower fires no equip/socket event).
 2. **`Update*Ability` early-outs on teardown; the only complete worn-ability
    teardown is a real equip cycle** (`EquipCycleWorn` :1681 — idempotent:
    unequip drops ALL old abilities, equip installs exactly one). The m19f

@@ -4,6 +4,20 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.9 — Echo becomes a bidirectional aura (2026-08-05)
+
+- **A follower's Echo now benefits you, not just the reverse.** Before, the Echo
+  armor-share flowed only from the *player's* linked Echo gem out to followers. Now any
+  member of your nearby group — you *or* a follower — wearing a linked Echo + effect gem
+  shares that effect to every other member, the player included. So Auri wearing Echo +
+  Fortify Carry raises *your* carry weight (and vice-versa).
+- **Efficient by design:** the shared effect is recomputed only when a socket or equip
+  actually changes, then cached; the 8-second heartbeat just re-applies the cache — no
+  per-tick inventory scanning.
+- Known limit (to be lifted later): each recipient currently receives the single
+  *strongest* incoming Echo share. Stacking several different shares on one character
+  needs a follow-up change to the shared-effect spell (extra effect slots in the ESP).
+
 ## v1.0.8 — fix: two-handed follower weapons went invisible + no equip-cycle in furniture (2026-08-04)
 
 `EquipCycleWorn` (the worn-socket re-equip cycle) forced an explicit right/left HAND

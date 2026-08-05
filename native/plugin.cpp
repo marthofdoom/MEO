@@ -160,7 +160,7 @@ constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPl
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.8";  // + defensive: no equip-cycle while in/entering furniture
+constexpr const char* kMEOVersion = "1.0.9";  // + Echo bidirectional aura (follower<->player share)
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -1792,12 +1792,20 @@ void SafeRemoveAllByType(RE::ExtraDataList* a_xList, RE::ExtraDataType a_type) {
     }
 }
 
+// m37 (Echo aura): bidirectional follower-share. Each SOURCE actor's shared Echo
+// payload is cached and only recomputed when a socket/equip change flags us dirty
+// (marth: don't scan every tick — scan when sockets switch).
+struct EchoPayload { RE::EffectSetting* mgef = nullptr; float mag = 0.0f; std::string_view gid; };
+std::unordered_map<RE::FormID, EchoPayload> g_echoPayloads;  // source actor FormID -> shared effect (main-thread only)
+std::atomic<bool> g_echoDirty{true};  // set on socket/equip change (any thread); heartbeat capture-and-clears
+
 void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList,
                             RE::Actor* a_owner = nullptr) {
     auto* xid = a_xList ? a_xList->GetByType<RE::ExtraUniqueID>() : nullptr;
     if (!a_base || !xid) {
         return;
     }
+    g_echoDirty = true;  // m37: worn socket state may have changed -> recompute Echo cache next tick
     const std::uint16_t uid = xid->uniqueID;
     const bool          isArmor = a_base->Is(RE::FormType::Armor);
 
@@ -6934,109 +6942,163 @@ public:
     }
 };
 
-// m36: Echo (armor half) — follower-share. If the player wears a linked
-// Echo-armor gem, re-cast that gem's effect (× the Echo tier fraction) on every
-// current follower for a short duration, every heartbeat. SELF-EXPIRING: no
-// permanent abilities are added, so if the pairing breaks (unlinked/unequipped)
-// or MEO is removed, the effect simply lapses within its duration — nothing to
-// track, nothing to leak. Uses ONE persistent ESP spell (MEO_EchoShare, real
-// FormID) whose single effect is rewritten each tick, so follower saves only
-// ever reference a real form, never a runtime-created one.
-void EchoFollowerShareTick() {
-    auto* player = RE::PlayerCharacter::GetSingleton();
-    if (!player || !g_echoShareSpell || g_echoShareSpell->effects.size() == 0) {
-        return;
+// m37 (Echo aura): compute an actor's shared Echo payload — scan their WORN armor
+// for a linked Echo-support + normal gem pairing and return that gem's effect scaled
+// by the Echo tier fraction. Empty (mgef==nullptr) if the actor wears no linked
+// Echo-armor. This is the same resolution the old player-only tick did inline (m36),
+// now parameterized so ANY group member can be a share SOURCE.
+EchoPayload ComputeEchoPayload(RE::Actor* a_actor) {
+    EchoPayload out;
+    if (!a_actor) {
+        return out;
     }
-    const ResolvedGem* shareGem = nullptr;
-    int   shareLvIdx = 0;
-    float echoFrac = 0.0f;
-    auto* changes = player->GetInventoryChanges();
-    if (changes && changes->entryList) {
-        for (auto* entry : *changes->entryList) {
-            if (shareGem || !entry || !entry->object || !entry->object->Is(RE::FormType::Armor) ||
-                !entry->extraLists) {
+    auto* changes = a_actor->GetInventoryChanges();
+    if (!changes || !changes->entryList) {
+        return out;
+    }
+    for (auto* entry : *changes->entryList) {
+        if (!entry || !entry->object || !entry->object->Is(RE::FormType::Armor) || !entry->extraLists) {
+            continue;
+        }
+        for (auto* xl : *entry->extraLists) {
+            if (!xl || !IsWornXList(xl)) {
                 continue;
             }
-            for (auto* xl : *entry->extraLists) {
-                if (!xl || !IsWornXList(xl)) {
+            auto* xid = xl->GetByType<RE::ExtraUniqueID>();
+            if (!xid) {
+                continue;
+            }
+            const ResolvedGem* support = nullptr;
+            const ResolvedGem* normal = nullptr;
+            int                stier = 1, nlvl = 1;
+            for (int s = 0; s < kMaxSockets; ++s) {
+                auto it = g_sockets.find(MakeKey(entry->object->GetFormID(), xid->uniqueID,
+                                                 static_cast<std::uint8_t>(s)));
+                if (it == g_sockets.end()) {
                     continue;
                 }
-                auto* xid = xl->GetByType<RE::ExtraUniqueID>();
-                if (!xid) {
+                auto gi = g_gemByGid.find(it->second.gid);
+                if (gi == g_gemByGid.end()) {
                     continue;
                 }
-                const ResolvedGem* support = nullptr;
-                const ResolvedGem* normal = nullptr;
-                int                stier = 1, nlvl = 1;
-                for (int s = 0; s < kMaxSockets; ++s) {
-                    auto it = g_sockets.find(MakeKey(entry->object->GetFormID(), xid->uniqueID,
-                                                     static_cast<std::uint8_t>(s)));
-                    if (it == g_sockets.end()) {
-                        continue;
-                    }
-                    auto gi = g_gemByGid.find(it->second.gid);
-                    if (gi == g_gemByGid.end()) {
-                        continue;
-                    }
-                    if (g_gems[gi->second].def->isSupport) {
-                        support = &g_gems[gi->second];
-                        stier = std::clamp<int>(it->second.level, 1, 3);
-                    } else {
-                        normal = &g_gems[gi->second];
-                        nlvl = it->second.level;
-                    }
+                if (g_gems[gi->second].def->isSupport) {
+                    support = &g_gems[gi->second];
+                    stier = std::clamp<int>(it->second.level, 1, 3);
+                } else {
+                    normal = &g_gems[gi->second];
+                    nlvl = it->second.level;
                 }
-                if (support && support->def->supportType == meo::SupportType::kEcho && normal &&
-                    normal->mgef) {
-                    shareGem = normal;
-                    shareLvIdx = std::clamp<int>(nlvl, 1, 5) - 1;
-                    echoFrac = support->def->tierParam[stier - 1];
-                }
-                break;
+            }
+            if (support && support->def->supportType == meo::SupportType::kEcho && normal && normal->mgef) {
+                const int   lvIdx = std::clamp<int>(nlvl, 1, 5) - 1;
+                const float echoFrac = support->def->tierParam[stier - 1];
+                out.mgef = normal->mgefLv[lvIdx];
+                // NOTE: g_attuneRank / g_magnitudeMult / GemPerkMult are PLAYER-derived —
+                // a follower source's shared magnitude is intentionally scaled by the
+                // player's attunement & perks (followers carry none of their own).
+                out.mag = GemBaseMag(normal->def, lvIdx) * g_magnitudeMult *
+                          (1.0f + 0.05f * g_attuneRank) * GemPerkMult(normal->def) * echoFrac;
+                out.gid = normal->def->gid;
+                return out;  // first linked Echo-armor on this actor wins
             }
         }
     }
-    // m36g: quiet logging — remember the last shared state and only log when it
-    // changes, so combat/idle isn't a wall of identical 8s lines.
-    static std::string s_lastGid;
-    static int         s_lastN = -1;
-    static int         s_lastMag = -1;
-    if (!shareGem) {
-        if (s_lastN > 0) {  // transition: was sharing, now not
-            spdlog::info("[echo-share] ended — no linked Echo-armor");
-        }
-        s_lastGid.clear();
-        s_lastN = -1;
-        s_lastMag = -1;
-        return;  // prior casts expire on their own (self-expiring)
+    return out;
+}
+
+// m37: Echo (armor half) — BIDIRECTIONAL follower-share aura. Any group member
+// (player OR a nearby teammate) wearing a linked Echo-armor gem shares that gem's
+// effect to every OTHER member — so a follower's Echo now benefits the player, not
+// just the reverse. SELF-EXPIRING: one persistent ESP spell (MEO_EchoShare, real
+// FormID) whose single effect is rewritten per cast; no permanent abilities, so a
+// broken pairing / removed MEO simply lapses within the 12s duration.
+//   EFFICIENCY (marth): the expensive inventory scan runs ONLY when g_echoDirty is
+// set (a socket/equip change), then the per-source payloads are cached; steady-state
+// ticks just re-broadcast the cache — no per-tick scanning.
+//   PHASE A LIMIT: the single shared effect carries ONE share per recipient, so a
+// recipient gets the STRONGEST incoming Echo share. Stacking multiple distinct
+// shares on one actor needs N effect-slots authored in the ESP spell (Phase B).
+void EchoFollowerShareTick() {
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    auto* lists = RE::ProcessLists::GetSingleton();
+    if (!player || !g_echoShareSpell || g_echoShareSpell->effects.size() == 0 || !lists) {
+        return;
     }
-    // Rewrite the share spell's single effect to this gem's, scaled by tier.
-    const float mag = GemBaseMag(shareGem->def, shareLvIdx) * g_magnitudeMult *
-                      (1.0f + 0.05f * g_attuneRank) * GemPerkMult(shareGem->def) * echoFrac;
+    auto* caster = player->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant);
+    if (!caster) {
+        return;
+    }
+    // The nearby group: player + loaded, living teammates. Both share SOURCES and
+    // share RECIPIENTS are drawn from this set.
+    std::vector<RE::Actor*> group;
+    group.reserve(8);
+    group.push_back(player);
+    for (auto& handle : lists->highActorHandles) {
+        auto a = handle.get();
+        if (a && a.get() != player && a->IsPlayerTeammate() && !a->IsDead()) {
+            group.push_back(a.get());
+        }
+    }
+    // P1: also force a recompute when group MEMBERSHIP changes — a teammate recruited
+    // already wearing a linked Echo gem fires no equip/socket event, so nothing else
+    // would dirty us (and it also clears stale entries for dismissed sources). Order-
+    // independent signature: count + sum + xor of member FormIDs.
+    static std::size_t s_lastGroupSig = 0;
+    std::uint64_t      idSum = 0, idXor = 0;
+    for (auto* a : group) {
+        const auto id = a->GetFormID();
+        idSum += id;
+        idXor ^= id;
+    }
+    const std::size_t groupSig = (group.size() << 1) ^ idSum ^ (idXor << 17);
+    // Capture-and-clear the dirty flag BEFORE scanning so a concurrent off-thread set
+    // (equip sink / RebuildInstanceEnchant) survives into the next tick instead of being
+    // lost.
+    bool dirty = g_echoDirty.exchange(false);
+    if (groupSig != s_lastGroupSig) {
+        dirty = true;
+        s_lastGroupSig = groupSig;
+    }
+    // Recompute the per-source payload cache only when dirtied (marth: don't scan
+    // every tick).
+    if (dirty) {
+        g_echoPayloads.clear();
+        std::string holders;
+        for (auto* a : group) {
+            auto p = ComputeEchoPayload(a);
+            if (p.mgef) {
+                if (!holders.empty()) {
+                    holders += ",";
+                }
+                holders += std::string(p.gid);
+                g_echoPayloads[a->GetFormID()] = p;
+            }
+        }
+        spdlog::info("[echo-share] cache recompute — {} holder(s) [{}] in a group of {}",
+                     g_echoPayloads.size(), holders, group.size());
+    }
     auto* eff = g_echoShareSpell->effects[0];
     if (!eff) {
         return;
     }
-    eff->baseEffect = shareGem->mgefLv[shareLvIdx];
-    eff->effectItem.magnitude = mag;
-    eff->effectItem.area = 0;
-    eff->effectItem.duration = 12;  // seconds; > heartbeat so followers stay buffed
-    auto* lists = RE::ProcessLists::GetSingleton();
-    auto* caster = player->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant);
-    if (!lists || !caster) {
-        return;
-    }
-    int shared = 0;
-    for (auto& handle : lists->highActorHandles) {
-        auto a = handle.get();
-        if (!a || a.get() == player || !a->IsPlayerTeammate() || a->IsDead()) {
-            continue;
+    // Each recipient gets the STRONGEST Echo share from any OTHER group member.
+    for (auto* tgt : group) {
+        const EchoPayload* best = nullptr;
+        for (auto* src : group) {
+            if (src == tgt) {
+                continue;
+            }
+            auto it = g_echoPayloads.find(src->GetFormID());
+            if (it == g_echoPayloads.end()) {
+                continue;
+            }
+            if (!best || it->second.mag > best->mag) {
+                best = &it->second;
+            }
         }
-        // m36g: dispel any PRIOR share-cast on this follower before re-casting, so
-        // the shared buff is always exactly 1× — never stacks, regardless of
-        // whether the engine refreshes or duplicates same-spell effects. Cheap:
-        // a follower has only a handful of active effects.
-        if (auto* mt = a->AsMagicTarget()) {
+        // Clear any prior share on this recipient so it's always exactly 1× / fresh;
+        // if the source stopped, this leaves the recipient with nothing (correct).
+        if (auto* mt = tgt->AsMagicTarget()) {
             if (auto* elist = mt->GetActiveEffectList()) {
                 for (auto* ae : *elist) {
                     if (ae && ae->spell == g_echoShareSpell) {
@@ -7045,18 +7107,38 @@ void EchoFollowerShareTick() {
                 }
             }
         }
-        caster->CastSpellImmediate(g_echoShareSpell, false, a.get(), 1.0f, false, 0.0f, player);
-        ++shared;
-    }
-    const int magR = static_cast<int>(std::lround(mag));
-    if (shareGem->def->gid != s_lastGid || shared != s_lastN || magR != s_lastMag) {
-        spdlog::info("[echo-share] '{}' mag={:.1f} dur=12 → {} follower(s) (re-cast/8s, 1×-dispel)",
-                     shareGem->def->gid, mag, shared);
-        s_lastGid = shareGem->def->gid;
-        s_lastN = shared;
-        s_lastMag = magR;
+        if (!best) {
+            continue;
+        }
+        eff->baseEffect = best->mgef;
+        eff->effectItem.magnitude = best->mag;
+        eff->effectItem.area = 0;
+        eff->effectItem.duration = 12;  // seconds; > heartbeat so recipients stay buffed
+        caster->CastSpellImmediate(g_echoShareSpell, false, tgt, 1.0f, false, 0.0f, player);
     }
 }
+
+// m37: any equip/unequip on the player or a teammate can change who wears a linked
+// Echo-armor — flag the cache for recompute (cheap: just a bool; the scan waits for
+// the next heartbeat). Gated to the group so crowd NPC equips don't churn it.
+class EchoEquipSink : public RE::BSTEventSink<RE::TESEquipEvent> {
+public:
+    static EchoEquipSink* GetSingleton() {
+        static EchoEquipSink singleton;
+        return &singleton;
+    }
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent* a_event,
+                                          RE::BSTEventSource<RE::TESEquipEvent>*) override {
+        if (a_event && a_event->actor) {
+            auto* a = a_event->actor->As<RE::Actor>();
+            auto* pl = RE::PlayerCharacter::GetSingleton();
+            if (a && pl && (a == pl || a->IsPlayerTeammate())) {
+                g_echoDirty = true;
+            }
+        }
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
 
 // Heartbeat: drives EchoFollowerShareTick on the main thread every 8s. Started
 // once at data-load; harmless at the main menu (the tick no-ops with no player).
@@ -8258,6 +8340,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESSpellCastEvent>(SpellCastSink::GetSingleton());
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESDeathEvent>(DeathSink::GetSingleton());
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESHitEvent>(HitSink::GetSingleton());  // m36 Echo AoE
+        RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESEquipEvent>(EchoEquipSink::GetSingleton());  // m37 Echo aura cache-dirty
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESCellAttachDetachEvent>(CellAttachSink::GetSingleton());
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESContainerChangedEvent>(ContainerSink::GetSingleton());
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESObjectLoadedEvent>(ObjectLoadedSink::GetSingleton());

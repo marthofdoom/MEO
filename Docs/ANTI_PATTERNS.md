@@ -236,3 +236,11 @@ sibling project can audit itself against the list in one sitting.
 - **Fix stale landmark comments in save-critical code as if they were bugs.**
   "schema v3" (was v11) and "blinkless refresh" (retired) were actively
   steering decisions.
+- **Cache-on-dirty must enumerate ALL inputs, and clear the flag BEFORE the
+  scan.** The m37 Echo aura caches per-source payloads and rebuilds only when
+  `g_echoDirty` is set. Two traps: (1) forgetting an input that changes the
+  result — equip/socket/level-up/load are covered, but group add/remove fires no
+  such event and had to be caught by an in-tick membership signature; (2) clearing
+  the flag *after* the recompute loses a concurrent off-thread set — capture-and-
+  clear (`exchange(false)`) *before* scanning. Cross-thread flags are
+  `std::atomic<bool>`, not plain `bool`.
