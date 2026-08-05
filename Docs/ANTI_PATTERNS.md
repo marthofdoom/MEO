@@ -244,3 +244,13 @@ sibling project can audit itself against the list in one sitting.
   the flag *after* the recompute loses a concurrent off-thread set — capture-and-
   clear (`exchange(false)`) *before* scanning. Cross-thread flags are
   `std::atomic<bool>`, not plain `bool`.
+- **A constant-effect/self MGEF only applies to another actor as an ABILITY
+  (`AddSpell`), never via a fire-and-forget cast.** MEO's armor Echo-share *cast*
+  the effect for months and it silently never landed (found v1.0.9a: deck
+  `getav` showed no change). `CastSpellImmediate` of a constant-self MGEF delivers
+  nothing — deliver via an ability and own the `RemoveSpell` lifecycle yourself.
+- **One shared spell/effect form rewritten per target cannot represent two
+  distinct live payloads at once.** Each applied ability reads the *live* shared
+  `effects[0]`, so the last write wins for all of them (and a reload re-reads the
+  last-written effect for every baked copy). Fine only when ≤1 payload is live per
+  tick; otherwise author N effect-slots (Phase B).

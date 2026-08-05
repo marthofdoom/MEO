@@ -14,6 +14,10 @@ arc; point fixes are folded into their feature entry unless load-bearing.
 - **Efficient by design:** the shared effect is recomputed only when a socket or equip
   actually changes, then cached; the 8-second heartbeat just re-applies the cache — no
   per-tick inventory scanning.
+- Armor shares (Fortify X) are delivered as a **constant ability** (`AddSpell`), the
+  only way a constant-self effect applies to another actor. The earlier design *cast*
+  the effect, which silently never applied for armor gems — so armor Echo-share had
+  never actually worked; this makes it real.
 - Known limit (to be lifted later): each recipient currently receives the single
   *strongest* incoming Echo share. Stacking several different shares on one character
   needs a follow-up change to the shared-effect spell (extra effect slots in the ESP).

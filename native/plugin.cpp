@@ -160,7 +160,7 @@ constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPl
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.9";  // + Echo bidirectional aura (follower<->player share)
+constexpr const char* kMEOVersion = "1.0.9a";  // Echo aura: deliver share as constant ability (was cast, never applied)
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -1079,6 +1079,16 @@ void ResolveCatalog() {
     g_echoShareSpell = dh->LookupForm<RE::SpellItem>(kEchoShareSpellID, kPluginName);  // m36
     if (!g_echoShareSpell) {
         spdlog::warn("Echo share spell {:X} not found — armor follower-share disabled", kEchoShareSpellID);
+    } else {
+        // m37b: armor Echo shares a CONSTANT-EFFECT/SELF gem effect (e.g. FortifyCarry).
+        // Such effects apply ONLY as an ability — a fire-and-forget CAST never delivers
+        // them (why armor Echo-share never worked). Retype our DLL-owned scratch share
+        // spell to a constant-effect self ABILITY at load so AddSpell auto-applies its
+        // (runtime-rewritten) effect to recipients. Extends the approved "DLL rewrites
+        // this one scratch spell at runtime" exception (see INVARIANTS).
+        g_echoShareSpell->data.spellType   = RE::MagicSystem::SpellType::kAbility;
+        g_echoShareSpell->data.castingType = RE::MagicSystem::CastingType::kConstantEffect;
+        g_echoShareSpell->data.delivery    = RE::MagicSystem::Delivery::kSelf;
     }
     g_pouchSpell = dh->LookupForm<RE::SpellItem>(kPouchSpellID, kPluginName);
     if (!g_pouchSpell) {
@@ -1797,6 +1807,7 @@ void SafeRemoveAllByType(RE::ExtraDataList* a_xList, RE::ExtraDataType a_type) {
 // (marth: don't scan every tick — scan when sockets switch).
 struct EchoPayload { RE::EffectSetting* mgef = nullptr; float mag = 0.0f; std::string_view gid; };
 std::unordered_map<RE::FormID, EchoPayload> g_echoPayloads;  // source actor FormID -> shared effect (main-thread only)
+std::unordered_map<RE::FormID, EchoPayload> g_echoApplied;   // recipient FormID -> currently-applied share (AddSpell state, main-thread only)
 std::atomic<bool> g_echoDirty{true};  // set on socket/equip change (any thread); heartbeat capture-and-clears
 
 void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList,
@@ -1805,7 +1816,9 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
     if (!a_base || !xid) {
         return;
     }
-    g_echoDirty = true;  // m37: worn socket state may have changed -> recompute Echo cache next tick
+    if (a_base->Is(RE::FormType::Armor)) {  // m37: only armor rebuilds can affect Echo-share
+        g_echoDirty = true;                 // worn socket state may have changed -> recompute next tick
+    }
     const std::uint16_t uid = xid->uniqueID;
     const bool          isArmor = a_base->Is(RE::FormType::Armor);
 
@@ -7009,23 +7022,22 @@ EchoPayload ComputeEchoPayload(RE::Actor* a_actor) {
 // m37: Echo (armor half) — BIDIRECTIONAL follower-share aura. Any group member
 // (player OR a nearby teammate) wearing a linked Echo-armor gem shares that gem's
 // effect to every OTHER member — so a follower's Echo now benefits the player, not
-// just the reverse. SELF-EXPIRING: one persistent ESP spell (MEO_EchoShare, real
-// FormID) whose single effect is rewritten per cast; no permanent abilities, so a
-// broken pairing / removed MEO simply lapses within the 12s duration.
+// just the reverse. Delivered as a CONSTANT ABILITY via AddSpell (m37b): a
+// constant-effect/self armor effect (FortifyCarry etc.) can NOT be applied by a
+// fire-and-forget cast — only as an ability. The DLL owns the lifecycle: it
+// RemoveSpells the share when the pairing breaks / the recipient stops receiving,
+// and re-applies on change. The ability references the real MEO_EchoShare form, so
+// saves never hold a runtime form.
 //   EFFICIENCY (marth): the expensive inventory scan runs ONLY when g_echoDirty is
 // set (a socket/equip change), then the per-source payloads are cached; steady-state
-// ticks just re-broadcast the cache — no per-tick scanning.
-//   PHASE A LIMIT: the single shared effect carries ONE share per recipient, so a
-// recipient gets the STRONGEST incoming Echo share. Stacking multiple distinct
-// shares on one actor needs N effect-slots authored in the ESP spell (Phase B).
+// ticks just re-apply on change — no per-tick scanning, no churn.
+//   PHASE A LIMIT: one shared ability carries ONE share per recipient, so a recipient
+// gets the STRONGEST incoming Echo share. Stacking multiple distinct shares on one
+// actor needs N effect-slots authored in the ESP spell (Phase B).
 void EchoFollowerShareTick() {
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* lists = RE::ProcessLists::GetSingleton();
     if (!player || !g_echoShareSpell || g_echoShareSpell->effects.size() == 0 || !lists) {
-        return;
-    }
-    auto* caster = player->GetMagicCaster(RE::MagicSystem::CastingSource::kInstant);
-    if (!caster) {
         return;
     }
     // The nearby group: player + loaded, living teammates. Both share SOURCES and
@@ -7081,7 +7093,12 @@ void EchoFollowerShareTick() {
     if (!eff) {
         return;
     }
-    // Each recipient gets the STRONGEST Echo share from any OTHER group member.
+    // Deliver each recipient the STRONGEST incoming Echo share as a CONSTANT ABILITY
+    // (AddSpell) — a constant-effect/self armor effect (e.g. FortifyCarry) can NOT be
+    // delivered by a fire-and-forget cast, only as an ability. Re-apply only when the
+    // recipient's payload actually changes, so there's no per-tick churn. g_echoApplied
+    // tracks what each recipient currently holds. HasSpell is the source of truth so a
+    // baked ability from a prior session is cleaned even with an empty g_echoApplied.
     for (auto* tgt : group) {
         const EchoPayload* best = nullptr;
         for (auto* src : group) {
@@ -7096,25 +7113,36 @@ void EchoFollowerShareTick() {
                 best = &it->second;
             }
         }
-        // Clear any prior share on this recipient so it's always exactly 1× / fresh;
-        // if the source stopped, this leaves the recipient with nothing (correct).
-        if (auto* mt = tgt->AsMagicTarget()) {
-            if (auto* elist = mt->GetActiveEffectList()) {
-                for (auto* ae : *elist) {
-                    if (ae && ae->spell == g_echoShareSpell) {
-                        ae->Dispel(true);
-                    }
-                }
-            }
-        }
+        const RE::FormID tid = tgt->GetFormID();
+        auto             prev = g_echoApplied.find(tid);
         if (!best) {
+            // No incoming share — strip any ability we (or a prior session) applied.
+            if (tgt->HasSpell(g_echoShareSpell)) {
+                tgt->RemoveSpell(g_echoShareSpell);
+                spdlog::info("[echo-share] cleared -> {:08X}", tid);
+            }
+            g_echoApplied.erase(tid);
             continue;
+        }
+        const bool unchanged = prev != g_echoApplied.end() && prev->second.mgef == best->mgef &&
+                               prev->second.mag == best->mag && tgt->HasSpell(g_echoShareSpell);
+        if (unchanged) {
+            continue;  // already carrying exactly this share
+        }
+        // (Re)apply: remove the stale ability, rewrite the shared ability's single effect
+        // to this recipient's payload, then add. AddSpell applies the constant effect
+        // immediately from the current form, so sequential per-recipient rewrites capture
+        // correctly (one shared spell => one share per recipient; multi-stack = Phase B).
+        if (tgt->HasSpell(g_echoShareSpell)) {
+            tgt->RemoveSpell(g_echoShareSpell);
         }
         eff->baseEffect = best->mgef;
         eff->effectItem.magnitude = best->mag;
         eff->effectItem.area = 0;
-        eff->effectItem.duration = 12;  // seconds; > heartbeat so recipients stay buffed
-        caster->CastSpellImmediate(g_echoShareSpell, false, tgt, 1.0f, false, 0.0f, player);
+        eff->effectItem.duration = 0;  // constant ability — duration ignored
+        tgt->AddSpell(g_echoShareSpell);
+        g_echoApplied[tid] = *best;
+        spdlog::info("[echo-share] applied '{}' mag={:.1f} -> {:08X}", best->gid, best->mag, tid);
     }
 }
 

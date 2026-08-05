@@ -261,7 +261,16 @@ The `- 4` offset on the callback message is the trap everyone hits.
   socketing uses) — which is IDEMPOTENT: unequip drops ALL old abilities, equip
   installs exactly one from the current extra, so repeated passes can't
   accumulate. Still anchored to Loading-Menu close (+5s/+12s) with a long
-  fallback for menu-less loads; the one-frame blink hides behind the post-load fade. GOTCHA: `d3d11.h` pulls `wingdi.h` which `#define`s
+  fallback for menu-less loads; the one-frame blink hides behind the post-load fade.
+- **`AddSpell`(ability) vs `CastSpellImmediate` for a cross-actor effect (m37b).**
+  A constant-effect/self MGEF (armor Fortify X) applies to another actor ONLY as an
+  ability: `AddSpell` applies its constant effect, `RemoveSpell` reverses it. A
+  fire-and-forget `CastSpellImmediate` of a constant-self MGEF delivers *nothing*
+  (MEO's armor Echo-share cast it for months and it never landed — v1.0.9a). Whether
+  an ability's value-modifier snapshots AV+magnitude at a *synchronous* effect-start
+  inside `AddSpell` (vs deferred to next Update) decides whether per-target rewrites
+  of ONE shared effect form cross-talk between recipients — treat as needs-in-game
+  validation, not assumed. GOTCHA: `d3d11.h` pulls `wingdi.h` which `#define`s
   `GetObject`→`GetObjectW`, hijacking `BGSDefaultObjectManager::GetObject<T>()`
   — `#undef GetObject` after the D3D includes.
   SETTLED (2026-07-08, m17b AV probe): the kLeft/RightItemCharge AV-gate

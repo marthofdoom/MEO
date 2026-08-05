@@ -18,12 +18,21 @@ the portable "never again" digest for sibling projects.
    deliberate, scoped, reversible:
    - the windowed SNDR `staticAttenuation` mute (:262-360) — form data, saved
      originals restored exactly, single-writer restore;
-   - the Echo share-spell effect rewrite (`EchoFollowerShareTick`) — ONE
-     persistent ESP spell's single effect, rewritten **per recipient** then cast
-     immediately (m37 bidirectional aura), self-expiring (12s), so no actor's save
-     ever references a runtime form. Correctness relies on `CastSpellImmediate`
-     being synchronous (each cast captures the then-current effect values before
-     the next recipient overwrites them).
+   - the Echo share-spell **retype + effect rewrite** (`ResolveCatalog` +
+     `EchoFollowerShareTick`) — ONE persistent DLL-owned ESP spell (`MEO_EchoShare`
+     0x809). At load it is retyped to a constant-effect/self **ability**
+     (`spellType=kAbility`, `castingType=kConstantEffect`, `delivery=kSelf`): a
+     constant-self armor MGEF (FortifyCarry etc.) will **not** deliver via a
+     fire-and-forget cast — only as an ability (m37b; the old cast silently never
+     applied, so armor Echo-share had never worked). Its single effect is rewritten
+     **per recipient**, delivered by `AddSpell` / reversed by `RemoveSpell`; the DLL
+     owns the lifecycle (`g_echoApplied` in-memory, rebuilt from `HasSpell` on load,
+     so no save holds a runtime form). The retype MUST precede the first `AddSpell`
+     — it is in `ResolveCatalog`, before `StartEchoHeartbeat`. **Phase-A hazard:**
+     all simultaneously-applied recipients share the single rewritten `effects[0]`,
+     so two *distinct* live payloads (bidirectional, different gems) collapse to the
+     last-written effect on reload; correct multi-payload needs N ESP effect-slots
+     (Phase B). Single live payload = safe.
    - **Echo cache-dirty invariant (m37):** any change to *who wears a linked
      Echo gem* (or its magnitude) MUST set `g_echoDirty` so the aura cache
      recomputes. Covered: `RebuildInstanceEnchant` (socket/unsocket/level-up/
