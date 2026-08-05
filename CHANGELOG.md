@@ -4,7 +4,7 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
-## v1.0.8 — fix: two-handed follower weapons went invisible (equip-slot mismatch, m37) (2026-07-31)
+## v1.0.8 — fix: two-handed follower weapons went invisible + no equip-cycle in furniture (2026-08-04)
 
 `EquipCycleWorn` (the worn-socket re-equip cycle) forced an explicit right/left HAND
 slot derived from the worn flag. A bow/crossbow/greatsword/2h-axe is worn as `kWorn`
@@ -26,6 +26,19 @@ the fault was entirely MEO's.
   FULLY (ExtraWorn + mesh); one-handers keep the hand-preserving pick (dual-wield).
   The every-load `ReapplyFollowerSockets` pass then **heals already-broken saves** by
   re-cycling correctly on the next load. See ENGINE_NOTES §13.
+
+**Also in v1.0.8 — no equip-cycle while in/entering furniture (emergency fix).**
+
+- **Fixes a crash/eject when entering seated furniture** (chairs, beds, lean/crouch
+  markers). If you carried a socketed item, MEO's load/refresh pass could run a
+  worn-gear re-equip cycle during the furniture-enter animation. Seated furniture uses
+  a synchronized enter→loop hand-off, and an equip event mid-transition aborts it — you
+  played the sit-down idle then were instantly ejected. Because the pass is gated on 3D
+  readiness it re-fired on every 3D rebuild, so resurrect / disable-enable never fixed
+  it and the save looked identical. MEO now skips the cycle whenever the actor is in or
+  entering any sit/lean/sleep state and refreshes the effect once standing / on the next
+  load. Standing crafting stations (forge/enchanter) are idle-only and unaffected, so
+  socketing at a station still works.
 
 ## v1.0.7 — Phase 3: auto-minting, follower gems & socketing (2026-07-30)
 

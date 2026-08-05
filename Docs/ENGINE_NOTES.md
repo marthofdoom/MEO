@@ -169,6 +169,22 @@ The `- 4` offset on the callback message is the trap everyone hits.
   unread" log line was a comforting falsehood.
 - One-time grants (starter kits): only consume the persisted flag when the
   grant actually succeeded — a missing ESP must retry next load, not burn it.
+- **NEVER equip-cycle an actor who is IN or ENTERING furniture** (marth's root-cause,
+  2026-07-30, v1.0.7a). Seated/lean/crouch furniture uses a SYNCHRONIZED enter-loop
+  transition (`BSSynchronizedClipGenerator`) that needs the actor to hold a stable
+  anim-graph state through the sit-down → seated-loop hand-off. An equip/unequip event
+  landing in that window forces a graph state change that ABORTS the transition: the
+  actor plays the full sit-down idle then is INSTANTLY EJECTED. Standing crafting
+  stations (forge/enchanter) are idle-only (sit-state `kNormal`) with no seated
+  hand-off, so a cycle there is harmless. Guard: skip the equip cycle when
+  `actor->AsActorState()->GetSitSleepState() != kNormal`. Two traps that made this
+  hard to diagnose: MEO's 3D/drawn-gated load-refresh re-fires the cycle on EVERY 3D
+  rebuild (so resurrect / disable-enable never cleared it — they rebuild 3D and
+  re-trigger the pass), and it's produced LIVE each session (working vs broken saves
+  are byte-identical — a save diff finds nothing). The refresh sweeps INVENTORY, not
+  just worn slots, so un-equipping the offending item doesn't stop it. Deeper fixes
+  (future): make the refresh idempotent (don't cycle when socket state is unchanged)
+  and prefer refreshing the ability WITHOUT a full unequip/re-equip.
 - **Equip/unequip dispatch is SYNCHRONOUS into every registered sink** —
   never cycle equipment while iterating a live `entryList`/`extraLists`
   (`BSSimpleList`); snapshot targets first, re-find records by key, hold
