@@ -4654,7 +4654,14 @@ namespace menuhook {
                 if (haveTarget) {
                     const std::uint8_t slot = static_cast<std::uint8_t>(g_menu.selSlot);
                     ImGui::Indent(28.0f);
-                    if (ImGui::SmallButton("Unsocket")) {
+                    // m37e: Unsocket + Destroy are gamepad-navigable rows too (own gr index,
+                    // highlighted via ButtonActive, activated by A OR click).
+                    const bool uSel = gemsActive && g_gemSel == gr;
+                    if (uSel) { ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive)); }
+                    const bool uClick = ImGui::SmallButton("Unsocket");
+                    if (uSel) { ImGui::PopStyleColor(); if (navMoved) { ImGui::SetScrollHereY(0.5f); } }
+                    ++gr;
+                    if (uClick || (uSel && gemActivate)) {
                         g_destroyArm = 0;
                         g_menu.selSlot = -1;
                         QueueMenuTask([sel, slot, activeOwner]() {
@@ -4665,10 +4672,14 @@ namespace menuhook {
                     // Destroy stays the menu's one irreversible act — 2-click.
                     const InstKey key = MakeKey(sel.base, sel.uid, slot);
                     const bool    armed = g_destroyArm.load() == key;
-                    if (armed) {
-                        ImGui::PushStyleColor(ImGuiCol_Text, skin.danger);
-                    }
-                    if (ImGui::SmallButton(armed ? "Confirm destroy" : "Destroy")) {
+                    const bool    dSel = gemsActive && g_gemSel == gr;
+                    if (armed) { ImGui::PushStyleColor(ImGuiCol_Text, skin.danger); }
+                    if (dSel)  { ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive)); }
+                    const bool dClick = ImGui::SmallButton(armed ? "Confirm destroy" : "Destroy");
+                    if (dSel)  { ImGui::PopStyleColor(); if (navMoved) { ImGui::SetScrollHereY(0.5f); } }
+                    if (armed) { ImGui::PopStyleColor(); }
+                    ++gr;
+                    if (dClick || (dSel && gemActivate)) {
                         if (armed) {
                             g_destroyArm = 0;
                             g_menu.selSlot = -1;
@@ -4676,9 +4687,6 @@ namespace menuhook {
                         } else {
                             g_destroyArm = key;
                         }
-                    }
-                    if (armed) {
-                        ImGui::PopStyleColor();
                     }
                     ImGui::Unindent(28.0f);
                 }
