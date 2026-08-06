@@ -4,56 +4,39 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
-## v1.0.9 — Echo becomes a bidirectional aura (2026-08-05)
+## v1.0.9 — Echo bidirectional aura + follower-gear fixes (2026-08-05)
 
-- **A follower's Echo now benefits you, not just the reverse.** Before, the Echo
-  armor-share flowed only from the *player's* linked Echo gem out to followers. Now any
-  member of your nearby group — you *or* a follower — wearing a linked Echo + effect gem
-  shares that effect to every other member, the player included. So Auri wearing Echo +
-  Fortify Carry raises *your* carry weight (and vice-versa).
+Supersedes v1.0.7; folds in the interim v1.0.8 fixes (never separately released).
+
+**Echo becomes a bidirectional aura.** A follower's Echo now benefits you, not just the
+reverse. Any member of your nearby group — you *or* a follower — wearing a linked Echo +
+effect gem shares that effect to every other member, the player included. So Auri wearing
+Echo + Fortify Carry raises *your* carry weight (and vice-versa).
+
 - **Efficient by design:** the shared effect is recomputed only when a socket or equip
   actually changes, then cached; the 8-second heartbeat just re-applies the cache — no
   per-tick inventory scanning.
-- Armor shares (Fortify X) are delivered as a **constant ability** (`AddSpell`), the
-  only way a constant-self effect applies to another actor. The earlier design *cast*
-  the effect, which silently never applied for armor gems — so armor Echo-share had
-  never actually worked; this makes it real.
-- Known limit (to be lifted later): each recipient currently receives the single
+- Armor shares (Fortify X) are delivered as a **constant ability**, the only way a
+  constant-self effect applies to another actor.
+- Known limit (lifted in a later update): each recipient currently receives the single
   *strongest* incoming Echo share. Stacking several different shares on one character
-  needs a follow-up change to the shared-effect spell (extra effect slots in the ESP).
+  needs extra effect slots in the shared-effect spell.
 
-## v1.0.8 — fix: two-handed follower weapons went invisible + no equip-cycle in furniture (2026-08-04)
+**Fix — two-handed follower weapons went invisible.** `EquipCycleWorn` forced an explicit
+right/left HAND slot from the worn flag. A bow/crossbow/greatsword/2h-axe is worn as
+`kWorn`, so it was shoved into `kRightHandEquip` — a slot it can't occupy — and the
+re-equip skipped the `ExtraWorn` stamp + 3D/biped attach. The weapon **fired** but was
+**invisible** and showed **unequipped**, worst on bows, and `ReapplyFollowerSockets`
+re-baked it every load. Surfaced via MFO's follower gem-transfer (MFO audited clean).
+Fixed: two-handers pass `slot=nullptr` so the engine resolves their own BothHands slot and
+attaches the mesh; one-handers keep the hand-preserving pick. The every-load reapply now
+**heals already-broken saves**. See ENGINE_NOTES §13.
 
-`EquipCycleWorn` (the worn-socket re-equip cycle) forced an explicit right/left HAND
-slot derived from the worn flag. A bow/crossbow/greatsword/2h-axe is worn as `kWorn`
-(never `kWornLeft`), so it was shoved into `kRightHandEquip` — a slot the weapon
-can't occupy. The `applyNow` un/re-equip then set only the process COMBAT slot and
-SKIPPED the `ExtraWorn` stamp + the 3D/biped attach. The weapon still **fired** but
-was **invisible** and showed **unequipped** in the menu. And because
-`ReapplyFollowerSockets` (m36, the follower socket re-apply) re-runs this cycle on
-**every load**, it re-corrupted after any manual re-equip and baked into saves.
-Worst on bows (deterministic); one-hand weapons got their correct slot, so were
-milder/unaffected.
-
-Surfaced via MFO's follower gem-transfer feeding this path on looted weapon swaps
-(an MFO follower's bow **and** mace showed it); MFO's native code was audited clean —
-the fault was entirely MEO's.
-
-- `EquipCycleWorn` now gives every weapon its PROPER slot: two-handers pass
-  `slot=nullptr` so the engine resolves their own BothHands slot and equips them
-  FULLY (ExtraWorn + mesh); one-handers keep the hand-preserving pick (dual-wield).
-  The every-load `ReapplyFollowerSockets` pass then **heals already-broken saves** by
-  re-cycling correctly on the next load. See ENGINE_NOTES §13.
-
-**Also in v1.0.8 — defensive: don't equip-cycle while in/entering furniture.**
-
-- MEO no longer runs a worn-gear un/re-equip cycle while an actor is in or entering any
-  sit/lean/sleep state. Equip events emit anim-graph state changes, and seated furniture
-  uses a synchronized enter→loop hand-off (`BSSynchronizedClipGenerator`) that such a
-  change could disturb, so MEO simply stays out of that window. Purely defensive
-  hardening — the worn ability refreshes on the next cycle once standing / on the next
-  load, and standing crafting stations (forge/enchanter, sit-state normal) are
-  unaffected, so socketing at a station still works.
+**Defensive — no equip-cycle while in/entering furniture.** MEO no longer runs a worn-gear
+un/re-equip cycle while an actor is in or entering any sit/lean/sleep state; seated
+furniture uses a synchronized enter→loop hand-off (`BSSynchronizedClipGenerator`) an equip
+event could disturb. Purely defensive — the worn ability refreshes on the next cycle, and
+standing crafting stations (forge/enchanter) are unaffected.
 
 ## v1.0.7 — Phase 3: auto-minting, follower gems & socketing (2026-07-30)
 
