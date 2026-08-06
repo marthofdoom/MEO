@@ -253,4 +253,8 @@ sibling project can audit itself against the list in one sitting.
   distinct live payloads at once.** Each applied ability reads the *live* shared
   `effects[0]`, so the last write wins for all of them (and a reload re-reads the
   last-written effect for every baked copy). Fine only when ≤1 payload is live per
-  tick; otherwise author N effect-slots (Phase B).
+  tick; otherwise give each recipient its own form. RESOLVED v1.0.10/m37c: a POOL of
+  dedicated ability forms (`kEchoPoolBaseID` 0x820.., N effect-slots each), one per
+  recipient assigned via `g_echoPoolIdx`, gives each recipient its own form — distinct
+  shares no longer collide and `RemoveSpell` reverses only that recipient's effects.
+  The Phase-A last-write-wins / wrong-AV-revert hazard is retired.

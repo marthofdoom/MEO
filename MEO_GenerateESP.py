@@ -45,7 +45,10 @@ FID_MARKER_CONTACT = OWN | 0x800   # weapon effects (fire-and-forget, contact)
 FID_MARKER_SELF    = OWN | 0x801   # armor effects (constant, self)
 FID_POUCH_MGEF     = OWN | 0x802
 FID_POUCH_SPELL    = OWN | 0x803
-FID_ECHO_SPELL     = OWN | 0x809   # m36: Echo armor follower-share (DLL swaps its effect at runtime); FROZEN
+FID_ECHO_SPELL     = OWN | 0x809   # m36: Echo armor follower-share (legacy single spell; kept for FormID stability + v1.0.9a cleanup); FROZEN
+FID_ECHOPOOL_BASE  = OWN | 0x820   # m37c: Echo share ability POOL, one dedicated spell per recipient (0x820..); FROZEN
+ECHO_POOL_SPELLS   = 8             # max simultaneous recipients (player + nearby teammates)
+ECHO_POOL_EFFECTS  = 4             # max distinct Echo shares one recipient can carry at once
 FID_STARTUP_QUEST  = OWN | 0x804
 FID_FLST_ALL       = OWN | 0x805
 FID_FLST_WEAPON    = OWN | 0x806
@@ -301,6 +304,26 @@ def make_echo_spell():
     body+=subrec('DESC',zstr(""))
     body+=subrec('SPIT',spit_ff_target_actor())+subrec('EFID',struct.pack('<I',FID_MARKER_SELF))+subrec('EFIT',struct.pack('<fII',0.0,0,12))
     return record('SPEL',FID_ECHO_SPELL,0,body)
+def spit_ability():
+    # SPIT: cost 0, flags 0, type 4 (Ability), chargeTime 0, castType 0 (Constant
+    # Effect), delivery 0 (Self), castDuration 0, range 0, perk 0. The DLL rewrites
+    # each effect (MGEF + magnitude) per recipient and AddSpell/RemoveSpells the pool
+    # member to deliver constant-self armor shares (m37c Phase B). Retyped at load too.
+    return struct.pack('<fIIfIIffI',0.0,0,4,0.0,0,0,0.0,0.0,0)
+def make_echo_pool():
+    # A POOL of dedicated ability spells — one per recipient — each with
+    # ECHO_POOL_EFFECTS placeholder effect slots (marker-self MGEF, mag 0), rewritten
+    # at runtime. Distinct forms per recipient => no cross-talk / removal ambiguity
+    # when several recipients carry different shares (Phase B, marth).
+    recs=b''
+    for s in range(ECHO_POOL_SPELLS):
+        body =subrec('EDID',zstr(f"MEO_EchoShare{s}"))+subrec('OBND',b'\x00'*12)+subrec('FULL',zstr("Echo"))
+        body+=subrec('MDOB',struct.pack('<I',0))+subrec('ETYP',struct.pack('<I',FREF_EQUP_VOICE))
+        body+=subrec('DESC',zstr(""))+subrec('SPIT',spit_ability())
+        for _ in range(ECHO_POOL_EFFECTS):
+            body+=subrec('EFID',struct.pack('<I',FID_MARKER_SELF))+subrec('EFIT',struct.pack('<fII',0.0,0,0))
+        recs+=record('SPEL',FID_ECHOPOOL_BASE+s,0,body)
+    return recs
 def make_spel():
     body =subrec('EDID',zstr("MEO_GemPouchPower"))+subrec('OBND',b'\x00'*12)+subrec('FULL',zstr("Gem Pouch"))
     body+=subrec('MDOB',struct.pack('<I',0))+subrec('ETYP',struct.pack('<I',FREF_EQUP_VOICE))
@@ -547,7 +570,7 @@ def main():
     esp.write(make_mgefs())
     esp.write(group('MISC',misc_bytes))
     esp.write(make_cont())
-    esp.write(group('SPEL',make_spel()+make_echo_spell()))
+    esp.write(group('SPEL',make_spel()+make_echo_spell()+make_echo_pool()))
     flsts=(make_flst(FID_FLST_ALL,"MEO_AllGems",weapon_fids+armor_fids)
           +make_flst(FID_FLST_WEAPON,"MEO_WeaponGems",weapon_fids)
           +make_flst(FID_FLST_ARMOR,"MEO_ArmorGems",armor_fids))
@@ -561,7 +584,7 @@ def main():
     write_mcm_files(out_dir)
     ngems=len(CATALOG); nmisc=len(weapon_fids)+len(armor_fids)
     print(f"Written: {out_dir}/MEO.esp ({len(data):,} bytes)")
-    print(f"  MGEF x3  (marker contact+self, pouch)   CONT x1  SPEL x1  QUST x2 (startup+MCM)  FLST x3")
+    print(f"  MGEF x3  (marker contact+self, pouch)   CONT x1  SPEL x{2+ECHO_POOL_SPELLS} (pouch+echo+{ECHO_POOL_SPELLS}-pool)  QUST x2 (startup+MCM)  FLST x3")
     print(f"  MCM: {out_dir}/MCM/Config/MEO/config.json + {out_dir}/MCM/Settings/MEO.ini ({len(MCM_TUNABLES)} tunables)")
     print(f"  MISC x{nmisc}  ({ngems} gems: {len(weapon_fids)} weapon-domain + {len(armor_fids)} armor-domain forms)")
     print(f"  Reserved pool: {POOL_SLOTS} slots x {POOL_LEVELS} = {POOL_SLOTS*POOL_LEVELS} MISC "

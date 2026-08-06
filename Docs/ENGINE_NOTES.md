@@ -269,8 +269,12 @@ The `- 4` offset on the callback message is the trap everyone hits.
   (MEO's armor Echo-share cast it for months and it never landed — v1.0.9a). Whether
   an ability's value-modifier snapshots AV+magnitude at a *synchronous* effect-start
   inside `AddSpell` (vs deferred to next Update) decides whether per-target rewrites
-  of ONE shared effect form cross-talk between recipients — treat as needs-in-game
-  validation, not assumed. GOTCHA: `d3d11.h` pulls `wingdi.h` which `#define`s
+  of ONE shared effect form cross-talk between recipients. Cross-*recipient* talk is
+  now eliminated structurally (m37c: a POOL of dedicated ability forms, one per
+  recipient — see INVARIANTS §1). The remaining open item: whether a single `AddSpell`
+  of an ability carrying MULTIPLE constant-self value-modifier effects applies all N
+  synchronously — treat as needs-in-game validation (the two-different-gems-on-one-
+  recipient test), not assumed. GOTCHA: `d3d11.h` pulls `wingdi.h` which `#define`s
   `GetObject`→`GetObjectW`, hijacking `BGSDefaultObjectManager::GetObject<T>()`
   — `#undef GetObject` after the D3D includes.
   SETTLED (2026-07-08, m17b AV probe): the kLeft/RightItemCharge AV-gate

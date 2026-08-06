@@ -28,11 +28,15 @@ the portable "never again" digest for sibling projects.
      **per recipient**, delivered by `AddSpell` / reversed by `RemoveSpell`; the DLL
      owns the lifecycle (`g_echoApplied` in-memory, rebuilt from `HasSpell` on load,
      so no save holds a runtime form). The retype MUST precede the first `AddSpell`
-     — it is in `ResolveCatalog`, before `StartEchoHeartbeat`. **Phase-A hazard:**
-     all simultaneously-applied recipients share the single rewritten `effects[0]`,
-     so two *distinct* live payloads (bidirectional, different gems) collapse to the
-     last-written effect on reload; correct multi-payload needs N ESP effect-slots
-     (Phase B). Single live payload = safe.
+     — it is in `ResolveCatalog`, before `StartEchoHeartbeat`. **RESOLVED in Phase B
+     (m37c):** the single shared spell was replaced by a POOL of dedicated ability
+     spells (`kEchoPoolBaseID` 0x820.., `kEchoPoolSize` members, `kEchoPoolEffects`
+     slots each) — every recipient gets its OWN form, so distinct shares never collide
+     and `RemoveSpell` reverses only that recipient's own effects (no wrong-AV revert).
+     `g_echoPoolIdx` assigns a stable slot per recipient; `g_echoApplied` holds a
+     share-set signature so re-apply happens only on change. The pool spells are also
+     retyped to ability/constant/self at load. Legacy 0x809 kept for FormID stability
+     + one-time cleanup of any v1.0.9a-baked ability.
    - **Echo cache-dirty invariant (m37):** any change to *who wears a linked
      Echo gem* (or its magnitude) MUST set `g_echoDirty` so the aura cache
      recomputes. Covered: `RebuildInstanceEnchant` (socket/unsocket/level-up/

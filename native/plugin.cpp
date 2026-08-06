@@ -160,12 +160,16 @@ constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPl
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.9";  // Echo bidirectional aura + two-hander/furniture fixes (public cut)
+constexpr const char* kMEOVersion = "1.0.10";  // Phase B: Echo share ability pool (multi-gem stacking)
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
 constexpr RE::FormID  kPouchSpellID = 0x803;  // MEO.esp-local
-constexpr RE::FormID  kEchoShareSpellID = 0x809;  // m36: Echo armor follower-share (effect swapped at runtime)
+constexpr RE::FormID  kEchoShareSpellID = 0x809;  // m36: legacy single Echo share (kept for v1.0.9a cleanup)
+constexpr RE::FormID  kMarkerSelfMgefID = 0x801;  // inert marker MGEF (filler for unused pool slots)
+constexpr RE::FormID  kEchoPoolBaseID   = 0x820;  // m37c: Echo share ability POOL base (0x820..)
+constexpr int         kEchoPoolSize     = 8;      // max simultaneous recipients (player + teammates)
+constexpr int         kEchoPoolEffects  = 4;      // max distinct shares one recipient can carry
 
 // m21 recipe riders; m22: rider set comes from the per-list calibration file
 // when it names the family (installer derives it from the list's own generic
@@ -206,7 +210,9 @@ std::vector<int>                                  g_lootableGems;  // weapon-dom
 std::vector<int>                                  g_corpseGems;    // weapon+armor, corpse drops
 std::vector<int>                                  g_supportGems;   // m36h: support gems (boss-loot pool)
 RE::SpellItem*                                    g_pouchSpell = nullptr;
-RE::SpellItem*                                    g_echoShareSpell = nullptr;  // m36: Echo armor follower-share
+RE::SpellItem*                                    g_echoShareSpell = nullptr;  // m36: legacy single share (cleanup only)
+std::array<RE::SpellItem*, kEchoPoolSize>         g_echoPool{};  // m37c: Echo share ability pool (one per recipient)
+RE::EffectSetting*                                g_markerSelfMgef = nullptr;  // m37c: inert filler for unused pool slots
 
 // ── m19: themed NPC spawn pools (DESIGN §3 "Post-strip gem economy") ──
 // Enemy archetype × gem theme weights build per-archetype weighted pools
@@ -1090,6 +1096,20 @@ void ResolveCatalog() {
         g_echoShareSpell->data.castingType = RE::MagicSystem::CastingType::kConstantEffect;
         g_echoShareSpell->data.delivery    = RE::MagicSystem::Delivery::kSelf;
     }
+    // m37c (Phase B): the Echo share ability POOL — one dedicated spell per recipient
+    // so distinct shares never collide on one form. Retype each to a constant-effect
+    // self ability at load (before StartEchoHeartbeat), same as the legacy spell.
+    for (int i = 0; i < kEchoPoolSize; ++i) {
+        g_echoPool[i] = dh->LookupForm<RE::SpellItem>(kEchoPoolBaseID + i, kPluginName);
+        if (g_echoPool[i]) {
+            g_echoPool[i]->data.spellType   = RE::MagicSystem::SpellType::kAbility;
+            g_echoPool[i]->data.castingType = RE::MagicSystem::CastingType::kConstantEffect;
+            g_echoPool[i]->data.delivery    = RE::MagicSystem::Delivery::kSelf;
+        } else {
+            spdlog::warn("Echo pool spell {:X} missing — regenerate MEO.esp (Phase B pool)", kEchoPoolBaseID + i);
+        }
+    }
+    g_markerSelfMgef = dh->LookupForm<RE::EffectSetting>(kMarkerSelfMgefID, kPluginName);  // m37c filler
     g_pouchSpell = dh->LookupForm<RE::SpellItem>(kPouchSpellID, kPluginName);
     if (!g_pouchSpell) {
         spdlog::error("Gem Pouch power not found in {} — is the ESP enabled?", kPluginName);
@@ -1807,7 +1827,8 @@ void SafeRemoveAllByType(RE::ExtraDataList* a_xList, RE::ExtraDataType a_type) {
 // (marth: don't scan every tick — scan when sockets switch).
 struct EchoPayload { RE::EffectSetting* mgef = nullptr; float mag = 0.0f; std::string_view gid; };
 std::unordered_map<RE::FormID, EchoPayload> g_echoPayloads;  // source actor FormID -> shared effect (main-thread only)
-std::unordered_map<RE::FormID, EchoPayload> g_echoApplied;   // recipient FormID -> currently-applied share (AddSpell state, main-thread only)
+std::unordered_map<RE::FormID, std::uint64_t> g_echoApplied;  // recipient FormID -> applied share-set signature (main-thread only)
+std::unordered_map<RE::FormID, int>           g_echoPoolIdx;  // recipient FormID -> pool slot index (stable while receiving)
 std::atomic<bool> g_echoDirty{true};  // set on socket/equip change (any thread); heartbeat capture-and-clears
 
 void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList,
@@ -7031,13 +7052,15 @@ EchoPayload ComputeEchoPayload(RE::Actor* a_actor) {
 //   EFFICIENCY (marth): the expensive inventory scan runs ONLY when g_echoDirty is
 // set (a socket/equip change), then the per-source payloads are cached; steady-state
 // ticks just re-apply on change — no per-tick scanning, no churn.
-//   PHASE A LIMIT: one shared ability carries ONE share per recipient, so a recipient
-// gets the STRONGEST incoming Echo share. Stacking multiple distinct shares on one
-// actor needs N effect-slots authored in the ESP spell (Phase B).
+//   PHASE B (m37c): a POOL of dedicated ability spells (0x820.., one per recipient,
+// N effect slots each) delivers ALL of a recipient's distinct shares at once. Distinct
+// forms per recipient mean RemoveSpell reverses exactly that recipient's own effects —
+// no cross-talk or wrong-AV reversal. g_echoPoolIdx assigns a stable slot per recipient;
+// g_echoApplied holds a signature of the applied share-set so we re-apply only on change.
 void EchoFollowerShareTick() {
     auto* player = RE::PlayerCharacter::GetSingleton();
     auto* lists = RE::ProcessLists::GetSingleton();
-    if (!player || !g_echoShareSpell || g_echoShareSpell->effects.size() == 0 || !lists) {
+    if (!player || !lists) {  // pool delivery no longer depends on the legacy 0x809 spell
         return;
     }
     // The nearby group: player + loaded, living teammates. Both share SOURCES and
@@ -7089,18 +7112,19 @@ void EchoFollowerShareTick() {
         spdlog::info("[echo-share] cache recompute — {} holder(s) [{}] in a group of {}",
                      g_echoPayloads.size(), holders, group.size());
     }
-    auto* eff = g_echoShareSpell->effects[0];
-    if (!eff) {
-        return;
-    }
-    // Deliver each recipient the STRONGEST incoming Echo share as a CONSTANT ABILITY
-    // (AddSpell) — a constant-effect/self armor effect (e.g. FortifyCarry) can NOT be
-    // delivered by a fire-and-forget cast, only as an ability. Re-apply only when the
-    // recipient's payload actually changes, so there's no per-tick churn. g_echoApplied
-    // tracks what each recipient currently holds. HasSpell is the source of truth so a
-    // baked ability from a prior session is cleaned even with an empty g_echoApplied.
+    // Deliver ALL distinct incoming Echo shares to each recipient as constant abilities
+    // (Phase B, m37c). Each recipient gets a DEDICATED pool spell (distinct form => no
+    // cross-recipient cross-talk or removal ambiguity), whose up-to-N effect slots carry
+    // its shares. Re-apply only when the recipient's share SET changes (signature). A
+    // legacy 0x809 ability baked by v1.0.9a is stripped on sight.
     for (auto* tgt : group) {
-        const EchoPayload* best = nullptr;
+        const RE::FormID tid = tgt->GetFormID();
+        if (g_echoShareSpell && tgt->HasSpell(g_echoShareSpell)) {
+            tgt->RemoveSpell(g_echoShareSpell);  // retire the pre-pool single spell
+        }
+        // Gather this recipient's DISTINCT incoming shares (dedup by MGEF, keep the
+        // strongest of a duplicate), ordered by MGEF for a stable signature, capped.
+        std::vector<EchoPayload> shares;
         for (auto* src : group) {
             if (src == tgt) {
                 continue;
@@ -7109,40 +7133,119 @@ void EchoFollowerShareTick() {
             if (it == g_echoPayloads.end()) {
                 continue;
             }
-            if (!best || it->second.mag > best->mag) {
-                best = &it->second;
+            const EchoPayload& p = it->second;
+            bool merged = false;
+            for (auto& e : shares) {
+                if (e.mgef == p.mgef) {  // same effect from two holders -> keep strongest
+                    if (p.mag > e.mag) {
+                        e = p;
+                    }
+                    merged = true;
+                    break;
+                }
+            }
+            if (!merged) {
+                shares.push_back(p);
             }
         }
-        const RE::FormID tid = tgt->GetFormID();
-        auto             prev = g_echoApplied.find(tid);
-        if (!best) {
-            // No incoming share — strip any ability we (or a prior session) applied.
-            if (tgt->HasSpell(g_echoShareSpell)) {
-                tgt->RemoveSpell(g_echoShareSpell);
+        std::sort(shares.begin(), shares.end(),
+                  [](const EchoPayload& a, const EchoPayload& b) { return a.mgef < b.mgef; });
+        if (static_cast<int>(shares.size()) > kEchoPoolEffects) {
+            shares.resize(kEchoPoolEffects);  // cap (extremely rare: >N distinct shares to one actor)
+        }
+        std::uint64_t sig = shares.size();
+        for (const auto& s : shares) {
+            sig = sig * 1099511628211ULL ^ reinterpret_cast<std::uintptr_t>(s.mgef);
+            sig = sig * 1099511628211ULL ^ static_cast<std::uint64_t>(std::lround(s.mag * 100.0f));
+        }
+        auto idxIt = g_echoPoolIdx.find(tid);
+        if (shares.empty()) {
+            // Nothing to share — release this recipient. Strip ANY pool ability it holds
+            // (g_echoPoolIdx is runtime-only, so a slot baked in a prior session may not
+            // be the tracked one).
+            bool had = false;
+            for (int j = 0; j < kEchoPoolSize; ++j) {
+                if (g_echoPool[j] && tgt->HasSpell(g_echoPool[j])) {
+                    tgt->RemoveSpell(g_echoPool[j]);
+                    had = true;
+                }
+            }
+            if (had) {
                 spdlog::info("[echo-share] cleared -> {:08X}", tid);
+            }
+            if (idxIt != g_echoPoolIdx.end()) {
+                g_echoPoolIdx.erase(idxIt);
             }
             g_echoApplied.erase(tid);
             continue;
         }
-        const bool unchanged = prev != g_echoApplied.end() && prev->second.mgef == best->mgef &&
-                               prev->second.mag == best->mag && tgt->HasSpell(g_echoShareSpell);
-        if (unchanged) {
-            continue;  // already carrying exactly this share
+        // Assign a pool slot if this recipient doesn't have one.
+        int idx = (idxIt != g_echoPoolIdx.end()) ? idxIt->second : -1;
+        if (idx < 0) {
+            std::array<bool, kEchoPoolSize> used{};
+            for (auto& kv : g_echoPoolIdx) {
+                if (kv.second >= 0 && kv.second < kEchoPoolSize) {
+                    used[kv.second] = true;
+                }
+            }
+            for (int i = 0; i < kEchoPoolSize; ++i) {
+                if (!used[i] && g_echoPool[i]) {
+                    idx = i;
+                    break;
+                }
+            }
+            if (idx < 0) {
+                spdlog::warn("[echo-share] pool exhausted ({} slots) — {:08X} not served", kEchoPoolSize, tid);
+                continue;
+            }
+            g_echoPoolIdx[tid] = idx;
         }
-        // (Re)apply: remove the stale ability, rewrite the shared ability's single effect
-        // to this recipient's payload, then add. AddSpell applies the constant effect
-        // immediately from the current form, so sequential per-recipient rewrites capture
-        // correctly (one shared spell => one share per recipient; multi-stack = Phase B).
-        if (tgt->HasSpell(g_echoShareSpell)) {
-            tgt->RemoveSpell(g_echoShareSpell);
+        auto* spell = g_echoPool[idx];
+        if (!spell || spell->effects.size() == 0) {
+            continue;
         }
-        eff->baseEffect = best->mgef;
-        eff->effectItem.magnitude = best->mag;
-        eff->effectItem.area = 0;
-        eff->effectItem.duration = 0;  // constant ability — duration ignored
-        tgt->AddSpell(g_echoShareSpell);
-        g_echoApplied[tid] = *best;
-        spdlog::info("[echo-share] applied '{}' mag={:.1f} -> {:08X}", best->gid, best->mag, tid);
+        auto applied = g_echoApplied.find(tid);
+        if (applied != g_echoApplied.end() && applied->second == sig && tgt->HasSpell(spell)) {
+            continue;  // share set unchanged
+        }
+        // Strip any OTHER pool ability the recipient carries (a different slot baked in a
+        // prior session) so it only ever holds its assigned one.
+        for (int j = 0; j < kEchoPoolSize; ++j) {
+            if (j != idx && g_echoPool[j] && tgt->HasSpell(g_echoPool[j])) {
+                tgt->RemoveSpell(g_echoPool[j]);
+            }
+        }
+        // (Re)apply: strip, write all N slots (shares, then inert), add. Distinct form
+        // per recipient => RemoveSpell reverses exactly this recipient's own effects.
+        if (tgt->HasSpell(spell)) {
+            tgt->RemoveSpell(spell);
+        }
+        const std::size_t n = spell->effects.size();
+        for (std::size_t j = 0; j < n; ++j) {
+            auto* e = spell->effects[j];
+            if (!e) {
+                continue;
+            }
+            if (j < shares.size()) {
+                e->baseEffect = shares[j].mgef;
+                e->effectItem.magnitude = shares[j].mag;
+            } else {
+                if (g_markerSelfMgef) {
+                    e->baseEffect = g_markerSelfMgef;  // inert filler (not a stale share)
+                }
+                e->effectItem.magnitude = 0.0f;
+            }
+            e->effectItem.area = 0;
+            e->effectItem.duration = 0;  // constant ability
+        }
+        tgt->AddSpell(spell);
+        g_echoApplied[tid] = sig;
+        std::string gids;
+        for (const auto& s : shares) {
+            gids += (gids.empty() ? "" : "+") + std::string(s.gid);
+        }
+        spdlog::info("[echo-share] applied [{}] ({} eff) via pool#{} -> {:08X}",
+                     gids, shares.size(), idx, tid);
     }
 }
 
