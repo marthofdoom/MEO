@@ -160,7 +160,7 @@ constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPl
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.10";  // Phase B: Echo share ability pool (multi-gem stacking)
+constexpr const char* kMEOVersion = "1.0.11";  // fix: d-pad/stick L/R pane switch (out of ImGui nav)
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -4154,6 +4154,11 @@ namespace menuhook {
     // m32f controller: left-stick nav state (edge-triggered -> dpad keys;
     // ImGui's own nav repeat handles held directions)
     bool g_stickNav[4] = { false, false, false, false };  // up, down, left, right
+    // m37d: d-pad/stick LEFT/RIGHT drive pane switching via this request (-1 = items,
+    // +1 = gems), NOT ImGui nav. Keeping L/R out of ImGui removes the geometric
+    // cross-pane nav that fought the deterministic SetKeyboardFocusHere switch. Set on
+    // the input thread (down-edge only), consumed by the render-thread draw.
+    std::atomic<int> g_paneReq{ 0 };
 
     // Accent per GemCatalog Theme (order frozen: kFire..kUtility). The one
     // visual anchor every style direction shares — gems read by color.
@@ -4453,8 +4458,7 @@ namespace menuhook {
         // slotted gem — too geometry-dependent). Make left/right DETERMINISTICALLY
         // jump between the two panes: track which pane held nav focus last frame,
         // and on the opposite d-pad press request focus into the other pane.
-        static int s_navPane = 0;  // 0 = items, 1 = gems (kept for focus-land targeting)
-        int        wantPane = -1;
+        int wantPane = -1;
         // marth 2026-07-28: d-pad Left/Right ALWAYS switch panes — Left=items,
         // Right=gems — never gated on the last-focused pane. The old gate
         // (`&& s_navPane == N`) could desync from real focus (a right-pane row that
@@ -4462,14 +4466,19 @@ namespace menuhook {
         // the cursor in the right pane (close+reopen was the only way out). Both lists
         // are vertical, so up/down owns row movement and L/R is free to mean "switch
         // pane" deterministically. (Triggers LT/RT switch follower TABS.)
-        if (!busy) {
-            if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, false)) {
-                wantPane = 1;
-            } else if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft, false)) {
-                wantPane = 0;
+        // m37d: L/R arrive as g_paneReq (set in the input hook), NOT as ImGui nav keys —
+        // so ImGui can't run its geometric cross-pane nav that fought this. Consume the
+        // request every frame; act only when not busy.
+        {
+            const int req = g_paneReq.exchange(0);
+            if (!busy) {
+                if (req > 0) {
+                    wantPane = 1;
+                } else if (req < 0) {
+                    wantPane = 0;
+                }
             }
         }
-        bool itemsFocused = false;
         // Left pane: NEVER disabled — selection is pure UI state (identity-
         // tracked across rebuilds since m19e), and eating clicks during the
         // brief busy window read as "the menu misses clicks" in the field.
@@ -4488,14 +4497,11 @@ namespace menuhook {
             // raw-delta cursor motion between press and release could leave
             // the row and cancel a release-click — the missed-click report.
             // The Selectable return still serves keyboard/gamepad activation.
-            if (wantPane == 0 && i == g_menu.selItem) {
-                ImGui::SetKeyboardFocusHere();  // m36e: land on the selected item
+            if (wantPane == 0 && (i == g_menu.selItem || (g_menu.selItem < 0 && i == 0))) {
+                ImGui::SetKeyboardFocusHere();  // m36e: land on the selected item (or first if none)
             }
             const bool nav = ImGui::Selectable(std::format("##item{}", i).c_str(),
                                                g_menu.selItem == i, 0, ImVec2(0.0f, rowH));
-            if (ImGui::IsItemFocused()) {
-                itemsFocused = true;  // m36e: this pane holds the nav cursor
-            }
             if (nav || ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
                 g_menu.selItem = i;
                 g_menu.selBase = row.base;
@@ -4754,9 +4760,6 @@ namespace menuhook {
             ImGui::EndDisabled();
         }
         ImGui::EndChild();
-        // m36e: remember which pane holds the nav cursor for next frame's jump.
-        // A jump this frame settles next frame, so honour the request immediately.
-        s_navPane = (wantPane >= 0) ? wantPane : (itemsFocused ? 0 : 1);
         if (busy) {
             ImGui::TextDisabled("Working...");
         } else if (g_menu.station.load() && g_menu.activeTab == 0) {
@@ -5007,6 +5010,14 @@ namespace menuhook {
                             } else if (g_shoutDownSeen.exchange(false)) {
                                 g_menu.wantClose = true;
                             }
+                        } else if (auto gk = static_cast<RE::BSWin32GamepadDevice::Key>(code);
+                                   gk == RE::BSWin32GamepadDevice::Key::kLeft ||
+                                   gk == RE::BSWin32GamepadDevice::Key::kRight) {
+                            // m37d: d-pad Left/Right = PANE SWITCH, not ImGui nav. Swallow the
+                            // key (never AddKeyEvent) so ImGui does no geometric cross-pane nav.
+                            if (down) {
+                                g_paneReq = (gk == RE::BSWin32GamepadDevice::Key::kRight) ? 1 : -1;
+                            }
                         } else if (auto key = GamepadToImGuiKey(code); key != ImGuiKey_None) {
                             io.AddKeyEvent(key, down);
                         }
@@ -5029,8 +5040,18 @@ namespace menuhook {
                         };
                         edge(0, th->yValue > 0.5f, ImGuiKey_GamepadDpadUp);
                         edge(1, th->yValue < -0.5f, ImGuiKey_GamepadDpadDown);
-                        edge(2, th->xValue < -0.5f, ImGuiKey_GamepadDpadLeft);
-                        edge(3, th->xValue > 0.5f, ImGuiKey_GamepadDpadRight);
+                        // m37d: stick left/right = PANE SWITCH request (down-edge only),
+                        // NOT ImGui nav — mirrors the d-pad L/R handling above.
+                        auto edgePane = [&](int a_i, bool a_on, int a_req) {
+                            if (g_stickNav[a_i] != a_on) {
+                                g_stickNav[a_i] = a_on;
+                                if (a_on) {
+                                    g_paneReq = a_req;
+                                }
+                            }
+                        };
+                        edgePane(2, th->xValue < -0.5f, -1);
+                        edgePane(3, th->xValue > 0.5f, 1);
                     }
                 }
                 // char events: swallowed silently

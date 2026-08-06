@@ -4,6 +4,14 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.11 — fix: d-pad/stick left-right pane switching in the gem menu (2026-08-05)
+
+- **D-pad (and left-stick) Left/Right now reliably switch between the item pane and the
+  gem pane.** They previously fought ImGui's own geometric navigation — Left/Right only
+  crossed panes when a row happened to line up, and the cursor could get stuck in the
+  gem pane. Left/Right are now handled purely as a pane switch (Left → items, Right →
+  gems), so up/down moves rows within a pane and Left/Right always jumps between them.
+
 ## v1.0.10 — Echo shares stack (multi-gem) (2026-08-05)
 
 - **Multiple different Echo shares now stack on you at once.** In v1.0.9 each character

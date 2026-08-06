@@ -249,6 +249,14 @@ sibling project can audit itself against the list in one sitting.
   the effect for months and it silently never landed (found v1.0.9a: deck
   `getav` showed no change). `CastSpellImmediate` of a constant-self MGEF delivers
   nothing — deliver via an ability and own the `RemoveSpell` lifecycle yourself.
+- **Keep custom directional input OUT of ImGui's nav queue when you also drive
+  focus manually — the two fight.** MEO fed d-pad/stick Left/Right to ImGui as
+  `GamepadDpadLeft/Right` while ALSO calling `SetKeyboardFocusHere` to switch panes;
+  `ImGuiChildFlags_NavFlattened` then ran its own geometric cross-pane nav on those
+  same keys, so L/R only crossed when rows lined up and the cursor could strand in one
+  pane (v1.0.11/m37d). Fix: swallow the direction in the input hook and route it to a
+  dedicated `std::atomic<int>` request the draw `exchange`-consumes — never
+  `AddKeyEvent` a direction you intend to interpret yourself.
 - **One shared spell/effect form rewritten per target cannot represent two
   distinct live payloads at once.** Each applied ability reads the *live* shared
   `effects[0]`, so the last write wins for all of them (and a reload re-reads the
