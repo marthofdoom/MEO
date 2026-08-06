@@ -2,6 +2,10 @@ name: installer
 
 on:
   push:
+    # Branch pushes ONLY — a TAG push must never trigger this workflow (a tag would
+    # otherwise rebuild the abolished MEO.Installer.exe and surface it as a release
+    # artifact). Quashed 2026-08-05.
+    branches: ['**']
     paths:
       - "installer/**"
       - "MEO.sln"
@@ -44,34 +48,8 @@ jobs:
       - name: Build the patcher through the solution (as Synthesis does)
         run: dotnet build MEO.sln -c Release
 
-  build:
-    runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: installer/MEO.Installer
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 9.0.x
-
-      # Untrimmed on purpose: IL-trimmed single-file bundles are the main
-      # antivirus false-positive trigger, and Nexus runs uploads through
-      # VirusTotal. ~70MB clean beats 20MB flagged.
-      - name: Publish win-x64
-        run: >
-          dotnet publish -c Release -r win-x64 --self-contained
-          -p:PublishSingleFile=true -p:PublishTrimmed=false -p:EnableCompressionInSingleFile=true
-          -p:IncludeNativeLibrariesForSelfExtract=true
-          -o pub
-
-      - name: Smoke test on Windows
-        run: ./pub/MEO.Installer.exe --help
-
-      - name: Upload exe
-        uses: actions/upload-artifact@v4
-        with:
-          name: MEO-installer
-          path: installer/MEO.Installer/pub/MEO.Installer.exe
-          if-no-files-found: error
+  # The exe `build` job (dotnet publish -> MEO.Installer.exe -> upload-artifact) was
+  # REMOVED 2026-08-05. MEO ships NO executable — Synthesis is the only install path
+  # — so rebuilding/uploading MEO.Installer.exe was dead weight and (on a tag push)
+  # surfaced as a bogus release artifact. Only the synthesis-patcher guard above
+  # remains; it builds MEO.sln to prove the patcher isn't dead on arrival.
