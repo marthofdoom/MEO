@@ -655,3 +655,35 @@ Cross-mod note: this surfaced on MFO followers (invisible bow AND mace that stil
 fired) because MFO's follower gem-transfer (#17) calls this path on looted weapon
 swaps. MFO's native code was audited clean; the fault was entirely here. When MEO
 touches a follower's WORN weapon, assume a two-hander and never assume a hand.
+
+## ImGui — gem-menu gamepad nav (DXGI-present overlay; m32f–m37e)
+
+The menu is an ImGui overlay drawn from the DXGI Present hook; input is fed on the
+engine input thread under `g_imguiIoMx`, render/draw on the present thread. Hard-won
+gotchas:
+
+- **ImGui's built-in gamepad nav can't reliably cross two scrolled, side-by-side
+  `NavFlattened` child panes.** Its directional nav is GEOMETRIC — Right/Left find the
+  nearest item in that screen direction — so once a pane is scrolled, the aligned
+  neighbor is clipped and the move finds nothing; the cursor strands (can't get back).
+  `SetKeyboardFocusHere` to force the jump is ALSO unreliable across scrolled flattened
+  children. Two fixes (m36e feed+focus, m37d swallow+focus) both failed on this.
+- **The reliable pattern for that layout is FULLY MANUAL nav** (shipped m37e): hold
+  explicit state — active zone (tab row vs panes), active pane, selected row per pane —
+  intercept up/down/left/right/A in the input hook into edge-triggered atomics
+  (down-edge only; the left stick mirrors the d-pad via the same `g_stickNav[]` edge
+  latch), and in the draw: move the selection, draw the highlight yourself with
+  `Selectable(selected=…)`, keep it visible with `SetScrollHereY(0.5f)` ONLY on a nav
+  move (every-frame scroll fights the mouse wheel), and run a row's action on your own
+  activate flag OR `IsItemClicked` (mouse). The gem pane's heterogeneous rows (filled
+  slots / souls / loose gems) are indexed by a per-frame running counter `gr`; its total
+  `g_gemCount` (recomputed each frame) is what up/down clamps against and what the
+  "carry selection across a pane switch" clamp uses.
+- **Zone hand-off:** Up at row 0 of a pane → tab row; Down on the tab row → panes; A on
+  the tab row confirms the highlighted tab (and drops back into the panes). Triggers
+  (LT/RT) still switch tabs directly — the shout key is commonly RB, and the menu's
+  close-toggle eats RB before ImGui sees it, so LB/RB can't be the tab control.
+- **Input hygiene:** swallow every key you interpret yourself (never `AddKeyEvent` it),
+  and `exchange()`-consume the atomic requests once per frame so a held direction can't
+  repeat (down-edge only). Clear ImGui keys on `WM_KILLFOCUS`. `d3d11.h` pulls `wingdi.h`
+  which `#define`s `GetObject`→`GetObjectW`; `#undef GetObject` after the D3D includes.

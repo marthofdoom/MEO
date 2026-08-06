@@ -4159,6 +4159,17 @@ namespace menuhook {
     // cross-pane nav that fought the deterministic SetKeyboardFocusHere switch. Set on
     // the input thread (down-edge only), consumed by the render-thread draw.
     std::atomic<int> g_paneReq{ 0 };
+    // m37e: the gem menu's gamepad nav is now FULLY MANUAL — ImGui's built-in nav can't
+    // reliably cross the scrolled side-by-side panes (two prior fixes stranded on it).
+    // Directions/activate are intercepted in the input hook into these edge-triggered
+    // requests (down-edge only); the draw consumes them against explicit selection state
+    // and draws the highlight itself (never relies on ImGui keyboard focus for the panes).
+    std::atomic<bool> g_reqUp{ false }, g_reqDown{ false }, g_reqActivate{ false };
+    int g_navZone   = 0;  // 0 = panes, 1 = tab row (draw-thread state)
+    int g_activePane = 0; // 0 = items, 1 = gems
+    int g_gemSel    = 0;  // selected focusable row in the gems pane
+    int g_gemCount  = 0;  // gems-pane focusable row count (recomputed each frame)
+    int g_tabSel    = 0;  // highlighted tab while in the tab row (confirmed on A)
 
     // Accent per GemCatalog Theme (order frozen: kFire..kUtility). The one
     // visual anchor every style direction shares — gems read by color.
@@ -4399,6 +4410,9 @@ namespace menuhook {
             g_menu.selBase = 0;
             g_menu.selUid = 0;
             g_menu.selSlot = -1;
+            g_navZone = 0;      // m37e: confirming a tab drops you into its panes
+            g_activePane = 0;
+            g_gemSel = 0;
         };
         if (tabCount > 1) {
             if (!busy) {
@@ -4416,18 +4430,20 @@ namespace menuhook {
                 if (t > 0) {
                     ImGui::SameLine();
                 }
-                const bool        cur = (t == g_menu.activeTab);
+                // m37e: while in the tab row, highlight the PENDING tab (g_tabSel, A
+                // confirms); otherwise highlight the active tab.
+                const bool        hl = (g_navZone == 1) ? (t == g_tabSel) : (t == g_menu.activeTab);
                 const std::string tname =
                     (t == 0) ? (g_menu.playerTabName.empty() ? "You" : g_menu.playerTabName)
                              : g_menu.followerTabs[t - 1].name;
-                if (cur) {
+                if (hl) {
                     ImGui::PushStyleColor(ImGuiCol_Button,
                                           ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
                 }
                 if (ImGui::Button(std::format("{}##tab{}", tname, t).c_str()) && !busy) {
                     pickTab(t);
                 }
-                if (cur) {
+                if (hl) {
                     ImGui::PopStyleColor();
                 }
             }
@@ -4454,31 +4470,53 @@ namespace menuhook {
             // MenuUnsocket (their LookupByID owner-resolve fails), never a player
             // misfire — because activeOwner is the follower's refID, not 0 (Fable Issue-3).
         }
-        // m36e (marth: d-pad left/right only crossed panes when aligned with a
-        // slotted gem — too geometry-dependent). Make left/right DETERMINISTICALLY
-        // jump between the two panes: track which pane held nav focus last frame,
-        // and on the opposite d-pad press request focus into the other pane.
-        int wantPane = -1;
-        // marth 2026-07-28: d-pad Left/Right ALWAYS switch panes — Left=items,
-        // Right=gems — never gated on the last-focused pane. The old gate
-        // (`&& s_navPane == N`) could desync from real focus (a right-pane row that
-        // didn't register as "items focused") and swallow the escape press, trapping
-        // the cursor in the right pane (close+reopen was the only way out). Both lists
-        // are vertical, so up/down owns row movement and L/R is free to mean "switch
-        // pane" deterministically. (Triggers LT/RT switch follower TABS.)
-        // m37d: L/R arrive as g_paneReq (set in the input hook), NOT as ImGui nav keys —
-        // so ImGui can't run its geometric cross-pane nav that fought this. Consume the
-        // request every frame; act only when not busy.
-        {
-            const int req = g_paneReq.exchange(0);
-            if (!busy) {
-                if (req > 0) {
-                    wantPane = 1;
-                } else if (req < 0) {
-                    wantPane = 0;
+        // ── m37e: MANUAL gamepad navigation. ImGui's built-in nav can't reliably cross
+        // the scrolled side-by-side panes (two prior fixes stranded on it), so selection
+        // is explicit state and we draw the highlight ourselves. Zones: tab row / panes.
+        const int  itemsCount = static_cast<int>(activeItems.size());
+        const bool navUp    = g_reqUp.exchange(false);
+        const bool navDown  = g_reqDown.exchange(false);
+        const bool navAct   = g_reqActivate.exchange(false);
+        const int  navLR    = g_paneReq.exchange(0);
+        const bool navMoved = navUp || navDown || (navLR != 0);
+        bool       gemActivate = false;
+        if (tabCount <= 1) { g_navZone = 0; }  // P1: no tab row exists without followers
+        if (!busy) {
+            if (g_navZone == 1) {  // TAB ROW: L/R move highlight, A confirms, Down enters panes
+                if (navLR < 0)      { g_tabSel = std::max(0, g_tabSel - 1); }
+                else if (navLR > 0) { g_tabSel = std::min(tabCount - 1, g_tabSel + 1); }
+                if (navAct)         { pickTab(g_tabSel); }  // also drops back into the panes
+                else if (navDown)   { g_navZone = 0; }
+            } else {               // PANES
+                int&      sel = (g_activePane == 0) ? g_menu.selItem : g_gemSel;
+                const int cnt = (g_activePane == 0) ? itemsCount : g_gemCount;
+                if (navUp) {
+                    if (sel > 0) { --sel; }
+                    else if (tabCount > 1) { g_navZone = 1; g_tabSel = g_menu.activeTab; }  // off the top -> tabs (only if tabs exist)
+                } else if (navDown && sel < cnt - 1) {
+                    ++sel;
+                }
+                if (navLR > 0 && g_activePane == 0) {        // items -> gems (carry row, clamped)
+                    g_activePane = 1;
+                    g_gemSel = (g_gemCount > 0) ? std::clamp(g_menu.selItem, 0, g_gemCount - 1) : 0;
+                } else if (navLR < 0 && g_activePane == 1) { // gems -> items (carry row, clamped)
+                    g_activePane = 0;
+                    g_menu.selItem = (itemsCount > 0) ? std::clamp(g_gemSel, 0, itemsCount - 1) : 0;
+                } else if (navAct && g_activePane == 0) {    // A on an item -> go pick a gem
+                    g_activePane = 1;
+                    g_gemSel = (g_gemCount > 0) ? std::clamp(g_menu.selItem, 0, g_gemCount - 1) : 0;
+                } else if (navAct && g_activePane == 1) {
+                    gemActivate = true;                       // the gems render runs the row's action
                 }
             }
         }
+        g_menu.selItem = (itemsCount > 0) ? std::clamp(g_menu.selItem, 0, itemsCount - 1) : -1;
+        if (g_menu.selItem >= 0 && g_menu.selItem < itemsCount) {  // keep socket-target fields synced
+            g_menu.selBase = activeItems[g_menu.selItem].base;
+            g_menu.selUid  = activeItems[g_menu.selItem].uid;
+        }
+        const bool itemsActive = (g_navZone == 0 && g_activePane == 0);
+        const bool gemsActive  = (g_navZone == 0 && g_activePane == 1);
         // Left pane: NEVER disabled — selection is pure UI state (identity-
         // tracked across rebuilds since m19e), and eating clicks during the
         // brief busy window read as "the menu misses clicks" in the field.
@@ -4496,18 +4534,20 @@ namespace menuhook {
             // Selection acts on mouse PRESS (IsItemClicked), not release:
             // raw-delta cursor motion between press and release could leave
             // the row and cancel a release-click — the missed-click report.
-            // The Selectable return still serves keyboard/gamepad activation.
-            if (wantPane == 0 && (i == g_menu.selItem || (g_menu.selItem < 0 && i == 0))) {
-                ImGui::SetKeyboardFocusHere();  // m36e: land on the selected item (or first if none)
+            // Gamepad selection is manual (g_menu.selItem), not the Selectable return.
+            ImGui::Selectable(std::format("##item{}", i).c_str(),
+                              g_menu.selItem == i, 0, ImVec2(0.0f, rowH));
+            if (itemsActive && g_menu.selItem == i && navMoved) {
+                ImGui::SetScrollHereY(0.5f);  // m37e: keep the manual selection in view
             }
-            const bool nav = ImGui::Selectable(std::format("##item{}", i).c_str(),
-                                               g_menu.selItem == i, 0, ImVec2(0.0f, rowH));
-            if (nav || ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {  // mouse selects
                 g_menu.selItem = i;
                 g_menu.selBase = row.base;
                 g_menu.selUid = row.uid;
                 g_menu.selSlot = -1;  // m25: feed target follows the item
                 g_destroyArm = 0;
+                g_navZone = 0;
+                g_activePane = 0;
             }
             // Socket pips: one diamond per slot, filled+tinted when occupied.
             float cx = rp.x + 12.0f;
@@ -4531,9 +4571,6 @@ namespace menuhook {
                           ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
         auto* dlR = ImGui::GetWindowDrawList();  // m24c: pane-clipped drawing
         const float innerW = ImGui::GetContentRegionAvail().x;
-        if (wantPane == 1) {
-            ImGui::SetKeyboardFocusHere();  // m36e: jump to the first row of this pane
-        }
         if (busy) {
             ImGui::BeginDisabled();
         }
@@ -4548,6 +4585,7 @@ namespace menuhook {
             // Pouch mode: click a filled socket to remove; pick a loose gem to
             // socket an empty slot OR swap into a full one (m35e).
             const bool station = g_menu.station.load() && g_menu.activeTab == 0;  // feed/destroy: player only
+            int gr = 0;  // m37e: running focusable-row index in the gems pane (manual nav)
             for (int s = 0; s < sel.capacity && s < kMaxSockets; ++s) {
                 ImGui::PushID(s);
                 const ImVec2 rp = ImGui::GetCursorScreenPos();
@@ -4563,8 +4601,11 @@ namespace menuhook {
                 }
                 const ImVec4 tcol = ThemeCol(sel.slotTheme[s]);
                 const bool   picked = station && g_menu.selSlot == s;
-                ImGui::Selectable("##slot", picked, 0, ImVec2(0.0f, rowH));
-                const bool   act = ImGui::IsItemActivated();  // single-shot (INVARIANTS: no press||release double-fire)
+                const bool   rsel = gemsActive && g_gemSel == gr;
+                ImGui::Selectable("##slot", picked || rsel, 0, ImVec2(0.0f, rowH));
+                if (rsel && navMoved) { ImGui::SetScrollHereY(0.5f); }
+                const bool   act = ImGui::IsItemActivated() || (rsel && gemActivate);  // click or gamepad-A
+                ++gr;
                 rungTooltip(sel.slotGemIdx[s], sel.slotLevel[s],
                             std::string(station ? "Select " : "Remove ") + sel.slotGem[s]);
                 DrawDiamond(dlR, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 5.0f,
@@ -4652,8 +4693,11 @@ namespace menuhook {
                     ++shownSouls;
                     const ImVec2 rp = ImGui::GetCursorScreenPos();
                     ImGui::PushID(2000 + i);
-                    ImGui::Selectable("##soul", false, 0, ImVec2(0.0f, rowH));
-                    const bool act = ImGui::IsItemActivated();  // single-shot: also fixes soul double-feed (resource loss)
+                    const bool rsel = gemsActive && g_gemSel == gr;
+                    ImGui::Selectable("##soul", rsel, 0, ImVec2(0.0f, rowH));
+                    if (rsel && navMoved) { ImGui::SetScrollHereY(0.5f); }
+                    const bool act = ImGui::IsItemActivated() || (rsel && gemActivate);
+                    ++gr;
                     ImGui::PopID();
                     // Bigger soul = bigger diamond; dimmed until a target gem
                     // is selected above.
@@ -4720,8 +4764,11 @@ namespace menuhook {
                 ++shown;
                 const ImVec2 rp = ImGui::GetCursorScreenPos();
                 ImGui::PushID(1000 + i);
-                ImGui::Selectable("##gem", false, 0, ImVec2(0.0f, rowH));
-                const bool act = ImGui::IsItemActivated();  // single-shot: fixes the stacked-gem double-socket (beta1 report)
+                const bool rsel = gemsActive && g_gemSel == gr;
+                ImGui::Selectable("##gem", rsel, 0, ImVec2(0.0f, rowH));
+                if (rsel && navMoved) { ImGui::SetScrollHereY(0.5f); }
+                const bool act = ImGui::IsItemActivated() || (rsel && gemActivate);  // click or gamepad-A
+                ++gr;
                 rungTooltip(gem.gemIdx, gem.level,
                             std::format("{} {}", swapping ? "Swap in" : "Socket", gem.label));
                 ImGui::PopID();
@@ -4753,8 +4800,11 @@ namespace menuhook {
                 ImGui::TextDisabled(sel.isArmor ? "No loose armor gems." : "No loose weapon gems.");
             }
             }
+            g_gemCount = gr;  // m37e: focusable rows this frame (slots + souls/loose gems)
+            g_gemSel = (gr > 0) ? std::clamp(g_gemSel, 0, gr - 1) : 0;
         } else {
             ImGui::TextDisabled("Select an item.");
+            g_gemCount = 0;
         }
         if (busy) {
             ImGui::EndDisabled();
@@ -5012,11 +5062,19 @@ namespace menuhook {
                             }
                         } else if (auto gk = static_cast<RE::BSWin32GamepadDevice::Key>(code);
                                    gk == RE::BSWin32GamepadDevice::Key::kLeft ||
-                                   gk == RE::BSWin32GamepadDevice::Key::kRight) {
-                            // m37d: d-pad Left/Right = PANE SWITCH, not ImGui nav. Swallow the
-                            // key (never AddKeyEvent) so ImGui does no geometric cross-pane nav.
+                                   gk == RE::BSWin32GamepadDevice::Key::kRight ||
+                                   gk == RE::BSWin32GamepadDevice::Key::kUp ||
+                                   gk == RE::BSWin32GamepadDevice::Key::kDown ||
+                                   gk == RE::BSWin32GamepadDevice::Key::kA) {
+                            // m37e: d-pad + A drive the menu's MANUAL nav (swallowed from
+                            // ImGui). Down-edge only. Shoulders/triggers/X/Y still go to ImGui.
                             if (down) {
-                                g_paneReq = (gk == RE::BSWin32GamepadDevice::Key::kRight) ? 1 : -1;
+                                using GK = RE::BSWin32GamepadDevice::Key;
+                                if (gk == GK::kLeft)       { g_paneReq = -1; }
+                                else if (gk == GK::kRight) { g_paneReq = 1; }
+                                else if (gk == GK::kUp)    { g_reqUp = true; }
+                                else if (gk == GK::kDown)  { g_reqDown = true; }
+                                else                       { g_reqActivate = true; }  // kA
                             }
                         } else if (auto key = GamepadToImGuiKey(code); key != ImGuiKey_None) {
                             io.AddKeyEvent(key, down);
@@ -5032,26 +5090,19 @@ namespace menuhook {
                     // ImGui's nav repeat takes over while a direction is held.
                     auto* th = static_cast<RE::ThumbstickEvent*>(e);
                     if (th->IsLeft()) {
-                        auto edge = [&](int a_i, bool a_on, ImGuiKey a_key) {
+                        // m37e: the left stick drives the SAME manual menu nav as the
+                        // d-pad — edge-triggered on the crossing only, never fed to ImGui.
+                        auto stickEdge = [&](int a_i, bool a_on) -> bool {
                             if (g_stickNav[a_i] != a_on) {
                                 g_stickNav[a_i] = a_on;
-                                io.AddKeyEvent(a_key, a_on);
+                                return a_on;  // fire only on the ON edge
                             }
+                            return false;
                         };
-                        edge(0, th->yValue > 0.5f, ImGuiKey_GamepadDpadUp);
-                        edge(1, th->yValue < -0.5f, ImGuiKey_GamepadDpadDown);
-                        // m37d: stick left/right = PANE SWITCH request (down-edge only),
-                        // NOT ImGui nav — mirrors the d-pad L/R handling above.
-                        auto edgePane = [&](int a_i, bool a_on, int a_req) {
-                            if (g_stickNav[a_i] != a_on) {
-                                g_stickNav[a_i] = a_on;
-                                if (a_on) {
-                                    g_paneReq = a_req;
-                                }
-                            }
-                        };
-                        edgePane(2, th->xValue < -0.5f, -1);
-                        edgePane(3, th->xValue > 0.5f, 1);
+                        if (stickEdge(0, th->yValue > 0.5f))  { g_reqUp = true; }
+                        if (stickEdge(1, th->yValue < -0.5f)) { g_reqDown = true; }
+                        if (stickEdge(2, th->xValue < -0.5f)) { g_paneReq = -1; }
+                        if (stickEdge(3, th->xValue > 0.5f))  { g_paneReq = 1; }
                     }
                 }
                 // char events: swallowed silently

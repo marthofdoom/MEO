@@ -4,13 +4,19 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
-## v1.0.11 — fix: d-pad/stick left-right pane switching in the gem menu (2026-08-05)
+## v1.0.11 — gem-menu controller navigation reworked (2026-08-05)
 
-- **D-pad (and left-stick) Left/Right now reliably switch between the item pane and the
-  gem pane.** They previously fought ImGui's own geometric navigation — Left/Right only
-  crossed panes when a row happened to line up, and the cursor could get stuck in the
-  gem pane. Left/Right are now handled purely as a pane switch (Left → items, Right →
-  gems), so up/down moves rows within a pane and Left/Right always jumps between them.
+The gem menu's gamepad navigation is now fully manual (it no longer relies on ImGui's
+built-in nav, which couldn't reliably cross the scrolled, side-by-side panes — Left/Right
+only worked when rows lined up and the cursor could get stuck).
+
+- **Left/Right always switch panes** (items ↔ gems), regardless of scroll position, and
+  your **selection carries over** — on the 4th row and switch, you land on the 4th row
+  of the other pane (clamped to its last row if it's shorter).
+- **Up off the top of a pane jumps to the tab row**; there Left/Right move the highlighted
+  tab and **A** confirms it (Down drops back into the panes). The triggers (LT/RT) still
+  switch tabs directly.
+- Up/Down move rows, A selects, B closes — unchanged. Mouse unchanged.
 
 ## v1.0.10 — Echo shares stack (multi-gem) (2026-08-05)
 

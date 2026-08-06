@@ -256,7 +256,14 @@ sibling project can audit itself against the list in one sitting.
   same keys, so L/R only crossed when rows lined up and the cursor could strand in one
   pane (v1.0.11/m37d). Fix: swallow the direction in the input hook and route it to a
   dedicated `std::atomic<int>` request the draw `exchange`-consumes — never
-  `AddKeyEvent` a direction you intend to interpret yourself.
+  `AddKeyEvent` a direction you intend to interpret yourself. **Escalation
+  (v1.0.11/m37e):** even that wasn't enough — `SetKeyboardFocusHere` to cross two
+  *scrolled* side-by-side `NavFlattened` children is itself unreliable (focus strands
+  once a pane scrolls). Reliable answer for that layout: don't use ImGui nav for the
+  panes at all — hold explicit selection state (zone / active pane / selected row),
+  intercept up/down/left/right/A, draw the highlight yourself (`Selectable(selected=…)`),
+  `SetScrollHereY` only on a nav move, run the action on your own activate flag OR a
+  click. See ENGINE_NOTES §ImGui.
 - **One shared spell/effect form rewritten per target cannot represent two
   distinct live payloads at once.** Each applied ability reads the *live* shared
   `effects[0]`, so the last write wins for all of them (and a reload re-reads the
