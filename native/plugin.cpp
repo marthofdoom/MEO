@@ -4521,7 +4521,7 @@ namespace menuhook {
         // tracked across rebuilds since m19e), and eating clicks during the
         // brief busy window read as "the menu misses clicks" in the field.
         ImGui::BeginChild("items", ImVec2(half - 6.0f, -footer),
-                          ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);  // m32f
+                          ImGuiChildFlags_Borders, ImGuiWindowFlags_NoNav);  // m37e: manual nav only
         // m24c (marth: long lists "leave the pane"): rows were drawn through
         // the OUTER window's draw list, which ignores the child's clip rect.
         // Each pane draws through its own list so scrolled-out rows clip.
@@ -4536,7 +4536,7 @@ namespace menuhook {
             // the row and cancel a release-click — the missed-click report.
             // Gamepad selection is manual (g_menu.selItem), not the Selectable return.
             ImGui::Selectable(std::format("##item{}", i).c_str(),
-                              g_menu.selItem == i, 0, ImVec2(0.0f, rowH));
+                              itemsActive && g_menu.selItem == i, 0, ImVec2(0.0f, rowH));
             if (itemsActive && g_menu.selItem == i && navMoved) {
                 ImGui::SetScrollHereY(0.5f);  // m37e: keep the manual selection in view
             }
@@ -4568,7 +4568,7 @@ namespace menuhook {
         ImGui::EndChild();
         ImGui::SameLine();
         ImGui::BeginChild("gems", ImVec2(0, -footer),
-                          ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
+                          ImGuiChildFlags_Borders, ImGuiWindowFlags_NoNav);  // m37e: manual nav only
         auto* dlR = ImGui::GetWindowDrawList();  // m24c: pane-clipped drawing
         const float innerW = ImGui::GetContentRegionAvail().x;
         if (busy) {

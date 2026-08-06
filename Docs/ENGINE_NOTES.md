@@ -668,6 +668,12 @@ gotchas:
   neighbor is clipped and the move finds nothing; the cursor strands (can't get back).
   `SetKeyboardFocusHere` to force the jump is ALSO unreliable across scrolled flattened
   children. Two fixes (m36e feed+focus, m37d swallow+focus) both failed on this.
+- **When you go manual, you MUST also disable ImGui's own nav in those windows** —
+  `ImGuiWindowFlags_NoNav` in `BeginChild`'s window_flags (and drop `NavFlattened`).
+  Otherwise ImGui keeps its own nav cursor/focus rectangle running in parallel, which
+  desyncs from your manual highlight → a "ghost" second highlight that drifts as you
+  switch panes/rows (m37e field report). Also gate each pane's manual highlight on that
+  pane being active, or the inactive pane shows a stale highlight (opposite-pane ghost).
 - **The reliable pattern for that layout is FULLY MANUAL nav** (shipped m37e): hold
   explicit state — active zone (tab row vs panes), active pane, selected row per pane —
   intercept up/down/left/right/A in the input hook into edge-triggered atomics
