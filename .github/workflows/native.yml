@@ -2,6 +2,7 @@ name: native
 
 on:
   push:
+    branches: ['**']   # branch pushes only — a TAG push must not trigger CI/artifacts
     paths:
       - "native/**"
       - ".github/workflows/native.yml"
