@@ -4317,7 +4317,7 @@ namespace menuhook {
                                             ImVec2(io.DisplaySize.x, io.DisplaySize.y));
         if (!ImGui::Begin("Gem Socketing", nullptr,
                           ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
-                              ImGuiWindowFlags_NoSavedSettings)) {
+                              ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav)) {  // m37e: all nav is manual — no ImGui cursor on tabs/Close/panes
             ImGui::End();
             if (fBody) {
                 ImGui::PopFont();

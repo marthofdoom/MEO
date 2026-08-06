@@ -669,7 +669,10 @@ gotchas:
   `SetKeyboardFocusHere` to force the jump is ALSO unreliable across scrolled flattened
   children. Two fixes (m36e feed+focus, m37d swallow+focus) both failed on this.
 - **When you go manual, you MUST also disable ImGui's own nav in those windows** —
-  `ImGuiWindowFlags_NoNav` in `BeginChild`'s window_flags (and drop `NavFlattened`).
+  `ImGuiWindowFlags_NoNav` on the PARENT `Begin` window AND in each `BeginChild`'s
+  window_flags (and drop `NavFlattened`). Child-only NoNav isn't enough: the parent's
+  nav cursor still roams the tab buttons, the Close button, and the child panes as nav
+  items, ghost-highlighting them while you manage the panes (m37e).
   Otherwise ImGui keeps its own nav cursor/focus rectangle running in parallel, which
   desyncs from your manual highlight → a "ghost" second highlight that drifts as you
   switch panes/rows (m37e field report). Also gate each pane's manual highlight on that
