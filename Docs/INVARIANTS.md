@@ -198,8 +198,13 @@ the portable "never again" digest for sibling projects.
    veto and 8b's `IsMEOBuiltEnchant` gate (family signature alone can't tell a MEO
    orphan from a foreign inject), and runs in exactly TWO player-driven windows —
    the post-load sweep (`g_postLoadSweep`, around ConvertInventory) and gem-pouch
-   open (`ReclaimStrandedForMenu`, case A only, so a mid-session pickup shows in the
-   pouch without waiting for the next load). Its live-uid guard sees only the
+   open — as of v1.0.12 the pouch-open path runs `ConvertInventory` bracketed by
+   `g_postLoadSweep=true` (full LOSSLESS reclaim, cases A AND B — not case-A-only), so a
+   just-picked-up enchanted-loot item shows immediately, including a base that keeps its
+   own `formEnchanting` (which the adopt-only path can't convert). `ReclaimStrandedForMenu`
+   still runs after, as an idempotent second pass. The bracket is mandatory: calling
+   `ConvertInventory` at open WITHOUT it re-stamps a mid-session-stranded MEO gem at
+   L1/xp0 (banked-XP loss). Its live-uid guard sees only the
    owner's inventory, so a same-base twin in another container is indistinguishable
    from a strand; LIVE container transfers still use the better-informed,
    evUid-hinted `RekeyTransferredSockets` (reclaim stays out of ContainerSink).

@@ -4,6 +4,14 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.12 — picked-up enchanted loot appears in the pouch right away (2026-08-06)
+
+- **A just-picked-up enchanted item (e.g. an Ebony Bow of Paralysis, enchanted bracers)
+  now shows in the Gem Pouch immediately**, instead of only after a save/reload. Opening
+  the pouch now runs the same conversion sweep the game does on load, so freshly looted
+  enchanted gear is converted and listed on the spot. (The lighter open-time reclaim
+  couldn't convert loot whose base carries its own enchantment.)
+
 ## v1.0.11 — gem-menu controller navigation reworked (2026-08-05)
 
 The gem menu's gamepad navigation is now fully manual (it no longer relies on ImGui's

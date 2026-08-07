@@ -160,7 +160,7 @@ constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPl
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.11";  // fix: d-pad/stick L/R pane switch (out of ImGui nav)
+constexpr const char* kMEOVersion = "1.0.12";  // fix: picked-up enchanted loot converts at pouch-open
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -2614,6 +2614,8 @@ void DispelStaleGemEffects();              // m24b/c — defined with the load-r
 void StockVendorGems();                    // m19b — defined with the loot rolls below
 int  ConvertInventory(RE::TESObjectREFR* a_holder);  // m38 — defined with conversion below
 int  ConvertVendorPersonalStock(RE::Actor* a_vendor);  // m48 — defined with conversion below
+bool g_postLoadSweep = false;  // true ONLY around the load sweep + the pouch-open sweep —
+                               // gates ConvertInventory's LOSSLESS adopt/transplant (INVARIANT 8f)
 void CloseGemMenu();
 extern std::atomic<std::uint32_t> g_reapplyPending;  // m19e/S2 — defined with the load reapply below
 void RunDeferredReapply(int a_delayMs);
@@ -5166,7 +5168,22 @@ void OpenGemMenu(bool a_station) {
     // (its uid rewritten) before the next load's post-load sweep repairs it, so the
     // snapshot below wouldn't list it. Reclaim the stranded record now, at open, so a
     // just-picked-up item appears immediately.
-    ReclaimStrandedForMenu();
+    // m37f (marth 2026-08-06 "picked-up Paralyze bow / leather bracers aren't in the
+    // pouch until a reload"): the adopt-only reclaim below can't handle freshly picked-up
+    // ENCHANTED LOOT whose base keeps formEnchanting — only the load-time ConvertInventory
+    // sweep converts those. Run that same sweep here so pickup parity with load holds
+    // (idempotent: already-converted items are skipped).
+    if (auto* pc = RE::PlayerCharacter::GetSingleton()) {
+        // CRITICAL (Fable): g_postLoadSweep enables ConvertInventory's LOSSLESS
+        // adopt/transplant (INVARIANT 8f). WITHOUT it, a mid-session-stranded MEO gem
+        // (uid rekeyed / node died) is re-stamped L1/xp0 = banked-XP loss. Same bracket
+        // the kPostLoadGame sweep uses. (NB: ConvertInventory also runs
+        // StripUncoveredInventory + a 4s enchant-hum mute window per open — both benign.)
+        g_postLoadSweep = true;
+        ConvertInventory(pc);
+        g_postLoadSweep = false;
+    }
+    ReclaimStrandedForMenu();  // redundant after the lossless sweep above, but idempotent
     if (g_needSeedDiscoveries) { SeedDiscoveries(); g_needSeedDiscoveries = false; }
     CheckGemDiscoveries();  // m37: study newly-acquired gem families
     g_menu.selBase = 0;  // fresh open: no remembered selection
@@ -5953,7 +5970,7 @@ void TryTransplantStrandedXP(RE::TESObjectREFR* a_owner, RE::TESBoundObject* a_b
 // inventory is the right scope; neither has the evUid hint that makes the
 // event-driven RekeyTransferredSockets better for live container transfers, so
 // reclaim stays out of ContainerSink and confined to these two.
-bool g_postLoadSweep = false;
+// (g_postLoadSweep is defined up top with the forward-decl cluster.)
 
 // xp/hooks (marth 2026-07-28): reclaim stranded records for the player's OWN
 // record-less socketed gear at gem-pouch open, so an item destranded mid-session
