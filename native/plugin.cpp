@@ -160,7 +160,7 @@ constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPl
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.12";  // fix: picked-up enchanted loot converts at pouch-open
+constexpr const char* kMEOVersion = "1.0.13";  // fix: corpse gems never drop on followers (downed/friendly-fire)
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -7060,7 +7060,15 @@ public:
             if (fromPlayer) {  // corpse gems stay player-kill only
                 AwardFollowerKillShare(xp);  // bug3: share a slice to nearby followers' gems
                 if (auto ref = victim.get()) {
-                    if (auto* v = ref->As<RE::Actor>()) {
+                    // m37g (marth: "followers accrue loose gems since forever"): a corpse
+                    // gem must NEVER land on a follower. The player downing an own follower
+                    // (friendly-fire/AOE) or a defeat/bleedout framework that flags
+                    // dead=true then revives would otherwise drop a loot gem the follower
+                    // carries back up — accruing every combat. Re-check IsDead() (skip a
+                    // downed-then-revived actor, mirroring the ConvertInventory guard above)
+                    // and exclude teammates outright.
+                    if (auto* v = ref->As<RE::Actor>();
+                        v && v->IsDead() && !v->IsPlayerTeammate()) {
                         RollCorpseGem(v);
                         if (isBoss) {  // m36h: rare support gem from boss/dragon loot
                             RollBossSupportGem(v);

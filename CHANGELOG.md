@@ -4,6 +4,14 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.13 — followers no longer accrue loose gems (2026-08-06)
+
+- **Fixed the long-standing bug where followers slowly accumulated loose gems in their
+  inventory.** A corpse-gem loot drop could land on a *follower* the player downed —
+  friendly-fire/AOE, or a defeat/bleedout framework that briefly flags the follower dead
+  and then revives it — so the follower kept the gem and picked up more over time. Corpse
+  gems now only ever drop on a genuinely-dead, non-follower target.
+
 ## v1.0.12 — picked-up enchanted loot appears in the pouch right away (2026-08-06)
 
 - **A just-picked-up enchanted item (e.g. an Ebony Bow of Paralysis, enchanted bracers)
