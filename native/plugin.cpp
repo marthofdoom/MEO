@@ -160,7 +160,7 @@ constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPl
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.13";  // fix: corpse gems never drop on followers (downed/friendly-fire)
+constexpr const char* kMEOVersion = "1.0.14";  // fix: weapon gems are enemy-targeted only (no ally/self hits)
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -1831,6 +1831,65 @@ std::unordered_map<RE::FormID, std::uint64_t> g_echoApplied;  // recipient FormI
 std::unordered_map<RE::FormID, int>           g_echoPoolIdx;  // recipient FormID -> pool slot index (stable while receiving)
 std::atomic<bool> g_echoDirty{true};  // set on socket/equip change (any thread); heartbeat capture-and-clears
 
+// m53: a weapon's enchant magic effect is NOT gated by the engine's friendly-
+// fire rules — it lands on whatever the blade contacts: enemies, allies, the
+// player, AND the wielder (a melee scrum, or impact catching the swinger). The
+// engine's friendly-fire toggle and Precision only suppress the *physical* hit,
+// never the enchant's magic effect (field-confirmed: a follower's Magicka Damage
+// gem drained a nearby ally AND its own wielder). Every MEO weapon gem is
+// detrimental-to-target, so we bake an "enemies only" gate onto each minted
+// WEAPON effect: two ANDed conditions evaluated on the struck actor (Subject /
+// kSelf) —
+//   Subject.GetIsID(Player)      == 0   (never the player)
+//   Subject.GetPlayerTeammate    == 0   (never a follower — and never the
+//                                         wielder himself, a teammate)
+// An enemy is neither, so both pass and the effect applies as before. (Armor
+// gems are constant-self on the wearer — never gated.) This is the same intent
+// as the Echo weapon-AoE teammate skip, applied to the static enchant.
+//
+// IDEMPOTENT: AddWeaponEnchantment dedupes to a SHARED FF form (ENGINE_NOTES §8)
+// and RebuildInstanceEnchant re-runs constantly (load reapply, cap redistribute,
+// MCM/transfers), so a naive prepend would grow the condition chain without
+// bound on that shared form (the retired m35d/m19f restamp class). Minted effect
+// entries are born bare, so a non-null conditions.head means "already gated" —
+// skip. (Never copy incoming CTDA either — none exists on our mints.)
+static void GateWeaponEffectToEnemies(RE::Effect* a_ef) {
+    if (!a_ef || a_ef->conditions.head) {
+        return;  // null, or already gated (idempotent on the deduped shared form)
+    }
+    // Player NPC_ base (0x7) — resolves post-kDataLoaded on every rebuild path;
+    // cache it. If it ever fails to resolve, skip gating this build rather than
+    // pass GetIsID(nullptr) (which would silently degrade to teammate-only).
+    static RE::TESForm* s_playerBase = RE::TESForm::LookupByID(0x00000007);
+    if (!s_playerBase) {
+        spdlog::error("[m53] Player base 0x7 unresolved — weapon effect left ungated");
+        return;
+    }
+    using OpCode = RE::CONDITION_ITEM_DATA::OpCode;
+    using FID    = RE::FUNCTION_DATA::FunctionID;
+    auto make = [](FID a_fn, void* a_param0) -> RE::TESConditionItem* {
+        auto* it = new RE::TESConditionItem();
+        it->next = nullptr;
+        it->data.comparisonValue.f = 0.0f;
+        it->data.flags.opCode = OpCode::kEqualTo;  // function result == 0 → passes
+        it->data.flags.isOR = false;               // AND with the rest of the chain
+        it->data.flags.usesAliases = false;
+        it->data.flags.global = false;
+        it->data.flags.usePackData = false;
+        it->data.flags.swapTarget = false;
+        it->data.object = RE::CONDITIONITEMOBJECT::kSelf;  // run on the struck actor
+        it->data.functionData.function = a_fn;
+        it->data.functionData.params[0] = a_param0;
+        it->data.functionData.params[1] = nullptr;
+        return it;
+    };
+    auto* cNotPlayer   = make(FID::kGetIsID, s_playerBase);  // Subject.GetIsID(Player)==0
+    auto* cNotTeammate = make(FID::kGetPlayerTeammate, nullptr);  // Subject.GetPlayerTeammate==0
+    cNotPlayer->next   = cNotTeammate;
+    cNotTeammate->next = nullptr;              // bare by construction (guard above)
+    a_ef->conditions.head = cNotPlayer;        // publish next before head (benign vs readers)
+}
+
 void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xList,
                             RE::Actor* a_owner = nullptr) {
     auto* xid = a_xList ? a_xList->GetByType<RE::ExtraUniqueID>() : nullptr;
@@ -2023,6 +2082,12 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         spdlog::error("[rebuild] Add{}Enchantment null on {:08X}/{}",
                       isArmor ? "Armor" : "Weapon", a_base->GetFormID(), uid);
         return;
+    }
+    // m53: gate every minted weapon effect to enemies (never allies/player/self).
+    if (!isArmor) {
+        for (auto* ef : ench->effects) {
+            GateWeaponEffectToEnemies(ef);
+        }
     }
     // Gold value scales with gem tier (m38c, marth). The engine prices an
     // enchanted item as base + fEnchantmentPointsMult*MaxCharge (WEAPONS) or
@@ -7950,6 +8015,13 @@ void ReapplyFollowerSockets() {
         if (!a) {
             continue;  // follower unloaded between collection and cycle
         }
+        // m53: re-mint so the enemies-only weapon gate (GateWeaponEffectToEnemies)
+        // is present post-load even if effect-entry CTDA doesn't survive in the
+        // created-ENCH save record — the reported bug is a FOLLOWER weapon, and
+        // this path previously only equip-cycled. MUST pass the actor as owner
+        // (m38e: a nullptr owner strips a follower's enchant). Idempotent: a no-op
+        // when the gate already survived the load (mirrors the player rebuild).
+        RebuildInstanceEnchant(t.base, t.xl, a.get());
         EquipCycleWorn(a.get(), t.base, t.xl);
         ++done;
     }
@@ -8032,14 +8104,20 @@ void ReapplyWornSockets(bool a_rebuild, bool a_reequip, bool a_diag = false) {
             if (a_diag) {  // read the as-loaded enchant before we touch it
                 auto* xEnch = xl->GetByType<RE::ExtraEnchantment>();
                 auto* en = xEnch ? xEnch->enchantment : nullptr;
+                // m53: does the enemies-only effect-entry CTDA survive save/load?
+                // If conds=1 as-loaded, the gate persists in the created-ENCH
+                // record and the follower re-mint is pure insurance; if conds=0,
+                // that re-mint is load-bearing. One deck load settles it.
+                const bool conds = en && en->effects.size() > 0 && en->effects[0] &&
+                                   en->effects[0]->conditions.head != nullptr;
                 spdlog::info("[load-diag] {:08X}/{} as-loaded: ench={:08X} kCostOverride={} "
-                             "costOverride={} charge={}",
+                             "costOverride={} charge={} conds={}",
                              entry->object->GetFormID(), xid->uniqueID,
                              en ? en->GetFormID() : 0u,
                              en && en->data.flags.any(
                                        RE::EnchantmentItem::EnchantmentFlag::kCostOverride),
                              en ? en->data.costOverride : -1,
-                             xEnch ? xEnch->charge : 0);
+                             xEnch ? xEnch->charge : 0, conds);
             }
             if (a_rebuild) {
                 RebuildInstanceEnchant(entry->object, xl);

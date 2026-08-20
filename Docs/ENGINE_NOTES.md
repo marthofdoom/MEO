@@ -626,6 +626,29 @@ classify enchantments as non-replicable by archetype. The real
 "casting implement" signals are `ENCH.EnchantType == StaffEnchantment` and
 Concentration/Aimed effects.
 
+**Attaching effect-entry CTDA at runtime — enemies-only weapon gate (m53, v1.0.14).**
+A weapon enchantment's *magic* effect is NOT covered by the engine friendly-fire
+setting or by the Precision mod (both gate only the *physical* hit): the effect
+applies to whatever the blade contacts — allies, the player, and the wielder
+himself (field-confirmed: a follower's Magicka Damage gem drained a nearby ally
+AND its own wielder). Effect-entry conditions (the "do NOT travel" layer above)
+CAN be *added* at runtime: build a `TESConditionItem` chain and assign it to
+`Effect::conditions.head` **after** `AddWeaponEnchantment` returns, on the
+enchant's OWN effect copies (`ench->effects[i]`) — never on the local build
+array (it's copied by value and destructs). Run-on `CONDITIONITEMOBJECT::kSelf`
+= CK "Subject" = the actor the effect is applied to (the struck actor; this is
+the same Subject the m22 rider gating evaluates); `kTarget` is NOT the victim.
+MEO's gate: `Subject.GetIsID(Player 0x7)==0 AND Subject.GetPlayerTeammate==0`
+(teammate covers followers and the wielder-as-teammate; it does NOT cover
+non-teammate allies — guards, quest allies, summons/thralls — accepted scope).
+Two traps: (1) `AddWeaponEnchantment` dedupes to a SHARED FF form (§8) and the
+rebuild re-runs constantly, so gating MUST be idempotent — a non-null
+`conditions.head` means "already gated" (our mints are born bare). (2) Whether
+the chain persists in the save's created-ENCH record is UNVERIFIED (player
+enchanting never produces entry CTDA, so the format may drop it); the follower
+reapply path re-mints on load as insurance, and `[load-diag] conds=` reports
+the as-loaded state to settle it.
+
 ## 13. Equip-cycle slot must match the weapon's hand count (m37, field-verified)
 
 `EquipCycleWorn` re-seats a socketed WORN item with `UnequipObject` + `EquipObject`

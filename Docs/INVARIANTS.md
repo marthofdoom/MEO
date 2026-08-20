@@ -57,6 +57,14 @@ the portable "never again" digest for sibling projects.
 5. **`PlaceObjectAtMe` refs have no owner — `SetOwner(player)` before any
    pickup** (:2409). Otherwise picking up your own spawned gem near a guard
    is witnessed theft (100g bounty, m17b).
+6. **Every minted WEAPON enchant effect carries the enemies-only CTDA gate**
+   (`GateWeaponEffectToEnemies`, m53): Subject `GetIsID(Player)==0` AND
+   `GetPlayerTeammate==0`. A weapon enchant's magic effect is not friendly-fire-
+   gated by the engine, so without this it hits allies/player/wielder. ARMOR
+   effects are NEVER gated (constant-self on the wearer). Any new mint/rebuild/
+   reactivation path must leave the gate present; gating is **idempotent** — a
+   non-null `Effect::conditions.head` means already-gated (mints are born bare),
+   so it is safe to re-run on the deduped shared FF form.
 
 ## Iteration & mutation
 

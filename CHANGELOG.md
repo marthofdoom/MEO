@@ -4,6 +4,16 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.14 — weapon gems only hit enemies (2026-08-20)
+
+- **A socketed weapon's effect no longer strikes allies, the player, or its own wielder.**
+  A weapon enchantment's *magic* effect isn't covered by the game's friendly-fire setting
+  (or by Precision, which only blocks the physical hit), so a follower's gem-socketed weapon
+  could drain a nearby ally's — or his own — magicka/health/stamina in a melee scrum. Every
+  minted weapon effect is now gated to enemies only: it never applies to the player or to any
+  player teammate. Enemies are hit exactly as before. (Armor gems are unaffected — those are
+  self-buffs on the wearer.)
+
 ## v1.0.13 — followers no longer accrue loose gems (2026-08-06)
 
 - **Fixed the long-standing bug where followers slowly accumulated loose gems in their

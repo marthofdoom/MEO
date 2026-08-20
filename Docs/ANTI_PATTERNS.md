@@ -23,6 +23,18 @@ sibling project can audit itself against the list in one sitting.
 - **Never stuff sentinel values into engine pricing fields.** Flat
   `charge=0xFFFF` "free enchant" ballooned weapon prices to 20k+ gold; route
   value through the field the engine isn't spending (m38c).
+- **Never mutate a deduped created enchant non-idempotently.**
+  `AddWeapon/ArmorEnchantment` returns a SHARED, possibly pre-existing FF form,
+  and the rebuild re-runs constantly (load reapply, cap redistribute, MCM,
+  transfers). A per-rebuild mutation — prepending conditions, restamping —
+  compounds on that shared form every pass unless it first tests whether it is
+  already applied. The m53 enemies-only gate keys on a bare `conditions.head`;
+  same failure class as the retired m19f/m35d restamp.
+- **Never assume a weapon enchant's magic effect respects friendly fire.** The
+  engine's friendly-fire toggle (and the Precision mod) suppress only the
+  *physical* hit — the enchant's magic effect still lands on allies, the player,
+  and the wielder. Gate detrimental weapon effects to enemies with effect-entry
+  CTDA (m53).
 - **Never trust a convenience reimplementation for engine-visible state.**
   CommonLibSSE-NG's `SetName` hardcodes `temperFactor=1.0` — renames on
   tempered gear silently fell back to base names; NG's
