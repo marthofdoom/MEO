@@ -391,6 +391,19 @@ installed in `SKSEPluginLoad` — before the renderer exists):
   `GetProcAddress("RequestPluginAPI")` exports; different mechanism.) The plugin name
   a consumer dispatches to is the CommonLibSSE-NG version-data name (from CMake
   `project(NAME)` via `add_commonlibsse_plugin`), matched case-insensitively.
+- **Extending the MEO inter-plugin ABI** (2026-08-24, ABI v2 added
+  `GetActorGemsCarried`). `IMEO` uses the versioned-vtable idiom: a `protected`,
+  non-deletable dtor declared LAST, so appending a new pure virtual after the last
+  existing method (before the `protected:` dtor) keeps every shipped slot fixed
+  under MSVC layout — only the never-callable dtor slot shifts (harmless: a
+  consumer can't `delete` through the protected dtor, so no v1 binary indexes it).
+  Rules: (1) APPEND only — never reorder or remove; (2) never OVERLOAD an existing
+  method name — MSVC reverses a same-name overload group in the vtable and would
+  silently corrupt old consumers' slots; unique names only; (3) bump `kABIVersion`
+  and mark the new method "check Version() >= N"; (4) `OnApiMessage` keeps handing
+  the one interface to any `abiVersion >= 1` requester — old consumers only ever
+  call old slots. `GemInfo` is a frozen POD across the boundary — extend by adding
+  a NEW struct, never by re-laying-out this one.
 - **Gamepad analog triggers arrive as `kButton` ButtonEvents** with synthetic IDs
   `RE::BSWin32GamepadDevice::Key::kLeftTrigger` (0x0009) / `kRightTrigger` (0x000A)
   — the header even comments them "arbitrary values, IDs meant to be used with

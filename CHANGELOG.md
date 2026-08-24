@@ -4,6 +4,15 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.15 — API: query gems across all carried items (2026-08-24)
+
+- **Inter-plugin API (ABI v2):** added `IMEO::GetActorGemsCarried`, which reports socketed
+  gems across an actor's **entire inventory** — every carried weapon/armor instance,
+  equipped or not — where `GetActorGems` covered only worn gear. Same `GemInfo` output and
+  main-thread rule. Purely additive: ABI-v1 consumers are unaffected (existing methods keep
+  their vtable slots); consumers check `Version() >= 2` before calling the new method. No
+  gameplay change.
+
 ## v1.0.14 — weapon gems only hit enemies (2026-08-20)
 
 - **A socketed weapon's effect no longer strikes allies, the player, or its own wielder.**

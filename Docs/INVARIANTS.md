@@ -416,3 +416,9 @@ the portable "never again" digest for sibling projects.
     are structurally untaggable. The toggle is one-way live: ON->OFF queues
     one player sweep; OFF->ON restores nothing (source-resumes — stripped
     instances stay plain).
+29. **`MEO_API.h` is a compiled-consumer contract** (MFO links against it):
+    vtable slots 0–3 (`Version`/`GetSocketCapacity`/`GetActorGems`/`MoveGems`)
+    and the `GemInfo` POD layout are frozen forever. Extend ONLY by appending a
+    uniquely-named virtual before the protected dtor and bumping `kABIVersion`
+    (v2 added `GetActorGemsCarried`); never reorder, remove, or overload an
+    existing method name. See ENGINE_NOTES "Extending the MEO inter-plugin ABI".

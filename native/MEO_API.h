@@ -17,9 +17,10 @@
 //         (req.out && req.out->Version() >= 1) ? req.out : nullptr;
 //
 // Include this header AFTER CommonLibSSE (it uses RE:: / SKSE::). Threading: call the
-// QUERIES (GetSocketCapacity / GetActorGems) on the MAIN THREAD only — they read live
-// game state (records, inventory, perk globals) without locking. MoveGems is safe from
-// ANY thread: it only captures a FormID and queues the work to the main thread.
+// QUERIES (GetSocketCapacity / GetActorGems / GetActorGemsCarried) on the MAIN THREAD
+// only — they read live game state (records, inventory, perk globals) without locking.
+// MoveGems is safe from ANY thread: it only captures a FormID and queues the work to
+// the main thread.
 // ─────────────────────────────────────────────────────────────────────────────
 #include <cstdint>
 
@@ -32,10 +33,10 @@ namespace RE {
 namespace MEO_API {
     inline constexpr const char*   kPluginName = "MEO";
     inline constexpr std::uint32_t kMessage_RequestInterface = 0x4D454F41;  // 'MEOA'
-    inline constexpr std::uint32_t kABIVersion = 1;
+    inline constexpr std::uint32_t kABIVersion = 2;  // v2: + GetActorGemsCarried
 
-    // One socketed gem on an actor's worn gear, as reported by GetActorGems.
-    // POD only — safe across the DLL boundary.
+    // One socketed gem on an actor's gear (worn or merely carried), as reported by
+    // GetActorGems / GetActorGemsCarried. POD only — safe across the DLL boundary.
     struct GemInfo {
         char          gid[64];    // stable catalog id, e.g. "firedamage"
         char          name[64];   // display name, e.g. "Fire"
@@ -75,6 +76,16 @@ namespace MEO_API {
         virtual bool MoveGems(RE::Actor* a_actor, RE::FormID a_fromBase,
                               std::uint16_t a_fromUid, RE::FormID a_toBase,
                               std::uint16_t a_toUid) = 0;
+
+        // ── ABI v2 (check Version() >= 2 before calling) ────────────────────────
+        // Like GetActorGems, but scans the actor's ENTIRE inventory — every carried
+        // weapon/armor instance with socketed gems, whether equipped or not — not
+        // just worn gear. Worn items are included (they are carried too). Reports
+        // only SOCKETED gems; loose gems in the pouch are not items and are not
+        // listed. Same GemInfo output, count semantics, and MAIN-THREAD-only rule
+        // as GetActorGems.
+        virtual std::uint32_t GetActorGemsCarried(RE::Actor* a_actor, GemInfo* a_out,
+                                                  std::uint32_t a_max) = 0;
 
     protected:
         virtual ~IMEO() = default;

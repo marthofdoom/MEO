@@ -160,7 +160,7 @@ constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPl
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.14";  // fix: weapon gems are enemy-targeted only (no ally/self hits)
+constexpr const char* kMEOVersion = "1.0.15";  // api: GetActorGemsCarried — gems across ALL carried items (ABI v2)
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -8546,6 +8546,67 @@ void ApiMoveGems(RE::FormID a_actorID, RE::FormID a_fromBase, std::uint16_t a_fr
                  a_fromBase, a_fromUid, a_toBase, toUid, moved, toPouch);
 }
 
+// Shared inventory scan behind the IMEO gem queries. a_wornOnly=true reports only
+// WORN instances (GetActorGems, ABI v1); false reports EVERY carried weapon/armor
+// instance with socketed gems, equipped or not (GetActorGemsCarried, ABI v2). The
+// worn filter is the only difference. Writes up to a_max GemInfo, returns the TRUE
+// count (may exceed a_max). Main thread only — reads live inventory + records.
+static std::uint32_t ApiScanActorGems(RE::Actor* a_actor, MEO_API::GemInfo* a_out,
+                                      std::uint32_t a_max, bool a_wornOnly) {
+    auto* changes = a_actor ? a_actor->GetInventoryChanges() : nullptr;
+    if (!changes || !changes->entryList) {
+        return 0;
+    }
+    std::uint32_t n = 0;
+    for (auto* entry : *changes->entryList) {
+        if (!entry || !entry->object || !entry->extraLists ||
+            !(entry->object->Is(RE::FormType::Weapon) ||
+              entry->object->Is(RE::FormType::Armor))) {
+            continue;
+        }
+        for (auto* xl : *entry->extraLists) {
+            if (!xl || (a_wornOnly && !IsWornXList(xl))) {
+                continue;
+            }
+            auto* xid = xl->GetByType<RE::ExtraUniqueID>();
+            if (!xid) {
+                continue;
+            }
+            for (int s = 0; s < kMaxSockets; ++s) {
+                auto it = g_sockets.find(MakeKey(entry->object->GetFormID(), xid->uniqueID,
+                                                 static_cast<std::uint8_t>(s)));
+                if (it == g_sockets.end()) {
+                    continue;
+                }
+                auto gi = g_gemByGid.find(it->second.gid);
+                if (gi == g_gemByGid.end()) {
+                    continue;
+                }
+                if (a_out && n < a_max) {
+                    const auto&       rg = g_gems[gi->second];
+                    MEO_API::GemInfo& g = a_out[n];
+                    std::snprintf(g.gid, sizeof(g.gid), "%s", it->second.gid.c_str());
+                    std::snprintf(g.name, sizeof(g.name), "%s", GemName(rg));
+                    g.level = it->second.level;
+                    g.isArmor = rg.def->isArmor;
+                    g.isSupport = rg.def->isSupport;
+                    g.magnitude =
+                        rg.def->isSupport
+                            ? 0.0f
+                            : GemBaseMag(rg.def, std::clamp<int>(it->second.level, 1, 5) - 1) *
+                                  g_magnitudeMult * (1.0f + 0.05f * g_attuneRank) *
+                                  GemPerkMult(rg.def);
+                    g.itemBase = entry->object->GetFormID();
+                    g.itemUid = xid->uniqueID;
+                    g.slot = static_cast<std::uint8_t>(s);
+                }
+                ++n;
+            }
+        }
+    }
+    return n;
+}
+
 class MEOInterface : public MEO_API::IMEO {
 public:
     std::uint32_t Version() override { return MEO_API::kABIVersion; }
@@ -8556,58 +8617,12 @@ public:
 
     std::uint32_t GetActorGems(RE::Actor* a_actor, MEO_API::GemInfo* a_out,
                                std::uint32_t a_max) override {
-        auto* changes = a_actor ? a_actor->GetInventoryChanges() : nullptr;
-        if (!changes || !changes->entryList) {
-            return 0;
-        }
-        std::uint32_t n = 0;
-        for (auto* entry : *changes->entryList) {
-            if (!entry || !entry->object || !entry->extraLists ||
-                !(entry->object->Is(RE::FormType::Weapon) ||
-                  entry->object->Is(RE::FormType::Armor))) {
-                continue;
-            }
-            for (auto* xl : *entry->extraLists) {
-                if (!xl || !IsWornXList(xl)) {
-                    continue;
-                }
-                auto* xid = xl->GetByType<RE::ExtraUniqueID>();
-                if (!xid) {
-                    continue;
-                }
-                for (int s = 0; s < kMaxSockets; ++s) {
-                    auto it = g_sockets.find(MakeKey(entry->object->GetFormID(), xid->uniqueID,
-                                                     static_cast<std::uint8_t>(s)));
-                    if (it == g_sockets.end()) {
-                        continue;
-                    }
-                    auto gi = g_gemByGid.find(it->second.gid);
-                    if (gi == g_gemByGid.end()) {
-                        continue;
-                    }
-                    if (a_out && n < a_max) {
-                        const auto&       rg = g_gems[gi->second];
-                        MEO_API::GemInfo& g = a_out[n];
-                        std::snprintf(g.gid, sizeof(g.gid), "%s", it->second.gid.c_str());
-                        std::snprintf(g.name, sizeof(g.name), "%s", GemName(rg));
-                        g.level = it->second.level;
-                        g.isArmor = rg.def->isArmor;
-                        g.isSupport = rg.def->isSupport;
-                        g.magnitude =
-                            rg.def->isSupport
-                                ? 0.0f
-                                : GemBaseMag(rg.def, std::clamp<int>(it->second.level, 1, 5) - 1) *
-                                      g_magnitudeMult * (1.0f + 0.05f * g_attuneRank) *
-                                      GemPerkMult(rg.def);
-                        g.itemBase = entry->object->GetFormID();
-                        g.itemUid = xid->uniqueID;
-                        g.slot = static_cast<std::uint8_t>(s);
-                    }
-                    ++n;
-                }
-            }
-        }
-        return n;
+        return ApiScanActorGems(a_actor, a_out, a_max, /*wornOnly=*/true);
+    }
+
+    std::uint32_t GetActorGemsCarried(RE::Actor* a_actor, MEO_API::GemInfo* a_out,
+                                      std::uint32_t a_max) override {
+        return ApiScanActorGems(a_actor, a_out, a_max, /*wornOnly=*/false);
     }
 
     bool MoveGems(RE::Actor* a_actor, RE::FormID a_fromBase, std::uint16_t a_fromUid,
