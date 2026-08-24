@@ -6168,6 +6168,16 @@ void ReclaimStrandedForMenu() {
                         break;
                     }
                 }
+                // m53b diag (marth's vendor "Fire I" report): one line per carried,
+                // enchanted weapon/armor at pouch open — is it a MEO enchant, and does
+                // it already have a record at its live uid? ours=false + meo=true is the
+                // stranded-vendor-item signature (reclaim runs next); ours=true + not
+                // listed in the pouch points at the MENU collector, not the record.
+                if (std::vector<const RE::EffectSetting*> mfx; true) {
+                    const bool meo = MeoEnchantEffects(xl, mfx);
+                    spdlog::info("[vdiag] '{}' base {:08X} uid {} ours={} meo={}",
+                                 obj->GetName(), obj->GetFormID(), xid->uniqueID, ours, meo);
+                }
                 if (!ours) {
                     // case A: re-key a banked strand onto the live uid. If none is
                     // "worth recovering" — a FRESH L1/xp0 item whose record stranded
