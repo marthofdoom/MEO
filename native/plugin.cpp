@@ -107,6 +107,13 @@ struct SocketRecord {
     std::string  gid;    // stable catalog identity
     std::uint8_t level;  // 1..5
     float        xp;
+    // v12 (ABI v3): for a LOOSE gem record (slot 0), which actor's OWN inventory
+    // physically holds this instance. 0 = the player / shared pouch (legacy and
+    // the only value MEO's own menu ever writes). Non-zero = a follower, set by
+    // GiveGemInstanceToActor for the inter-plugin SocketGem/UnsocketGem API, so
+    // RecoverStrandedGems never mistakes a follower-held gem for a stranded one.
+    // Meaningless for socketed-in-item records (they travel with the item).
+    RE::FormID   holderRefID = 0;
 };
 // key = (baseFormID << 24) | (uniqueID << 8) | slot  — multi-socket (m13):
 // one item instance (base,uid) can hold up to kMaxSockets gems, one per slot.
@@ -154,13 +161,13 @@ std::uint16_t MintUID(RE::FormID a_base) {
 
 constexpr std::uint32_t kSerID = 'MEO1';
 constexpr std::uint32_t kRecGems = 'GEMS';
-constexpr std::uint32_t kSerVersion = 11;  // v11: + discoveredGems. v10: handPlacedMask. v9: supportScaffold.
+constexpr std::uint32_t kSerVersion = 12;  // v12: + loose-record holderRefID. v11: + discoveredGems. v10: handPlacedMask. v9: supportScaffold.
 
 // Single source of truth for the plugin version — surfaced in the load log and
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.15";  // api: GetActorGemsCarried — gems across ALL carried items (ABI v2)
+constexpr const char* kMEOVersion = "1.0.16";  // api: follower gem-management surface (ABI v3)
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -478,11 +485,45 @@ void RecoverStrandedGems() {
         }
         const auto base = static_cast<RE::FormID>(key >> 24);
         if (!g_gemByItem.contains(base) || live.contains(key)) {
-            continue;  // not a loose-gem record, or its gem is accounted for
+            continue;  // not a loose-gem record, or its gem is accounted for (player/pouch)
         }
         auto gemIt = g_gemByGid.find(rec.gid);
         if (gemIt == g_gemByGid.end()) {
             continue;
+        }
+        // v12/ABI v3: a loose record can legitimately live in a FOLLOWER's own
+        // inventory (SocketGem/UnsocketGem give-back). It is absent from `live`
+        // (player+pouch) but is NOT stranded — audit it only against its holder.
+        // Never recovering a follower-held gem is what stops the dup-on-load bug.
+        if (rec.holderRefID != 0) {
+            auto* holder = RE::TESForm::LookupByID<RE::Actor>(rec.holderRefID);
+            if (!holder || !holder->Is3DLoaded()) {
+                continue;  // holder absent/unloaded — cannot verify loss; leave it be
+            }
+            const auto uid = static_cast<std::uint16_t>((key >> 8) & 0xFFFF);
+            bool       held = false;
+            for (const auto& [obj, data] : holder->GetInventory(
+                     [](RE::TESBoundObject& o) { return o.Is(RE::FormType::Misc); })) {
+                if (obj->GetFormID() != base || data.first <= 0 || !data.second ||
+                    !data.second->extraLists) {
+                    continue;
+                }
+                for (auto* xl : *data.second->extraLists) {
+                    if (auto* xid = xl ? xl->GetByType<RE::ExtraUniqueID>() : nullptr;
+                        xid && xid->uniqueID == uid) {
+                        held = true;
+                        break;
+                    }
+                }
+                if (held) {
+                    break;
+                }
+            }
+            if (held) {
+                continue;  // still on the loaded follower — not stranded
+            }
+            // fall through: a LOADED holder that no longer carries it → genuinely
+            // lost; recover the banked XP to the pouch (the safety net still works).
         }
         res.push_back({ gemIt->second, rec.level, rec.xp, key });
     }
@@ -3181,7 +3222,14 @@ RE::ExtraDataList* FindInstanceXList(RE::TESObjectREFR* a_owner, RE::TESBoundObj
 // Hand the player a gem at the given level carrying its banked XP (M4b
 // recipe: spawn a real reference, stamp its engine-owned extraList, pick
 // it up — extras survive player pickup; proven).
-void GiveGemInstance(int a_gemIdx, int a_level, float a_xp) {
+// Core give-back. a_dest is the CONTAINER that receives a maxed/plain gem;
+// a_placeActor is the actor used to mint a banked-XP instance (PlaceObjectAtMe +
+// PickUpObject into its own inventory). GiveGemInstance routes to the shared
+// player pouch (MEO's own menu — UNCHANGED); GiveGemInstanceToActor routes to a
+// specific actor's OWN inventory (the ABI-v3 follower API). The gem is always
+// player-OWNED so a later loot is never witnessed theft (m17b).
+static void GiveGemInstanceCore(RE::TESObjectREFR* a_dest, RE::Actor* a_placeActor,
+                                int a_gemIdx, int a_level, float a_xp) {
     auto*       player = RE::PlayerCharacter::GetSingleton();
     const auto& rg = g_gems[a_gemIdx];
     int         lvIdx = std::clamp(a_level, 1, 5) - 1;
@@ -3190,20 +3238,18 @@ void GiveGemInstance(int a_gemIdx, int a_level, float a_xp) {
                   // a converted L2 Soul Trap/Waterbreathing record hands back
                   // the highest populated form instead of a null no-op
     }
-    auto*       gemForm = rg.items[lvIdx];
-    if (!player || !gemForm) {
+    auto* gemForm = rg.items[lvIdx];
+    if (!player || !a_dest || !a_placeActor || !gemForm) {
         return;
     }
     if (a_xp <= 0.0f || a_level >= 5) {
-        auto* pouch = PouchRef();  // m27: no bag clutter
-        (pouch ? pouch : static_cast<RE::TESObjectREFR*>(player))
-            ->AddObjectToContainer(gemForm, nullptr, 1, nullptr);
+        a_dest->AddObjectToContainer(gemForm, nullptr, 1, nullptr);  // m27: no bag clutter
         return;
     }
-    auto ref = player->PlaceObjectAtMe(gemForm, false);
+    auto ref = a_placeActor->PlaceObjectAtMe(gemForm, false);
     if (!ref) {
         spdlog::error("[menu] PlaceObjectAtMe failed for '{}' — plain gem given instead", rg.def->gid);
-        player->AddObjectToContainer(gemForm, nullptr, 1, nullptr);
+        a_placeActor->AddObjectToContainer(gemForm, nullptr, 1, nullptr);  // byte-parity: old gave to placeActor
         return;
     }
     auto&               xl = ref->extraList;
@@ -3218,11 +3264,46 @@ void GiveGemInstance(int a_gemIdx, int a_level, float a_xp) {
     auto* xText = new RE::ExtraTextDisplayData(name.c_str());
     xl.Add(xText);
     xText->GetDisplayName(gemForm, 1.0f);
+    // v12: record WHO holds it — non-player placeActor (a follower via the API) so
+    // RecoverStrandedGems audits the record against that holder, not the pouch.
+    const RE::FormID holder = a_placeActor->IsPlayerRef() ? 0 : a_placeActor->GetFormID();
     g_sockets[MakeKey(gemForm->GetFormID(), uid)] =
-        SocketRecord{ rg.def->gid, static_cast<std::uint8_t>(lvIdx + 1), a_xp };
-    player->PickUpObject(ref.get(), 1, false, false);
+        SocketRecord{ rg.def->gid, static_cast<std::uint8_t>(lvIdx + 1), a_xp, holder };
+    a_placeActor->PickUpObject(ref.get(), 1, false, false);
+    // m51 F-A1 class: PickUpObject can refuse SILENTLY (3D not loaded, mid-attach —
+    // likelier for a follower than the player). Never leave a world ref carrying a
+    // live loose record: RecoverStrandedGems would then duplicate it into the pouch.
+    // Delete the ref, drop the record, hand back a plain gem (banked XP forgone, but
+    // no strand/dup). The player-at-a-station happy path is unaffected.
+    if (!FindInstanceXList(a_placeActor, gemForm, uid)) {
+        g_sockets.erase(MakeKey(gemForm->GetFormID(), uid));
+        ref->Disable();
+        ref->SetDelete(true);
+        a_dest->AddObjectToContainer(gemForm, nullptr, 1, nullptr);
+        spdlog::warn("[gem] PickUpObject refused for '{}' {:08X}/{} — plain gem given, XP forgone",
+                     rg.def->gid, gemForm->GetFormID(), uid);
+        return;
+    }
     spdlog::info("[menu] gem instance {:08X}/{}: '{}' as '{}'", gemForm->GetFormID(), uid,
                  rg.def->gid, name);
+}
+
+void GiveGemInstance(int a_gemIdx, int a_level, float a_xp) {
+    auto* player = RE::PlayerCharacter::GetSingleton();
+    if (!player) {
+        return;
+    }
+    auto* pouch = PouchRef();
+    GiveGemInstanceCore(pouch ? pouch : static_cast<RE::TESObjectREFR*>(player), player,
+                        a_gemIdx, a_level, a_xp);
+}
+
+// ABI v3: hand a returned/evicted gem to a specific actor's OWN inventory (never
+// the shared pouch). Used only by the follower-facing SocketGem/UnsocketGem API.
+void GiveGemInstanceToActor(RE::Actor* a_dest, int a_gemIdx, int a_level, float a_xp) {
+    if (a_dest) {
+        GiveGemInstanceCore(a_dest, a_dest, a_gemIdx, a_level, a_xp);
+    }
 }
 
 // ── Menu state: draw thread reads, SKSE tasks write ───────────────────
@@ -8214,7 +8295,7 @@ void ScheduleReapplyWornSockets() {
     }).detach();
 }
 
-// ── SKSE co-save (schema v11 — see save-safety rules in the header) ───
+// ── SKSE co-save (schema v12 — see save-safety rules in the header) ───
 void SaveCallback(SKSE::SerializationInterface* a_intfc) {
     if (!a_intfc->OpenRecord(kRecGems, kSerVersion)) {
         spdlog::error("SaveCallback: OpenRecord('GEMS') failed");
@@ -8254,6 +8335,7 @@ void SaveCallback(SKSE::SerializationInterface* a_intfc) {
         const std::uint16_t len = static_cast<std::uint16_t>(rec.gid.size());
         a_intfc->WriteRecordData(len);
         a_intfc->WriteRecordData(rec.gid.data(), len);
+        a_intfc->WriteRecordData(rec.holderRefID);  // v12: follower holder (0 = player/pouch)
     }
     spdlog::info("[save] {} socket record(s), nextUID=0x{:X}, starter={}, mentor={}",
                  g_sockets.size(), g_nextUID, g_starterGranted, g_mentorGranted);
@@ -8383,6 +8465,17 @@ void LoadCallback(SKSE::SerializationInterface* a_intfc) {
             a_intfc->ReadRecordData(len);
             rec.gid.resize(len);
             a_intfc->ReadRecordData(rec.gid.data(), len);
+            if (version >= 12) {  // v12: loose-record holder actor (0 = player/pouch)
+                RE::FormID rawHolder = 0;
+                a_intfc->ReadRecordData(rawHolder);
+                RE::FormID resolvedHolder = 0;
+                // Resolve through the co-save handle map like the base/pouch ids. An
+                // unresolved holder (actor left the load order) falls back to 0, so
+                // the record is audited against player/pouch — safe, never dupes.
+                rec.holderRefID =
+                    (rawHolder && a_intfc->ResolveFormID(rawHolder, resolvedHolder)) ? resolvedHolder
+                                                                                     : 0;
+            }
             // B1: the co-save stores the raw runtime FormID (mod-index byte and all).
             // A changed load order remaps plugin indices; SKSE's co-save plugin-list
             // map turns the stored id into the current one. WITHOUT this, every key
@@ -8607,6 +8700,415 @@ static std::uint32_t ApiScanActorGems(RE::Actor* a_actor, MEO_API::GemInfo* a_ou
     return n;
 }
 
+// ── ABI v3 follower API helpers (reads on the caller's thread; mutations queued) ─
+
+// The Focus magnitude multiplier this item instance applies to its linked
+// elemental gem, mirroring RebuildInstanceEnchant's Focus branch (1 support +
+// 1 normal + Focus + elemental → 1 + tierParam[tier-1]); 1.0 otherwise. The
+// player-only 2-of-a-kind cap is NOT applied (this API is follower-facing).
+// Conduit remaps the effect's identity, so a Conduit pair reports 1.0 here and
+// the gem's baseMagnitude stands (documented in MEO_API.h).
+static float ApiFocusMag(RE::FormID a_base, std::uint16_t a_uid) {
+    const ResolvedGem* support = nullptr;
+    const ResolvedGem* normal = nullptr;
+    int supportCount = 0, normalCount = 0, supportTier = 1;
+    for (int s = 0; s < kMaxSockets; ++s) {
+        auto it = g_sockets.find(MakeKey(a_base, a_uid, static_cast<std::uint8_t>(s)));
+        if (it == g_sockets.end()) {
+            continue;
+        }
+        auto gi = g_gemByGid.find(it->second.gid);
+        if (gi == g_gemByGid.end()) {
+            continue;
+        }
+        const ResolvedGem* rg = &g_gems[gi->second];
+        if (rg->def->isSupport) {
+            ++supportCount;
+            support = rg;
+            supportTier = std::clamp<int>(it->second.level, 1, 3);
+        } else {
+            if (!rg->mgef) {
+                continue;  // disabled normal (missing master) — inert, mirrors RebuildInstanceEnchant
+            }
+            ++normalCount;
+            normal = rg;
+        }
+    }
+    if (supportCount == 1 && normalCount == 1 && support && normal &&
+        support->def->supportType == meo::SupportType::kFocus && IsElementalGem(normal)) {
+        return 1.0f + support->def->tierParam[supportTier - 1];
+    }
+    return 1.0f;
+}
+
+// Per-gem detail for one item instance (a_itemBase/a_itemUid), or all carried
+// items when a_itemBase==0 (a_itemUid==0 with a base = every instance of it).
+static std::uint32_t ApiScanGemDetails(RE::Actor* a_actor, RE::FormID a_itemBase,
+                                       std::uint16_t a_itemUid, MEO_API::GemDetail* a_out,
+                                       std::uint32_t a_max) {
+    auto* changes = a_actor ? a_actor->GetInventoryChanges() : nullptr;
+    if (!changes || !changes->entryList) {
+        return 0;
+    }
+    std::uint32_t n = 0;
+    for (auto* entry : *changes->entryList) {
+        if (!entry || !entry->object || !entry->extraLists ||
+            !(entry->object->Is(RE::FormType::Weapon) || entry->object->Is(RE::FormType::Armor))) {
+            continue;
+        }
+        const RE::FormID base = entry->object->GetFormID();
+        if (a_itemBase && base != a_itemBase) {
+            continue;
+        }
+        for (auto* xl : *entry->extraLists) {
+            if (!xl) {
+                continue;
+            }
+            auto* xid = xl->GetByType<RE::ExtraUniqueID>();
+            if (!xid) {
+                continue;
+            }
+            if (a_itemBase && a_itemUid && xid->uniqueID != a_itemUid) {
+                continue;
+            }
+            const float focusMag = ApiFocusMag(base, xid->uniqueID);
+            for (int s = 0; s < kMaxSockets; ++s) {
+                auto it = g_sockets.find(MakeKey(base, xid->uniqueID, static_cast<std::uint8_t>(s)));
+                if (it == g_sockets.end()) {
+                    continue;
+                }
+                auto gi = g_gemByGid.find(it->second.gid);
+                if (gi == g_gemByGid.end()) {
+                    continue;
+                }
+                if (a_out && n < a_max) {
+                    const auto&         rg = g_gems[gi->second];
+                    MEO_API::GemDetail& g = a_out[n];
+                    std::snprintf(g.gid, sizeof(g.gid), "%s", it->second.gid.c_str());
+                    std::snprintf(g.name, sizeof(g.name), "%s", GemName(rg));
+                    g.level = it->second.level;
+                    g.isArmor = rg.def->isArmor;
+                    g.isSupport = rg.def->isSupport;
+                    const float baseMag =
+                        rg.def->isSupport
+                            ? 0.0f
+                            : GemBaseMag(rg.def, std::clamp<int>(it->second.level, 1, 5) - 1) *
+                                  g_magnitudeMult * (1.0f + 0.05f * g_attuneRank) * GemPerkMult(rg.def);
+                    g.baseMagnitude = baseMag;
+                    g.effectiveMagnitude = baseMag * focusMag;
+                    g.xp = it->second.xp;
+                    g.xpToNext = (rg.def->isSupport || rg.def->singleLevel || it->second.level >= 5)
+                                     ? 0.0f
+                                     : NextThreshold(rg.def, it->second.level);
+                    g.itemBase = base;
+                    g.itemUid = xid->uniqueID;
+                    g.slot = static_cast<std::uint8_t>(s);
+                }
+                ++n;
+            }
+        }
+    }
+    return n;
+}
+
+// Loose (unsocketed) gems in the actor's OWN inventory — banked-XP instances and
+// plain stacks. Mirrors the menu's collectGemRows, applied to any actor.
+static std::uint32_t ApiScanLooseGems(RE::Actor* a_actor, MEO_API::LooseGemInfo* a_out,
+                                      std::uint32_t a_max) {
+    if (!a_actor) {
+        return 0;
+    }
+    std::uint32_t n = 0;
+    auto emit = [&](int a_gemIdx, int a_level, float a_xp, RE::FormID a_gemBase,
+                    std::uint16_t a_gemUid, std::uint32_t a_count) {
+        if (a_out && n < a_max) {
+            const auto&            rg = g_gems[a_gemIdx];
+            MEO_API::LooseGemInfo& g = a_out[n];
+            std::snprintf(g.gid, sizeof(g.gid), "%s", rg.def->gid);
+            std::snprintf(g.name, sizeof(g.name), "%s", GemName(rg));
+            g.level = static_cast<std::uint8_t>(std::clamp(a_level, 1, 5));
+            g.isArmor = rg.def->isArmor;
+            g.isSupport = rg.def->isSupport;
+            g.magnitude = rg.def->isSupport
+                              ? 0.0f
+                              : GemBaseMag(rg.def, std::clamp(a_level, 1, 5) - 1) * g_magnitudeMult *
+                                    (1.0f + 0.05f * g_attuneRank) * GemPerkMult(rg.def);
+            g.xp = a_xp;
+            g.xpToNext = (rg.def->isSupport || rg.def->singleLevel || a_level >= 5)
+                             ? 0.0f
+                             : NextThreshold(rg.def, a_level);
+            g.gemBase = a_gemBase;
+            g.gemUid = a_gemUid;
+            g.count = a_count;
+        }
+        ++n;
+    };
+    auto inv = a_actor->GetInventory([](RE::TESBoundObject& o) { return o.Is(RE::FormType::Misc); });
+    for (const auto& [obj, data] : inv) {
+        if (!obj || data.first <= 0) {
+            continue;
+        }
+        auto gi = g_gemByItem.find(obj->GetFormID());
+        if (gi == g_gemByItem.end()) {
+            continue;
+        }
+        const RE::FormID gemBase = obj->GetFormID();
+        std::int32_t     plain = data.first;
+        if (auto* ent = data.second.get(); ent && ent->extraLists) {
+            for (auto* xl : *ent->extraLists) {
+                if (!xl) {
+                    continue;
+                }
+                plain -= std::max<std::int32_t>(xl->GetCount(), 1);
+                auto* xid = xl->GetByType<RE::ExtraUniqueID>();
+                auto  recIt = xid ? g_sockets.find(MakeKey(gemBase, xid->uniqueID)) : g_sockets.end();
+                if (recIt == g_sockets.end()) {
+                    ++plain;  // no banked record → behaves as a plain gem
+                    continue;
+                }
+                emit(gi->second.first, recIt->second.level, recIt->second.xp, gemBase,
+                     xid->uniqueID, 1);
+            }
+        }
+        if (plain > 0) {
+            emit(gi->second.first, gi->second.second, 0.0f, gemBase, 0,
+                 static_cast<std::uint32_t>(plain));
+        }
+    }
+    return n;
+}
+
+// Ensure the carried item instance has a minted uid + return its xList. Mirrors
+// MenuSocket's mint-in-place (worn) / drop-stamp-pickup (plain) flow, standalone
+// so the menu path is untouched. Returns nullptr on failure; a_outUid = the uid.
+static RE::ExtraDataList* ApiEnsureInstanceXList(RE::Actor* a_owner, RE::TESBoundObject* a_itemForm,
+                                                 std::uint16_t a_itemUid, std::uint16_t& a_outUid) {
+    const RE::FormID base = a_itemForm->GetFormID();
+    if (a_itemUid) {
+        if (auto* xl = FindInstanceXList(a_owner, a_itemForm, a_itemUid)) {
+            a_outUid = a_itemUid;
+            return xl;
+        }
+        // A nonzero uid is an item IDENTITY, not a hint. If it's gone (traded away,
+        // uid rewritten), refuse — NEVER fall through and mint/socket a different
+        // copy of the same base (which could be the actor's worn enchanted piece).
+        // Minting is only for the uid==0 "any fresh instance of this base" case.
+        spdlog::warn("[api] item {:08X}/{} not found on actor — stale uid, socket refused", base,
+                     a_itemUid);
+        return nullptr;
+    }
+    // Un-minted worn gear: mint in place on a worn xList carrying no foreign enchant.
+    if (auto* changes = a_owner->GetInventoryChanges(); changes && changes->entryList) {
+        for (auto* e : *changes->entryList) {
+            if (!e || e->object != a_itemForm || !e->extraLists) {
+                continue;
+            }
+            for (auto* xw : *e->extraLists) {
+                if (xw && IsWornXList(xw) && !xw->GetByType<RE::ExtraUniqueID>() &&
+                    !xw->HasType(RE::ExtraDataType::kEnchantment)) {
+                    const std::uint16_t uid = MintUID(base);
+                    xw->Add(new RE::ExtraUniqueID(base, uid));
+                    a_outUid = uid;
+                    spdlog::info("[api] minted worn instance {:08X}/{} in place", base, uid);
+                    return xw;
+                }
+            }
+        }
+    }
+    // Plain (unworn) stack: drop-stamp-pickup so the ENGINE mints the extra list.
+    const auto dropped =
+        a_owner->RemoveItem(a_itemForm, 1, RE::ITEM_REMOVE_REASON::kDropping, nullptr, nullptr);
+    if (auto ref = dropped.get()) {
+        ref->extraList.SetOwner(a_owner->GetActorBase());  // never theft (m17b)
+        const std::uint16_t uid = MintUID(base);
+        ref->extraList.Add(new RE::ExtraUniqueID(base, uid));
+        a_owner->PickUpObject(ref.get(), 1, false, false);
+        if (auto* xl = FindInstanceXList(a_owner, a_itemForm, uid)) {
+            a_outUid = uid;
+            spdlog::info("[api] minted instance {:08X}/{} via drop/pickup", base, uid);
+            return xl;
+        }
+        ref->Disable();
+        ref->SetDelete(true);
+        a_owner->AddObjectToContainer(a_itemForm, nullptr, 1, nullptr);
+        spdlog::warn("[api] PickUpObject refused for {:08X} — item returned, socket aborted", base);
+    }
+    return nullptr;
+}
+
+// MAIN-THREAD task (queued from IMEO::UnsocketGem). Unsockets slot a_slot and
+// returns the gem to the ACTOR'S OWN inventory (never the shared pouch).
+void ApiUnsocketGem(RE::FormID a_actorID, RE::FormID a_itemBase, std::uint16_t a_itemUid,
+                    std::uint8_t a_slot) {
+    auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_actorID);
+    auto* form = RE::TESForm::LookupByID<RE::TESBoundObject>(a_itemBase);
+    if (!actor || !form) {
+        return;
+    }
+    auto  it = g_sockets.find(MakeKey(a_itemBase, a_itemUid, a_slot));
+    auto* xl = FindInstanceXList(actor, form, a_itemUid);
+    if (it == g_sockets.end() || !xl) {
+        spdlog::warn("[api] UnsocketGem: {:08X}/{}[{}] rec={} xl={}", a_itemBase, a_itemUid, a_slot,
+                     it != g_sockets.end(), xl != nullptr);
+        return;
+    }
+    const SocketRecord rec = it->second;
+    auto               gemIt = g_gemByGid.find(rec.gid);
+    int                li = std::clamp<int>(rec.level, 1, 5) - 1;
+    if (gemIt != g_gemByGid.end()) {
+        while (li > 0 && !g_gems[gemIt->second].items[li]) {
+            --li;
+        }
+    }
+    if (gemIt == g_gemByGid.end() || !g_gems[gemIt->second].items[li]) {
+        spdlog::warn("[api] UnsocketGem: gem '{}' unresolved this load order — left socketed",
+                     rec.gid);
+        return;  // never erase: GiveGemInstance* would no-op and destroy the gem
+    }
+    g_sockets.erase(it);
+    RebuildInstanceEnchant(form, xl, actor);  // owner-correct: no follower cap-strip
+    if (IsWornXList(xl)) {
+        EquipCycleWorn(actor, form, xl);  // m23c: real teardown of the removed ability
+        if (actor->IsPlayerRef() && WornGidCount(rec.gid) >= 2) {
+            ReapplyWornSockets(true, true, false);  // m35c: player cap redistribution
+        }
+    }
+    GiveGemInstanceToActor(actor, gemIt->second, rec.level, rec.xp);
+    spdlog::info("[api] UnsocketGem {:08X}: {:08X}/{}[{}] '{}' L{} xp={:.0f} -> own inventory",
+                 a_actorID, a_itemBase, a_itemUid, a_slot, rec.gid, rec.level, rec.xp);
+}
+
+// MAIN-THREAD task (queued from IMEO::SocketGem). Sockets a gem FROM the actor's
+// own inventory into slot a_slot; an evicted gem returns to the actor's OWN
+// inventory. Mirrors MenuSocket's validation with actor-inventory source/sink.
+void ApiSocketGem(RE::FormID a_actorID, RE::FormID a_itemBase, std::uint16_t a_itemUid,
+                  std::uint8_t a_slot, RE::FormID a_gemBase, std::uint16_t a_gemUid) {
+    auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_actorID);
+    auto* itemForm = RE::TESForm::LookupByID<RE::TESBoundObject>(a_itemBase);
+    auto* gemForm = RE::TESForm::LookupByID<RE::TESObjectMISC>(a_gemBase);
+    auto  gemMap = g_gemByItem.find(a_gemBase);
+    if (!actor || !itemForm || !gemForm || gemMap == g_gemByItem.end()) {
+        return;
+    }
+    const int  gemIdx = gemMap->second.first;
+    const bool gemIsSupport = g_gems[gemIdx].def->isSupport;
+    const bool gemIsArmor = g_gems[gemIdx].def->isArmor;
+    const int  cap = SocketCapacity(itemForm);
+    if (cap <= 0 || a_slot >= cap) {
+        spdlog::warn("[api] SocketGem: slot {} invalid (cap {})", a_slot, cap);
+        return;
+    }
+    if (gemIsSupport && cap < 2) {
+        spdlog::warn("[api] SocketGem: support gem needs a dual-socket item");
+        return;
+    }
+    std::uint16_t uid = 0;
+    auto*         xl = ApiEnsureInstanceXList(actor, itemForm, a_itemUid, uid);
+    if (!xl) {
+        spdlog::warn("[api] SocketGem: item {:08X}/{} not on actor {:08X}", a_itemBase, a_itemUid,
+                     a_actorID);
+        return;
+    }
+    bool ourSockets = false;
+    for (int s = 0; s < cap; ++s) {
+        if (g_sockets.contains(MakeKey(a_itemBase, uid, static_cast<std::uint8_t>(s)))) {
+            ourSockets = true;
+        }
+    }
+    if (xl->HasType(RE::ExtraDataType::kEnchantment) && !ourSockets) {
+        spdlog::warn("[api] SocketGem: item already carries a foreign enchant");
+        return;
+    }
+    if (gemIsSupport) {
+        for (int s = 0; s < cap; ++s) {
+            if (s == a_slot) {
+                continue;
+            }
+            auto sit = g_sockets.find(MakeKey(a_itemBase, uid, static_cast<std::uint8_t>(s)));
+            if (sit == g_sockets.end()) {
+                continue;
+            }
+            auto sgi = g_gemByGid.find(sit->second.gid);
+            if (sgi != g_gemByGid.end() && g_gems[sgi->second].def->isSupport) {
+                spdlog::warn("[api] SocketGem: item already holds a support gem");
+                return;
+            }
+        }
+    }
+    if (!gemIsSupport && gemIsArmor != itemForm->Is(RE::FormType::Armor) &&
+        !ItemHasConduit(a_itemBase, uid)) {
+        spdlog::warn("[api] SocketGem: gem domain doesn't fit that gear");
+        return;
+    }
+    // Resolve the incoming gem from the ACTOR's own inventory.
+    int          level = gemMap->second.second;
+    float        xp = 0.0f;
+    bool         hadRec = false;
+    SocketRecord saved{};
+    RE::ExtraDataList* gemXL = nullptr;
+    if (a_gemUid) {
+        gemXL = FindInstanceXList(actor, gemForm, a_gemUid);
+        if (auto git = g_sockets.find(MakeKey(a_gemBase, a_gemUid)); git != g_sockets.end()) {
+            saved = git->second;
+            hadRec = true;
+            level = saved.level;
+            xp = saved.xp;
+            g_sockets.erase(git);
+        }
+        if (!gemXL) {
+            spdlog::warn("[api] SocketGem: gem {:08X}/{} not in actor inventory", a_gemBase,
+                         a_gemUid);
+            if (hadRec) {
+                g_sockets[MakeKey(a_gemBase, a_gemUid)] = saved;
+            }
+            return;
+        }
+    } else {
+        const bool holds =
+            !actor->GetInventoryCounts([&](RE::TESBoundObject& o) { return &o == gemForm; }).empty();
+        if (!holds) {
+            spdlog::warn("[api] SocketGem: plain gem {:08X} not in actor inventory", a_gemBase);
+            return;
+        }
+    }
+    // Evict any gem already in the target slot → the actor's OWN inventory.
+    if (auto occ = g_sockets.find(MakeKey(a_itemBase, uid, a_slot)); occ != g_sockets.end()) {
+        const SocketRecord oldRec = occ->second;
+        auto               oldIt = g_gemByGid.find(oldRec.gid);
+        int                oli = std::clamp<int>(oldRec.level, 1, 5) - 1;
+        if (oldIt != g_gemByGid.end()) {
+            while (oli > 0 && !g_gems[oldIt->second].items[oli]) {
+                --oli;
+            }
+        }
+        if (oldIt == g_gemByGid.end() || !g_gems[oldIt->second].items[oli]) {
+            spdlog::warn("[api] SocketGem: evicted gem '{}' unresolved — abort", oldRec.gid);
+            if (hadRec) {
+                g_sockets[MakeKey(a_gemBase, a_gemUid)] = saved;
+            }
+            return;
+        }
+        g_sockets.erase(occ);
+        GiveGemInstanceToActor(actor, oldIt->second, oldRec.level, oldRec.xp);
+    }
+    if (!StampInstance(itemForm, xl, gemIdx, level, a_slot, xp, actor)) {
+        if (hadRec) {
+            g_sockets[MakeKey(a_gemBase, a_gemUid)] = saved;
+        }
+        return;
+    }
+    if (IsWornXList(xl)) {
+        if (actor->IsPlayerRef() && WornGidCount(g_gems[gemIdx].def->gid) > 2) {
+            ReapplyWornSockets(true, true, false);
+        } else {
+            ApplyWornAbility(actor, itemForm, xl, xl->HasType(RE::ExtraDataType::kWornLeft));
+        }
+    }
+    actor->RemoveItem(gemForm, 1, RE::ITEM_REMOVE_REASON::kRemove, gemXL, nullptr);
+    spdlog::info("[api] SocketGem {:08X}: '{}' L{} -> {:08X}/{}[{}]", a_actorID,
+                 g_gems[gemIdx].def->gid, level, a_itemBase, uid, a_slot);
+}
+
 class MEOInterface : public MEO_API::IMEO {
 public:
     std::uint32_t Version() override { return MEO_API::kABIVersion; }
@@ -8633,6 +9135,66 @@ public:
         const RE::FormID actorID = a_actor->GetFormID();
         SKSE::GetTaskInterface()->AddTask([actorID, a_fromBase, a_fromUid, a_toBase, a_toUid]() {
             ApiMoveGems(actorID, a_fromBase, a_fromUid, a_toBase, a_toUid);
+        });
+        return true;
+    }
+
+    // ── ABI v3 ──────────────────────────────────────────────────────────────
+    int GetEmptySocketCount(RE::Actor* a_actor, RE::FormID a_itemBase,
+                            std::uint16_t a_itemUid) override {
+        auto* form = a_itemBase ? RE::TESForm::LookupByID<RE::TESBoundObject>(a_itemBase) : nullptr;
+        if (!a_actor || !form) {
+            return 0;
+        }
+        const int cap = SocketCapacity(form);
+        if (cap <= 0) {
+            return 0;
+        }
+        // A nonzero uid names a specific instance — 0 if the actor doesn't carry it.
+        // (uid==0 asks "what could this base hold": capacity, nothing filled yet.)
+        if (a_itemUid && !FindInstanceXList(a_actor, form, a_itemUid)) {
+            return 0;
+        }
+        int filled = 0;
+        for (int s = 0; s < cap; ++s) {
+            if (g_sockets.contains(MakeKey(a_itemBase, a_itemUid, static_cast<std::uint8_t>(s)))) {
+                ++filled;
+            }
+        }
+        return cap - filled;
+    }
+
+    std::uint32_t GetGemDetails(RE::Actor* a_actor, RE::FormID a_itemBase, std::uint16_t a_itemUid,
+                                MEO_API::GemDetail* a_out, std::uint32_t a_max) override {
+        return ApiScanGemDetails(a_actor, a_itemBase, a_itemUid, a_out, a_max);
+    }
+
+    std::uint32_t GetLooseGems(RE::Actor* a_actor, MEO_API::LooseGemInfo* a_out,
+                               std::uint32_t a_max) override {
+        return ApiScanLooseGems(a_actor, a_out, a_max);
+    }
+
+    bool SocketGem(RE::Actor* a_actor, RE::FormID a_itemBase, std::uint16_t a_itemUid,
+                   std::uint8_t a_slot, RE::FormID a_gemBase, std::uint16_t a_gemUid) override {
+        if (!a_actor) {
+            return false;
+        }
+        const RE::FormID actorID = a_actor->GetFormID();
+        SKSE::GetTaskInterface()->AddTask([actorID, a_itemBase, a_itemUid, a_slot, a_gemBase,
+                                           a_gemUid]() {
+            ApiSocketGem(actorID, a_itemBase, a_itemUid, a_slot, a_gemBase, a_gemUid);
+        });
+        return true;
+    }
+
+    bool UnsocketGem(RE::Actor* a_actor, RE::FormID a_itemBase, std::uint16_t a_itemUid,
+                     std::uint8_t a_slot) override {
+        if (!a_actor) {
+            return false;
+        }
+        const RE::FormID actorID = a_actor->GetFormID();
+        SKSE::GetTaskInterface()->AddTask([actorID, a_itemBase, a_itemUid, a_slot]() {
+            ApiUnsocketGem(actorID, a_itemBase, a_itemUid, a_slot);
         });
         return true;
     }
@@ -8721,9 +9283,12 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
                                    // temporary boss-chest refs place on cell-attach
             // m32d: recovery runs EVERY load — the creation-only gate missed
             // saves holding an alive-but-looted pouch (saved between purge
-            // cycles). A healthy load strands nothing and this no-ops; the
-            // only false positive is a gem stored in a WORLD chest, which
-            // the log would name loudly.
+            // cycles). A healthy load strands nothing and this no-ops. Remaining
+            // false positives: a gem in a WORLD chest (log names it loudly), and —
+            // pre-v12 — a gem in a FOLLOWER's inventory; v12 records the holder
+            // (RecoverStrandedGems audits actor-held records against that follower,
+            // never recovering an unverifiable/unloaded one) so ABI-v3 follower
+            // gems are no longer duplicated on load.
             g_pouchCreatedThisLoad = false;
             RecoverStrandedGems();
             if (g_purgeSupportGems) {  // m36l: dev cleanup, after recovery so nothing lingers

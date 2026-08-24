@@ -4,14 +4,24 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
-## v1.0.15 — API: query gems across all carried items (2026-08-24)
+## v1.0.16 — API: follower gem-management surface (2026-08-24)
 
-- **Inter-plugin API (ABI v2):** added `IMEO::GetActorGemsCarried`, which reports socketed
-  gems across an actor's **entire inventory** — every carried weapon/armor instance,
-  equipped or not — where `GetActorGems` covered only worn gear. Same `GemInfo` output and
-  main-thread rule. Purely additive: ABI-v1 consumers are unaffected (existing methods keep
-  their vtable slots); consumers check `Version() >= 2` before calling the new method. No
-  gameplay change.
+Expands the inter-plugin API (consumed by other SKSE mods, e.g. MFO) so a mod can fully
+manage a follower's gems against the **follower's own inventory**. Purely additive — every
+existing method keeps its vtable slot; consumers gate on `Version()`. No gameplay change to
+MEO itself, and **MEO's own gem-pouch menu is unchanged** (it still uses the shared pouch).
+
+- **ABI v2:** `GetActorGemsCarried` — socketed gems across an actor's entire inventory
+  (every carried weapon/armor, equipped or not), where `GetActorGems` covered only worn gear.
+- **ABI v3:**
+  - `GetEmptySocketCount` — free socket slots on a specific carried item instance.
+  - `GetGemDetails` — per-gem level, banked XP + xp-to-next, and base **and effective**
+    (as-applied, Focus-boosted) magnitude, for one item or all carried items.
+  - `GetLooseGems` — the loose/available gems in the actor's **own inventory**.
+  - `SocketGem` — socket a gem from the actor's own inventory into a chosen slot; an evicted
+    gem returns to the actor's own inventory.
+  - `UnsocketGem` — unsocket a gem; it returns to the actor's **own inventory** (not the
+    shared pouch). Queued to the main thread, like `MoveGems`.
 
 ## v1.0.14 — weapon gems only hit enemies (2026-08-20)
 

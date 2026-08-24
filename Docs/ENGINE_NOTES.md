@@ -391,8 +391,11 @@ installed in `SKSEPluginLoad` — before the renderer exists):
   `GetProcAddress("RequestPluginAPI")` exports; different mechanism.) The plugin name
   a consumer dispatches to is the CommonLibSSE-NG version-data name (from CMake
   `project(NAME)` via `add_commonlibsse_plugin`), matched case-insensitively.
-- **Extending the MEO inter-plugin ABI** (2026-08-24, ABI v2 added
-  `GetActorGemsCarried`). `IMEO` uses the versioned-vtable idiom: a `protected`,
+- **Extending the MEO inter-plugin ABI** (2026-08-24: ABI v2 added
+  `GetActorGemsCarried`; ABI v3 added the follower gem-management surface —
+  `GetEmptySocketCount`/`GetGemDetails`/`GetLooseGems`/`SocketGem`/`UnsocketGem`,
+  which read and mutate a specific actor's OWN inventory, never the shared pouch).
+  `IMEO` uses the versioned-vtable idiom: a `protected`,
   non-deletable dtor declared LAST, so appending a new pure virtual after the last
   existing method (before the `protected:` dtor) keeps every shipped slot fixed
   under MSVC layout — only the never-callable dtor slot shifts (harmless: a

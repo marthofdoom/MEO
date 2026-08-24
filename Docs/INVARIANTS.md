@@ -420,5 +420,16 @@ the portable "never again" digest for sibling projects.
     vtable slots 0–3 (`Version`/`GetSocketCapacity`/`GetActorGems`/`MoveGems`)
     and the `GemInfo` POD layout are frozen forever. Extend ONLY by appending a
     uniquely-named virtual before the protected dtor and bumping `kABIVersion`
-    (v2 added `GetActorGemsCarried`); never reorder, remove, or overload an
-    existing method name. See ENGINE_NOTES "Extending the MEO inter-plugin ABI".
+    (v2 added `GetActorGemsCarried`; v3 added the follower gem-management
+    methods); never reorder, remove, or overload an existing method name. The
+    ABI-v3 mutations (`SocketGem`/`UnsocketGem`) and reads operate on the actor's
+    OWN inventory; MEO's own menu still uses the shared pouch (`GiveGemInstance`)
+    — that split MUST hold. See ENGINE_NOTES "Extending the MEO inter-plugin ABI".
+30. **A loose banked-gem record may live in a non-player actor's inventory**
+    (ABI v3): `GiveGemInstanceToActor` stamps `SocketRecord::holderRefID` (co-save
+    v12; 0 = player/pouch). Any sweep that audits loose records against "where a
+    gem can be" — `RecoverStrandedGems`, and any future census — MUST account for
+    the holder: recovering a record it cannot positively confirm as lost (an
+    unloaded/absent holder) duplicates the gem into the pouch and demotes the
+    held copy to plain. Rule: `holderRefID != 0` → verify against that actor only,
+    and if it isn't loaded, LEAVE THE RECORD ALONE.
