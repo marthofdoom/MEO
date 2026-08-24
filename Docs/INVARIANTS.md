@@ -244,6 +244,27 @@ the portable "never again" digest for sibling projects.
    per sweep. A convert ABORT (the 8d gate) on a MEO-built enchant now logs at WARN
    as `[reclaim-FAIL]` (header + per-effect detail) — the only remaining way a MEO
    item stays pouch-invisible, and the line to request from reporters.
+   **m53c (TRAP-2 persistence, save-dump-diagnosed):** an UNWORN, uid-LESS
+   MEO-enchanted item (a bought item whose `ExtraUniqueID` node didn't survive
+   save/load — §1 TRAP 2) cannot be healed by an in-place uid mint: `StampInstance`'s
+   `xl->Add(ExtraUniqueID)` does NOT persist across the next save, so it re-heals
+   every session and dies every save (orphan L1/xp0 records accumulate — a real save
+   had TWO firedamage records on one Iron Mace). `HealUidlessMeoItems` gives such an
+   item a DURABLE uid via the engine's drop-stamp-pickup (PLAYER-only + unworn —
+   drop/pickup on a non-player/mid-attach actor is the m42/m51 crash class), then
+   `ConvertInstanceEnchant` stamps the record on it, `TryTransplantStrandedXP` restores
+   any banked XP a strand for the base holds, and `ReapDeadBaseRecords` reaps the base's
+   dead L1/xp0 orphans (its live-set includes LOADED teammates so a follower's gem
+   isn't reaped — an UNLOADED follower's same-base L1/xp0 record can still be reaped, a
+   narrow window: the gem effect persists on the xlist and re-derives once the item
+   reaches the player). It MUST run BEFORE each `ConvertInventory` sweep — the sweep's
+   in-place `xl->Add` mint would otherwise give a TRANSIENT uid (dies next save) that
+   hides the uid-less state from the heal. Hooked at the kPostLoadGame sweep (before it)
+   and at pouch-open (belt; idempotent — once healed the scan skips). A refused pickup
+   re-adds the item ENCHANTED-but-uid-less (never stripped); it converges at the NEXT
+   load (after a refusal the paired sweep gives it a transient uid that hides it from
+   the same-session pouch-open belt). Worn items were never affected (load re-equip
+   re-persists them).
 7d. **A uid==0 menu row is AMBIGUOUS per base; MenuSocket's uid==0 resolution is
    WORN-FIRST, so any UI showing >1 uid==0 row for one base must pass a disambiguating
    hint** (`a_preferWorn`, Fable 2026-07-30). The follower collector emits both a

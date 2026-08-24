@@ -6,13 +6,15 @@ arc; point fixes are folded into their feature entry unless load-bearing.
 
 ## v1.0.17 — vendor-bought socketed items reveal their gems (2026-08-24)
 
-- **Fixed a socketed item bought from a vendor (e.g. "Fire I Hunting Bow") sometimes
-  not being recognized as socketed — its gem never showing in the pouch.** Buying an item
-  transfers it from the merchant, which rewrites the item's internal id and (for barter)
-  often fires no transfer event, so MEO's socket record was left stranded on the old id.
-  The pouch-open reclaim now re-derives the record from the item's own MEO enchant when no
-  banked-XP record is left to re-key, so these items socket and list correctly. A distinct
-  warning is logged if a MEO-built item ever still fails to re-derive (names the effect).
+- **Fixed an item bought from a vendor (e.g. "Fire I Iron Mace") never being recognized
+  as socketed — its gem never showing in the pouch, no matter what.** Diagnosed from a save:
+  an *unworn* converted item could lose its internal instance id across a save/load, and
+  MEO's in-place attempt to restore it didn't survive the *next* save — so the item re-healed
+  every session and broke again on save, forever. It now gets a durable instance id through
+  the engine's own item flow, so the fix sticks; worn items were never affected (the load
+  re-equip already re-persists them). Accumulated leftover records from the old loop are
+  reaped. The reclaim also re-derives a record from the item's own MEO enchant when nothing
+  is left to re-key, and logs a distinct warning if a MEO item ever still can't be recovered.
 
 ## v1.0.16 — API: follower gem-management surface (2026-08-24)
 

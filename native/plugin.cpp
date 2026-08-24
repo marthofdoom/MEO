@@ -2715,6 +2715,7 @@ MenuState g_menu;
 
 void OpenGemMenu(bool a_station = false);  // defined with the render hooks below
 void ReclaimStrandedForMenu();             // xp/hooks — defined after the reclaim helpers
+void HealUidlessMeoItems(RE::Actor* a_player);  // m53c — durable-uid heal, defined below
 void ApplyTemperPerk();                    // m33b — defined before EnsurePlayerSetup
 void DispelStaleGemEffects();              // m24b/c — defined with the load-refresh code
 void StockVendorGems();                    // m19b — defined with the loot rolls below
@@ -5325,6 +5326,11 @@ void OpenGemMenu(bool a_station) {
         // (uid rekeyed / node died) is re-stamped L1/xp0 = banked-XP loss. Same bracket
         // the kPostLoadGame sweep uses. (NB: ConvertInventory also runs
         // StripUncoveredInventory + a 4s enchant-hum mute window per open — both benign.)
+        // m53c: give any UNWORN uid-less MEO item a DURABLE uid (drop/pickup) BEFORE
+        // the in-place reclaim below — otherwise ConvertInventory would mint a transient
+        // in-place uid that dies on the next save (the vendor "Fire I" bug). Runs first
+        // so the durable heal wins; after it, the item has a uid and the sweep skips it.
+        HealUidlessMeoItems(pc);
         g_postLoadSweep = true;
         ConvertInventory(pc);
         g_postLoadSweep = false;
@@ -5542,6 +5548,75 @@ bool MgefInGemFamily(const ResolvedGem& a_rg, const RE::EffectSetting* a_fx) {
         }
     }
     return false;
+}
+
+// m53c: erase accumulated DEAD L1/xp0 orphan records for a base — the residue of
+// the pre-fix TRAP-2 re-heal loop (a fresh uid minted each session, the node dying
+// each save, records piling up; save-dump-confirmed: two firedamage records on one
+// Iron Mace). Only slot-0, level-1, xp-0, single-slot, non-support records whose uid
+// is neither the one we just persisted nor live on the owner: they carry NOTHING
+// (worthRecovering=false) and re-derive fresh if their item ever reappears. Lossless.
+static void ReapDeadBaseRecords(RE::Actor* a_owner, RE::FormID a_base, std::uint16_t a_keepUid) {
+    if (!a_owner) {
+        return;
+    }
+    std::unordered_set<std::uint16_t> live;
+    auto collect = [&](RE::Actor* a) {
+        auto* ch = a ? a->GetInventoryChanges() : nullptr;
+        if (!ch || !ch->entryList) {
+            return;
+        }
+        for (auto* e : *ch->entryList) {
+            if (!e || !e->object || e->object->GetFormID() != a_base || !e->extraLists) {
+                continue;
+            }
+            for (auto* xl : *e->extraLists) {
+                if (auto* id = xl ? xl->GetByType<RE::ExtraUniqueID>() : nullptr) {
+                    live.insert(id->uniqueID);
+                }
+            }
+        }
+    };
+    collect(a_owner);
+    // finding-6: also protect LOADED teammates' same-base instances — a follower has no
+    // re-derive path (ConvertInventory's instance loop is player-only), so reaping its
+    // L1 record would leave that gem invisible in the follower tab until it's transferred.
+    if (auto* lists = RE::ProcessLists::GetSingleton()) {
+        for (auto& h : lists->highActorHandles) {
+            if (auto a = h.get(); a && a->IsPlayerTeammate()) {
+                collect(a.get());
+            }
+        }
+    }
+    std::vector<InstKey> dead;
+    for (const auto& [key, rec] : g_sockets) {
+        if (static_cast<RE::FormID>(key >> 24) != a_base || (key & 0xFF) != 0) {
+            continue;  // wrong base, or not a slot-0 record
+        }
+        const auto uid = static_cast<std::uint16_t>((key >> 8) & 0xFFFF);
+        if (uid == a_keepUid || live.contains(uid) || rec.level != 1 || rec.xp > 0.0f) {
+            continue;  // keep: the persisted one, a live instance, or carries progress
+        }
+        auto gi = g_gemByGid.find(rec.gid);
+        if (gi != g_gemByGid.end() && g_gems[gi->second].def->isSupport) {
+            continue;  // support gem — not re-derivable, keep
+        }
+        bool multi = false;
+        for (int s = 1; s < kMaxSockets; ++s) {
+            multi = multi || g_sockets.contains(MakeKey(a_base, uid, static_cast<std::uint8_t>(s)));
+        }
+        if (multi) {
+            continue;  // linked pair — carries a layout, keep
+        }
+        dead.push_back(key);
+    }
+    for (auto k : dead) {
+        g_sockets.erase(k);
+    }
+    if (!dead.empty()) {
+        spdlog::info("[reclaim] reaped {} dead L1/xp0 orphan record(s) for base {:08X}",
+                     dead.size(), a_base);
+    }
 }
 
 int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
@@ -6143,6 +6218,105 @@ void TryTransplantStrandedXP(RE::TESObjectREFR* a_owner, RE::TESBoundObject* a_b
 //      load is exactly case B — the post-load sweep never saw it (it was a world
 //      ref, not in inventory), and its uid node died like any worn TRAP-2 item, so
 //      case B MUST run here or the item never lists until another save/load.
+// m53c (marth's vendor "Fire I" report, save-dump-diagnosed): heal UNWORN, uid-less
+// MEO-enchanted items whose ExtraUniqueID node didn't survive save/load (§1 TRAP 2).
+// The in-place uid mint (StampInstance's xl->Add) doesn't persist across the NEXT
+// save — the item re-heals every session and dies every save, orphan L1/xp0 records
+// piling up (a real Iron Mace carried two firedamage records, item uid-less). Give it
+// a DURABLE uid via the engine's own drop-stamp-pickup (the flow MenuSocket uses for
+// plain stacks) so the heal STICKS, then let ConvertInstanceEnchant stamp the record
+// onto the now-uid'd instance. Worn items dodge this via the load re-equip.
+//
+// Collect-ONE-then-act, re-snapshotting each pass: drop/pickup mutates the live
+// inventory and frees the old xList, so we must not iterate a snapshot across it —
+// find one target, break BEFORE any mutation (the captured xList is still live at the
+// break), act, re-scan. PLAYER-only (drop/pickup on a non-player/mid-attach actor is
+// the m42/m51 crash class); called at pouch open (menu context). Bounded loop.
+void HealUidlessMeoItems(RE::Actor* a_player) {
+    if (!a_player || !a_player->IsPlayerRef()) {
+        return;
+    }
+    for (int guard = 0; guard < 64; ++guard) {
+        RE::TESBoundObject* target = nullptr;
+        RE::ExtraDataList*  targetXl = nullptr;  // live at the break — used before any mutation
+        for (auto& [obj, data] : a_player->GetInventory()) {
+            if (data.first <= 0 || !obj || !data.second || !data.second->extraLists) {
+                continue;
+            }
+            if (!(obj->Is(RE::FormType::Weapon) || obj->Is(RE::FormType::Armor))) {
+                continue;
+            }
+            const bool okBase = obj->Is(RE::FormType::Armor)
+                                    ? IsSocketableArmorBase(obj->As<RE::TESObjectARMO>())
+                                    : IsSocketableWeaponBase(obj->As<RE::TESObjectWEAP>());
+            if (!okBase) {
+                continue;
+            }
+            for (auto* xl : *data.second->extraLists) {
+                if (!xl || xl->GetByType<RE::ExtraUniqueID>() || IsWornXList(xl)) {
+                    continue;  // already has a uid, or worn (worn self-heals via re-equip)
+                }
+                std::vector<const RE::EffectSetting*> fx;
+                if (MeoEnchantEffects(xl, fx)) {  // MEO-built enchant, uid-less, unworn
+                    target = obj;
+                    targetXl = xl;
+                    break;
+                }
+            }
+            if (target) {
+                break;  // stop iterating BEFORE we mutate the inventory
+            }
+        }
+        if (!target) {
+            return;  // nothing left to heal
+        }
+        // Capture the MEO enchant BEFORE the drop: a refused pickup must re-add the item
+        // ENCHANTED (the m51 lossless rule), never as a stripped plain item.
+        auto*                xePre = targetXl->GetByType<RE::ExtraEnchantment>();
+        RE::EnchantmentItem* savedEnch = xePre ? xePre->enchantment : nullptr;
+        const std::uint16_t  savedCharge = xePre ? xePre->charge : 0;
+        // Drop exactly THIS instance (captured xList — still valid, nothing mutated yet).
+        const auto dropped =
+            a_player->RemoveItem(target, 1, RE::ITEM_REMOVE_REASON::kDropping, targetXl, nullptr);
+        auto ref = dropped.get();
+        if (!ref) {
+            return;  // couldn't drop — abort, retry next open
+        }
+        ref->extraList.SetOwner(a_player->GetActorBase());  // never theft (m17b)
+        const std::uint16_t uid = MintUID(target->GetFormID());
+        ref->extraList.Add(new RE::ExtraUniqueID(target->GetFormID(), uid));
+        a_player->PickUpObject(ref.get(), 1, false, false);
+        auto* nx = FindInstanceXList(a_player, target, uid);
+        if (!nx) {
+            // m51 F-A1: PickUpObject refused silently. The dropped ref OWNS the enchant,
+            // so deleting it + handing back a plain item would DESTROY it (Fire I -> plain).
+            // Re-add enchanted-but-uid-less via the m47 container recipe: genuinely retried
+            // next load/open, never stripped.
+            ref->Disable();
+            ref->SetDelete(true);
+            if (auto* xl2 = savedEnch ? MakeEngineXList() : nullptr) {
+                xl2->Add(new RE::ExtraEnchantment(savedEnch, savedCharge, false));
+                a_player->AddObjectToContainer(target, xl2, 1, nullptr);
+            } else {
+                a_player->AddObjectToContainer(target, nullptr, 1, nullptr);  // no ench to save
+            }
+            spdlog::warn("[reclaim] '{}' base {:08X} — PickUpObject refused during TRAP-2 heal; "
+                         "item returned enchanted, retried next load/open",
+                         target->GetName(), target->GetFormID());
+            return;
+        }
+        spdlog::info("[reclaim] '{}' base {:08X} — minted DURABLE uid {} via drop/pickup "
+                     "(TRAP-2 heal)", target->GetName(), target->GetFormID(), uid);
+        // Stamp the record on the now-durable uid; then transplant any banked XP a
+        // stranded strand for this base holds (a leveled item unequipped long ago —
+        // INVARIANTS 8f case B) onto the fresh record BEFORE reaping dead orphans.
+        if (ConvertInstanceEnchant(a_player, target, nx) > 0) {
+            TryTransplantStrandedXP(a_player, target, nx);
+        }
+        ReapDeadBaseRecords(a_player, target->GetFormID(), uid);  // reap prior-loop orphans
+    }
+}
+
 void ReclaimStrandedForMenu() {
     auto* player = RE::PlayerCharacter::GetSingleton();
     if (!player) {
@@ -9309,6 +9483,12 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
             // the legitimate stranded/TRAP-2 case lives here, and confining it here
             // keeps it out of in-session transfers (RekeyTransferredSockets owns those).
             if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+                // m53c: durable-uid heal MUST precede ConvertInventory — the sweep's
+                // in-place uid mint (StampInstance xl->Add) would otherwise give an
+                // unworn uid-less TRAP-2 item a TRANSIENT uid that dies next save, and
+                // Heal (uid-less-only) would then never see it. Running first, it drops/
+                // pickups a DURABLE uid so the heal sticks; the sweep then just stamps it.
+                HealUidlessMeoItems(player);
                 g_postLoadSweep = true;
                 ConvertInventory(player);
                 g_postLoadSweep = false;
