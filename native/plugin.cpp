@@ -167,7 +167,7 @@ constexpr std::uint32_t kSerVersion = 12;  // v12: + loose-record holderRefID. v
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.16";  // api: follower gem-management surface (ABI v3)
+constexpr const char* kMEOVersion = "1.0.17";  // fix: vendor-bought socketed items re-derive their stranded record at pouch-open
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -5655,22 +5655,36 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
             lossy += std::format("{}'{}' (no family)", lossy.empty() ? "" : ", ", m->GetName());
         }
     }
+    // m53b: when the enchant is MEO's OWN, an abort here means a converted item
+    // (e.g. a vendor-bought "Fire I …") CANNOT re-derive its stranded record — it
+    // will never socket or list in the pouch. Elevate to WARN with a distinct tag
+    // so the failure is unmistakable in the log (a successful re-derive is silent).
+    const bool meoAbort = IsMEOBuiltEnchant(ench);
     if (!lossy.empty()) {
-        spdlog::info("[convert-miss] '{}' base {:08X} — converting would LOSE {} — "
-                     "left enchanted (lossless-or-skip)",
-                     a_base->GetName(), a_base->GetFormID(), lossy);
+        spdlog::log(meoAbort ? spdlog::level::warn : spdlog::level::info,
+                    "[{}] '{}' base {:08X} — converting would LOSE {} — left enchanted "
+                    "(lossless-or-skip){}",
+                    meoAbort ? "reclaim-FAIL" : "convert-miss", a_base->GetName(),
+                    a_base->GetFormID(), lossy,
+                    meoAbort ? " — MEO item can't re-derive its socket record; won't appear "
+                               "in the pouch (report this line)"
+                             : "");
         return 0;
     }
     if (picks.empty()) {
-        spdlog::info("[convert-miss] '{}' base {:08X} — instance enchant matches no gem "
-                     "family, left alone; effects:", a_base->GetName(), a_base->GetFormID());
+        spdlog::log(meoAbort ? spdlog::level::warn : spdlog::level::info,
+                    "[{}] '{}' base {:08X} — instance enchant matches no gem family, left "
+                    "alone; effects:", meoAbort ? "reclaim-FAIL" : "convert-miss",
+                    a_base->GetName(), a_base->GetFormID());
         for (auto* eff : ench->effects) {
             if (eff && eff->baseEffect) {
-                // names the exact MGEF a new family would need (m26c)
-                spdlog::info("[convert-miss]   '{}' ({:08X}) mag={:.1f} dur={:.0f}",
-                             eff->baseEffect->GetName(), eff->baseEffect->GetFormID(),
-                             eff->effectItem.magnitude,
-                             static_cast<float>(eff->effectItem.duration));
+                // names the exact MGEF a new family would need (m26c); m53b: match the
+                // header's level/tag so a WARN-only log still carries the effect detail.
+                spdlog::log(meoAbort ? spdlog::level::warn : spdlog::level::info,
+                            "[{}]   '{}' ({:08X}) mag={:.1f} dur={:.0f}",
+                            meoAbort ? "reclaim-FAIL" : "convert-miss", eff->baseEffect->GetName(),
+                            eff->baseEffect->GetFormID(), eff->effectItem.magnitude,
+                            static_cast<float>(eff->effectItem.duration));
             }
         }
         return 0;
@@ -6155,7 +6169,21 @@ void ReclaimStrandedForMenu() {
                     }
                 }
                 if (!ours) {
-                    TryAdoptStrandedSocketRecord(player, obj, xl);  // case A (MEO-only inside)
+                    // case A: re-key a banked strand onto the live uid. If none is
+                    // "worth recovering" — a FRESH L1/xp0 item whose record stranded
+                    // on a container/BARTER transfer (a vendor-bought "Fire I Hunting
+                    // Bow" whose uid was rewritten on purchase; barter often fires no
+                    // TESContainerChangedEvent, so ContainerSink's in-session re-key
+                    // never ran) — fall back to re-deriving the record from the item's
+                    // OWN MEO enchant, exactly as ConvertInventory's instance loop
+                    // does. Without this the item keeps its enchant + name but has NO
+                    // g_sockets record: never socketed, never shown in the pouch
+                    // (marth's vendor-purchase report, m53b).
+                    std::vector<const RE::EffectSetting*> fx;
+                    if (!TryAdoptStrandedSocketRecord(player, obj, xl) &&
+                        MeoEnchantEffects(xl, fx)) {
+                        ConvertInstanceEnchant(player, obj, xl);
+                    }
                 }
             } else {
                 // case B: no uid node (TRAP-2). Only MEO's OWN enchant qualifies

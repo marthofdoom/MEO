@@ -4,6 +4,16 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.17 — vendor-bought socketed items reveal their gems (2026-08-24)
+
+- **Fixed a socketed item bought from a vendor (e.g. "Fire I Hunting Bow") sometimes
+  not being recognized as socketed — its gem never showing in the pouch.** Buying an item
+  transfers it from the merchant, which rewrites the item's internal id and (for barter)
+  often fires no transfer event, so MEO's socket record was left stranded on the old id.
+  The pouch-open reclaim now re-derives the record from the item's own MEO enchant when no
+  banked-XP record is left to re-key, so these items socket and list correctly. A distinct
+  warning is logged if a MEO-built item ever still fails to re-derive (names the effect).
+
 ## v1.0.16 — API: follower gem-management surface (2026-08-24)
 
 Expands the inter-plugin API (consumed by other SKSE mods, e.g. MFO) so a mod can fully

@@ -232,6 +232,18 @@ the portable "never again" digest for sibling projects.
    record at retirement, so they are never reclaim candidates; only overlay-mode
    vanilla disenchant (non-default; takeover replaces the table) can leave a retired
    strand, a documented edge.
+   **m53b (vendor-purchase heal):** Case A's adopt has a re-derive BACKSTOP at
+   pouch open. When no strand is worth recovering — the fresh-L1/xp0 vendor/barter
+   class: the purchase rewrites the item's uid and the in-session rekey may see no
+   event — `ReclaimStrandedForMenu` falls back to `ConvertInstanceEnchant` on the
+   item's OWN MEO enchant (`MeoEnchantEffects`-gated, so a foreign enchant never
+   converts here), re-deriving the record at the live uid (`StampInstance` reuses
+   the existing `ExtraUniqueID`, so the next open's `ours` check skips it —
+   idempotent). This also heals MULTIPLE record-less instances of one base in a
+   single open, where `ConvertInventory`'s instance loop heals only one per base
+   per sweep. A convert ABORT (the 8d gate) on a MEO-built enchant now logs at WARN
+   as `[reclaim-FAIL]` (header + per-effect detail) — the only remaining way a MEO
+   item stays pouch-invisible, and the line to request from reporters.
 7d. **A uid==0 menu row is AMBIGUOUS per base; MenuSocket's uid==0 resolution is
    WORN-FIRST, so any UI showing >1 uid==0 row for one base must pass a disambiguating
    hint** (`a_preferWorn`, Fable 2026-07-30). The follower collector emits both a
