@@ -5667,6 +5667,7 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
         return 0;
     }
     const int  cap = SocketCapacity(a_base);
+    const bool meoEnch = IsMEOBuiltEnchant(ench);  // m53c: gate the rider-absorb + abort WARN
     std::vector<int> picks;
     // m51 LOSSLESS GATE (the instance-path twin of marth's 2026-07-10 ruling for
     // base conversions): this used to silently DESTROY any effect it couldn't map
@@ -5710,6 +5711,32 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
         if (!dup && static_cast<int>(picks.size()) < cap) {
             picks.push_back(found);
         } else if (!dup) {
+            // m53c: an effect that would land PAST the cap but is actually a RIDER of an
+            // already-picked family is PART of that family (RebuildInstanceEnchant emits
+            // primary-then-riders), not a second gem — absorb it instead of aborting.
+            // Thaumaturgy's "Spell Strike" perk bundles a per-element power-attack bonus
+            // into every elemental enchant — e.g. MAG_PerkSpellStrikeFireEffect (FULL
+            // "Fire Damage"), Fire's calibration rider — which on re-derive maps to a
+            // family of its own and, on a 1-socket item, overflowed here and tripped the
+            // lossless gate (marth's vendor "Fire I" report). MEO-built only (we emit
+            // primary first) and ONLY in this overflow arm, so a legitimately socketed
+            // second gem on a multi-socket item is still picked above, never eaten.
+            bool riderOfPicked = false;
+            if (meoEnch) {
+                for (int p : picks) {
+                    for (int r = 0; r < g_gems[p].nRiders && !riderOfPicked; ++r) {
+                        auto* rm = g_gems[p].riders[r].mgef;
+                        riderOfPicked =
+                            rm && (rm == eff->baseEffect || SameEffectSig(rm, eff->baseEffect));
+                    }
+                }
+            }
+            if (riderOfPicked) {
+                spdlog::info("[reclaim] '{}' base {:08X} — absorbed '{}' as a rider of a picked "
+                             "family (not a second gem)", a_base->GetName(), a_base->GetFormID(),
+                             eff->baseEffect->GetName());
+                continue;
+            }
             lossy += std::format("{}'{}' (past cap {})", lossy.empty() ? "" : ", ",
                                  eff->baseEffect->GetName(), cap);
         }
@@ -5734,7 +5761,7 @@ int ConvertInstanceEnchant(RE::Actor* a_owner, RE::TESBoundObject* a_base,
     // (e.g. a vendor-bought "Fire I …") CANNOT re-derive its stranded record — it
     // will never socket or list in the pouch. Elevate to WARN with a distinct tag
     // so the failure is unmistakable in the log (a successful re-derive is silent).
-    const bool meoAbort = IsMEOBuiltEnchant(ench);
+    const bool meoAbort = meoEnch;
     if (!lossy.empty()) {
         spdlog::log(meoAbort ? spdlog::level::warn : spdlog::level::info,
                     "[{}] '{}' base {:08X} — converting would LOSE {} — left enchanted "

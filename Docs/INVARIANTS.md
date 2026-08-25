@@ -177,7 +177,19 @@ the portable "never again" digest for sibling projects.
    effect destruction) — but an effect matching a RIDER of an already-picked
    family is NOT a loss (the family recipe re-emits it; Requiem-class enchants
    carry rider entries in every player-made ENCH, and minted multi-effect
-   items re-enter this path via the TRAP-2 self-heal). `bConvertPlayerEnchants`
+   items re-enter this path via the TRAP-2 self-heal). **m53c: this rider
+   exemption also covers a rider that MAPS to a family of its own** — a
+   calibration rider whose MGEF resolves as (or signature-matches) another gem,
+   e.g. Thaumaturgy's Spell Strike per-element bonus (`MAG_PerkSpellStrikeFire
+   Effect`, FULL "Fire Damage") is Fire's rider but re-maps to a separate family
+   on re-derive; on a ≤1-open-socket item that read as a phantom second gem and
+   tripped the gate. For a MEO-BUILT enchant (primary emitted before riders) a
+   mapped effect that would land PAST the cap but is a rider of an already-picked
+   family is absorbed instead of aborting — ONLY in the overflow arm, so a gem
+   that genuinely fits an open socket is still picked, never eaten (the minted
+   Spell-Strike family IS a real player-obtainable gem via conversion, so
+   absorbing pre-cap would destroy a legitimately socketed second gem — Fable
+   m53c). `bConvertPlayerEnchants`
    gates only genuinely foreign instance enchants: an enchant carrying MEO's
    own signature (created FF form + `kCostOverride`, per `IsMEOBuiltEnchant`)
    converts regardless, or the 8c self-heal dies with the toggle. The abort

@@ -15,6 +15,11 @@ arc; point fixes are folded into their feature entry unless load-bearing.
   re-equip already re-persists them). Accumulated leftover records from the old loop are
   reaped. The reclaim also re-derives a record from the item's own MEO enchant when nothing
   is left to re-key, and logs a distinct warning if a MEO item ever still can't be recovered.
+- **Also fixed: an elemental item on a load order like Tuxborn (Thaumaturgy's "Spell Strike"
+  perk) refusing to socket on a 1-socket weapon.** Spell Strike bundles a per-element
+  power-attack bonus (a second "Fire Damage" effect) into every elemental enchant; MEO now
+  recognizes that bonus as the gem's own rider instead of a phantom second gem, so the item
+  converts cleanly to a single gem — no dropped effects.
 
 ## v1.0.16 — API: follower gem-management surface (2026-08-24)
 
