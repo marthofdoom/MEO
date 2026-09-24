@@ -48,7 +48,7 @@ fi
 [[ -f out/Scripts/MEO_MCM.pex ]] || { echo "ERROR: no MEO_MCM.pex (compile it once)" >&2; exit 1; }
 
 cp out/SKSE/Plugins/MEO/meo_runtime.json "$STAGE/SKSE/Plugins/MEO/"
-cp data/fonts/head.ttf data/fonts/body.ttf data/fonts/sans.ttf data/fonts/OFL-*.txt "$STAGE/SKSE/Plugins/MEO/fonts/"
+cp data/fonts/head.ttf data/fonts/body.ttf data/fonts/sans.ttf data/fonts/cjk.otf data/fonts/OFL-*.txt "$STAGE/SKSE/Plugins/MEO/fonts/"
 cp out/MEO.esp "$STAGE/"
 mkdir -p "$STAGE/MCM";     cp -r out/MCM/. "$STAGE/MCM/"
 mkdir -p "$STAGE/Scripts"; cp out/Scripts/MEO_MCM.pex "$STAGE/Scripts/"

@@ -4,6 +4,15 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.18 — Japanese names in the gem pouch (Unreleased)
+
+- **Japanese names show in the gem pouch.** On a Japanese game, item, gem and effect names
+  drew as rows of diamonds. The pouch's fonts have no Japanese letters. MEO now ships a
+  Japanese fallback font (Noto Sans JP) and uses it for any letter the main fonts lack, in
+  every skin. The game's own names now show in Japanese and in any other language that font
+  covers. Korean and Simplified Chinese are not covered yet. MEO's own labels are still
+  English.
+
 ## v1.0.17 — vendor-bought socketed items reveal their gems (2026-08-24)
 
 - **Fixed an item bought from a vendor (e.g. "Fire I Iron Mace") never being recognized
