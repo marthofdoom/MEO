@@ -5029,18 +5029,40 @@ namespace menuhook {
                     std::max(1.0f, static_cast<float>(sd.BufferDesc.Height) / 1080.0f);
                 constexpr const char* kBodyTTF = "Data/SKSE/Plugins/MEO/fonts/body.ttf";
                 constexpr const char* kHeadTTF = "Data/SKSE/Plugins/MEO/fonts/head.ttf";
+                // CJK fallback (Noto Sans JP, OFL). Optional. The game hands us
+                // names as UTF-8, and none of the three faces carries CJK glyphs,
+                // so on a Japanese install every name drew as the missing-glyph
+                // box. Merged into each face RIGHT AFTER that face is added
+                // (MergeMode targets Fonts.back()), with SizePixels 0 so it bakes
+                // at the host face's size. Latin still resolves in the host first.
+                constexpr const char* kCjkOTF = "Data/SKSE/Plugins/MEO/fonts/cjk.otf";
+                const bool haveCjk = std::ifstream(kCjkOTF).good();
+                int cjkMerged = 0;
+                const auto mergeCjk = [&](ImFont* a_host) {
+                    if (!a_host || !haveCjk) {
+                        return;
+                    }
+                    ImFontConfig cfg;
+                    cfg.MergeMode = true;
+                    if (io.Fonts->AddFontFromFileTTF(kCjkOTF, 0.0f, &cfg)) {
+                        ++cjkMerged;
+                    }
+                };
                 if (std::ifstream(kBodyTTF).good()) {
                     g_fontBody =
                         io.Fonts->AddFontFromFileTTF(kBodyTTF, std::floor(19.0f * uiScale));
+                    mergeCjk(g_fontBody);
                 }
                 if (std::ifstream(kHeadTTF).good()) {
                     g_fontHead =
                         io.Fonts->AddFontFromFileTTF(kHeadTTF, std::floor(27.0f * uiScale));
+                    mergeCjk(g_fontHead);
                 }
                 constexpr const char* kSansTTF = "Data/SKSE/Plugins/MEO/fonts/sans.ttf";
                 if (std::ifstream(kSansTTF).good()) {
                     g_fontSans =
                         io.Fonts->AddFontFromFileTTF(kSansTTF, std::floor(16.5f * uiScale));
+                    mergeCjk(g_fontSans);
                 }
                 if (!g_fontHead) {
                     g_fontHead = g_fontBody;  // head falls back to body, not to default
@@ -5048,6 +5070,13 @@ namespace menuhook {
                 spdlog::info("[menu] fonts: body={} head={} sans={} (scale {:.2f})",
                              g_fontBody ? "ok" : "default", g_fontHead ? "ok" : "default",
                              g_fontSans ? "ok" : "default", uiScale);
+                if (haveCjk) {
+                    spdlog::info("[menu] cjk fallback font: loaded, merged into {} face(s) ({})",
+                                 cjkMerged, kCjkOTF);
+                } else {
+                    spdlog::info("[menu] cjk fallback font: absent ({}) -- Japanese names will "
+                                 "draw as boxes", kCjkOTF);
+                }
             }
             if (!ImGui_ImplWin32_Init(sd.OutputWindow) || !ImGui_ImplDX11_Init(g_device, g_context)) {
                 spdlog::error("[menu] ImGui backend init failed — menu disabled");

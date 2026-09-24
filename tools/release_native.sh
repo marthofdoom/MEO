@@ -115,8 +115,9 @@ mkdir -p "$STAGE/SKSE/Plugins/MEO/rulings"
 cp data/rulings/*.rulings.json "$STAGE/SKSE/Plugins/MEO/rulings/"
 # m24 menu skins: three OFL typefaces (Cinzel head / EB Garamond body /
 # Inter sans) + their licenses; the DLL bakes them at init, skins pick.
+# cjk.otf (Noto Sans JP, OFL) is merged into all three as a glyph fallback.
 mkdir -p "$STAGE/SKSE/Plugins/MEO/fonts"
-cp data/fonts/head.ttf data/fonts/body.ttf data/fonts/sans.ttf \
+cp data/fonts/head.ttf data/fonts/body.ttf data/fonts/sans.ttf data/fonts/cjk.otf \
    data/fonts/OFL-*.txt "$STAGE/SKSE/Plugins/MEO/fonts/"
 cp out/MEO.esp "$STAGE/"
 mkdir -p "$STAGE/MCM";     cp -r out/MCM/. "$STAGE/MCM/"
