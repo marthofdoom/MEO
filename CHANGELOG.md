@@ -4,7 +4,7 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
-## v1.0.18 — Japanese names in the gem pouch (Unreleased)
+## v1.0.18 — Japanese names in the gem pouch (2026-09-24)
 
 - **Japanese names show in the gem pouch.** On a Japanese game, item, gem and effect names
   drew as rows of diamonds. The pouch's fonts have no Japanese letters. MEO now ships a
