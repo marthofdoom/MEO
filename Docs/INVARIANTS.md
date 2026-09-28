@@ -65,6 +65,17 @@ the portable "never again" digest for sibling projects.
    reactivation path must leave the gate present; gating is **idempotent** — a
    non-null `Effect::conditions.head` means already-gated (mints are born bare),
    so it is safe to re-run on the deduped shared FF form.
+6c. **Quest-held items are never converted, and the vanilla enchanter stays
+   reachable** (m54, Winterhold QE "Enchanted to Meet You"). Any conversion path
+   (base swap OR instance enchant) skips an inventory item whose extra list carries
+   `kAliasInstanceArray` — a base swap replaces the form, and quest scripts match
+   `akBaseItem == <their item>`. World refs already deferred while aliased. And
+   station takeover must always leave a way into the engine's own CraftingMenu:
+   the "Vanilla Enchanter" button arms `g_vanillaStationOnce`, exits the bench,
+   and re-ACTIVATES the furniture (engine flow — re-fires quest OnSit), MenuSink
+   consumes the flag; a timeout clears it so a missed reopen never silently skips
+   the gem menu on the next visit. Quest mods detect vanilla enchant/disenchant
+   through OnSit/OnGetUp at IsEnchanting benches + OnItemAdded/Removed.
 
 ## Iteration & mutation
 

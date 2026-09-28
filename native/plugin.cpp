@@ -78,6 +78,7 @@
 #include <functional>
 #include <mutex>
 #include <thread>
+#include <future>
 
 #include <algorithm>
 #include <array>
@@ -167,7 +168,7 @@ constexpr std::uint32_t kSerVersion = 12;  // v12: + loose-record holderRefID. v
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.18";  // Japanese (CJK) fallback font in every menu face
+constexpr const char* kMEOVersion = "1.0.19";  // vanilla-enchanter pass-through + quest items never convert (Winterhold QE)
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -2466,6 +2467,10 @@ float g_followerXpRange = 4096.0f;// [XP] fFollowerXpRange — max distance (uni
 bool  g_xpNotify = true;          // [UI] bXPNotify — "Gem XP +N" on kills
 bool  g_enableLogging = true;     // [Debug] bEnableLogging — write MEO.log (default on); ReadConfig sets the spdlog level (m38d)
 bool  g_stationTakeover = true;   // [UI] bStationTakeover — gem menu REPLACES the vanilla enchanting menu
+// m54 (marth: Winterhold QE "Enchanted to Meet You"): one-shot pass-through — the next
+// enchanting-bench CraftingMenu open is left VANILLA (no hide, no gem menu). Set by the
+// station menu's "Vanilla Enchanter" button, consumed by MenuSink, auto-cleared on timeout.
+std::atomic<bool> g_vanillaStationOnce{ false };
 int   g_menuStyle = 0;            // [UI] iMenuStyle — gem menu skin 0..3 (m24 MCM dropdown)
 bool  g_temperNoPerk = true;      // [UI] bTemperNoPerk — socketed gear tempers w/o Arcane Blacksmith (m33)
 // v1.0.6 (marth): every XP MCM slider is a MULTIPLIER that READS 1.0 = intended
@@ -2864,6 +2869,13 @@ public:
                 auto* f = base ? base->As<RE::TESFurniture>() : nullptr;
                 using BT = RE::TESFurniture::WorkBenchData::BenchType;
                 if (f && f->workBenchData.benchType == BT::kEnchanting) {
+                    if (g_vanillaStationOnce.exchange(false)) {
+                        // m54: player asked for the vanilla enchanter this visit — leave
+                        // the engine's menu alone (quest mods that watch vanilla enchant/
+                        // disenchant need it; results still convert to gems afterwards).
+                        spdlog::info("[station] vanilla enchanter pass-through");
+                        return;
+                    }
                     if (g_stationTakeover) {
                         // MEO replaces enchanting: dismiss the vanilla menu
                         // and let the gem menu own the station (m18).
@@ -4263,6 +4275,52 @@ void CloseGemMenu() {
     }
 }
 
+// m54: "Vanilla Enchanter" — hand this visit to the engine's own enchanting menu.
+// Engine flows only (follow-engine-flows): remember the bench, leave it the way Close
+// does (IdleForceDefaultState, via CloseGemMenu), then re-ACTIVATE the same furniture so
+// the game seats the player and opens its CraftingMenu itself; MenuSink consumes the
+// one-shot flag and leaves that menu vanilla. Re-seating also re-fires quest OnSit
+// handlers (Winterhold QE keys its progress off OnSit/OnGetUp at IsEnchanting benches).
+void RequestVanillaStation() {
+    SKSE::GetTaskInterface()->AddTask([]() {
+        auto* player = RE::PlayerCharacter::GetSingleton();
+        auto  furn = player ? player->GetOccupiedFurniture() : RE::ObjectRefHandle{};
+        if (!furn.get()) {
+            spdlog::warn("[station] vanilla enchanter: player isn't at a bench");
+            return;
+        }
+        g_vanillaStationOnce = true;
+        CloseGemMenu();  // takeover: forces the furniture exit
+        std::thread([furn]() {
+            // Re-activate once the exit has settled; retry while still seated.
+            for (int attempt = 0; attempt < 6; ++attempt) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(700));
+                std::promise<bool> done;
+                auto               fut = done.get_future();
+                SKSE::GetTaskInterface()->AddTask([furn, &done]() {
+                    auto* pc = RE::PlayerCharacter::GetSingleton();
+                    auto  ref = furn.get();
+                    if (!pc || !ref || pc->GetOccupiedFurniture().get()) {
+                        done.set_value(false);  // still getting up — try again shortly
+                        return;
+                    }
+                    ref->ActivateRef(pc, 0, nullptr, 1, false);
+                    done.set_value(true);
+                });
+                if (fut.get()) {
+                    break;
+                }
+            }
+            // Never leave the flag armed: if the reopen didn't consume it, the NEXT
+            // normal bench visit would silently skip the gem menu.
+            std::this_thread::sleep_for(std::chrono::milliseconds(4000));
+            if (g_vanillaStationOnce.exchange(false)) {
+                spdlog::warn("[station] vanilla enchanter: reopen not observed — flag cleared");
+            }
+        }).detach();
+    });
+}
+
 void OpenGemMenu(bool a_station);  // declared earlier; defined after the render hooks
 
 // ── Render + input hooks (Wheeler pattern, IDs verified from source) ──
@@ -4629,13 +4687,20 @@ namespace menuhook {
         const int  navLR    = g_paneReq.exchange(0);
         const bool navMoved = navUp || navDown || (navLR != 0);
         bool       gemActivate = false;
-        if (tabCount <= 1) { g_navZone = 0; }  // P1: no tab row exists without followers
+        // m54: footer zone (2) = the "Vanilla Enchanter" button, only at a taken-over bench
+        // on the player tab. Down past the last row enters it; A activates; Up returns.
+        const bool footerNav = g_menu.station.load() && g_stationTakeover && g_menu.activeTab == 0;
+        if (tabCount <= 1 && g_navZone == 1) { g_navZone = 0; }  // P1: no tab row exists without followers
+        if (g_navZone == 2 && !footerNav) { g_navZone = 0; }
         if (!busy) {
             if (g_navZone == 1) {  // TAB ROW: L/R move highlight, A confirms, Down enters panes
                 if (navLR < 0)      { g_tabSel = std::max(0, g_tabSel - 1); }
                 else if (navLR > 0) { g_tabSel = std::min(tabCount - 1, g_tabSel + 1); }
                 if (navAct)         { pickTab(g_tabSel); }  // also drops back into the panes
                 else if (navDown)   { g_navZone = 0; }
+            } else if (g_navZone == 2) {  // FOOTER: A = vanilla enchanter, Up = back to panes
+                if (navUp)       { g_navZone = 0; }
+                else if (navAct) { RequestVanillaStation(); }
             } else {               // PANES
                 int&      sel = (g_activePane == 0) ? g_menu.selItem : g_gemSel;
                 const int cnt = (g_activePane == 0) ? itemsCount : g_gemCount;
@@ -4644,6 +4709,8 @@ namespace menuhook {
                     else if (tabCount > 1) { g_navZone = 1; g_tabSel = g_menu.activeTab; }  // off the top -> tabs (only if tabs exist)
                 } else if (navDown && sel < cnt - 1) {
                     ++sel;
+                } else if (navDown && footerNav) {
+                    g_navZone = 2;  // m54: past the last row -> footer button
                 }
                 if (navLR > 0 && g_activePane == 0) {        // items -> gems (carry row, clamped)
                     g_activePane = 1;
@@ -4970,12 +5037,31 @@ namespace menuhook {
         if (busy) {
             ImGui::TextDisabled("Working...");
         } else if (g_menu.station.load() && g_menu.activeTab == 0) {
-            ImGui::TextDisabled("Click an item, then a gem. Filled sockets: click to remove; feed souls or destroy here.");
+            ImGui::TextDisabled(g_stationTakeover
+                                    ? "Click an item, then a gem. Filled sockets: click to remove; feed souls or "
+                                      "destroy here. Pad: Down past the last row for the vanilla enchanter."
+                                    : "Click an item, then a gem. Filled sockets: click to remove; feed souls or destroy here.");
         } else {
             ImGui::TextDisabled("Click an item, then a gem to socket it. Pad: stick/d-pad move, "
                                 "A select, B close. Esc or the pouch key closes.");
         }
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 70.0f);
+        // m54: at a taken-over bench, offer the engine's own enchanting menu for this
+        // visit (quest mods that watch vanilla enchant/disenchant, e.g. Winterhold QE).
+        const bool vanillaBtn = g_menu.station.load() && g_stationTakeover && g_menu.activeTab == 0;
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - (vanillaBtn ? 230.0f : 70.0f));
+        if (vanillaBtn) {
+            const bool padHl = (g_navZone == 2);  // manual-nav highlight (menu is NoNav)
+            if (padHl) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            }
+            if (ImGui::Button("Vanilla Enchanter") && !busy) {
+                RequestVanillaStation();
+            }
+            if (padHl) {
+                ImGui::PopStyleColor();
+            }
+            ImGui::SameLine();
+        }
         if (ImGui::Button("Close") && !busy) {
             CloseGemMenu();
         }
@@ -6465,6 +6551,22 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
         if (it == g_convert.end() || data.first <= 0) {
             continue;
         }
+        // m54 (Winterhold QE "Enchanted to Meet You"): NEVER convert an item a quest is
+        // holding. The base swap replaces the form, so a quest script matching
+        // `akBaseItem == <its item>` (the "Old Enchanted Dagger") can never fire again.
+        // World refs already defer while aliased; this closes the in-inventory half. The
+        // whole entry is skipped: a same-base non-quest copy stays unconverted too (rare).
+        if (data.second && data.second->extraLists) {
+            bool questHeld = false;
+            for (auto* xl : *data.second->extraLists) {
+                questHeld = questHeld || (xl && xl->HasType(RE::ExtraDataType::kAliasInstanceArray));
+            }
+            if (questHeld) {
+                spdlog::info("[convert-skip] '{}' {:08X} — held by a quest alias, left as-is",
+                             obj->GetName(), obj->GetFormID());
+                continue;
+            }
+        }
         bool worn = false, left = false;
         if (data.second && data.second->IsWorn()) {
             worn = true;
@@ -6517,6 +6619,9 @@ int ConvertInventory(RE::TESObjectREFR* a_holder) {
             for (auto* xl : *data.second->extraLists) {
                 if (!xl || !xl->HasType(RE::ExtraDataType::kEnchantment)) {
                     continue;
+                }
+                if (xl->HasType(RE::ExtraDataType::kAliasInstanceArray)) {
+                    continue;  // m54: quest-held instance (e.g. a quest's player-enchanted sword) — never convert
                 }
                 auto* xid = xl->GetByType<RE::ExtraUniqueID>();
                 bool  ours = false;
@@ -6811,7 +6916,7 @@ void ConvertWorldRef(RE::TESObjectREFR* a_ref) {
                  // per-unit on pickup via the container sink instead.
     }
     if (a_ref->extraList.HasType(RE::ExtraDataType::kAliasInstanceArray)) {
-        spdlog::info("[convert-defer] '{}' {:08X} quest-aliased — converts on pickup",
+        spdlog::info("[convert-defer] '{}' {:08X} quest-aliased — left as-is (m54: also after pickup)",
                      base->GetName(), a_ref->GetFormID());
         return;  // quest-aliased — same caution
     }

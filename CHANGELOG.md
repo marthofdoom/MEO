@@ -4,6 +4,19 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## v1.0.19 — quest mods that need vanilla enchanting work again (2026-09-27)
+
+- **New "Vanilla Enchanter" button at the enchanting table.** When MEO's gem menu takes over
+  the table, you can now switch to the game's own enchanting menu for that visit (gamepad:
+  press Down past the last row, then A). Quest mods that ask you to enchant or disenchant
+  something the vanilla way — like *College of Winterhold - Quest Expansion*'s
+  "Enchanted to Meet You" — can now be completed. Anything you enchant there still turns
+  into a socketed gem afterwards, as usual.
+- **MEO no longer converts items a quest is holding.** A quest's enchanted item (for
+  example the "Old Enchanted Dagger" you're asked to disenchant) is left exactly as the
+  quest made it, so the quest can still recognise it. It converts normally once the quest
+  lets go of it.
+
 ## v1.0.18 — Japanese names in the gem pouch (2026-09-24)
 
 - **Japanese names show in the gem pouch.** On a Japanese game, item, gem and effect names
