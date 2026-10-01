@@ -12,3 +12,9 @@ add_commonlibsse_plugin(${PROJECT_NAME} SOURCES plugin.cpp)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
 target_precompile_headers(${PROJECT_NAME} PRIVATE PCH.h)
 target_link_libraries(${PROJECT_NAME} PRIVATE imgui::imgui d3d11 nlohmann_json::nlohmann_json)
+
+# Emit a PDB even in Release so a field crash symbolizes to a source line.
+# /Zi adds debug info; /DEBUG writes the .pdb; /OPT:REF,ICF undo the size cost
+# /DEBUG would otherwise leave on. The CI uploads MEO.pdb beside MEO.dll.
+target_compile_options(${PROJECT_NAME} PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/Zi>)
+target_link_options(${PROJECT_NAME} PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/DEBUG /OPT:REF /OPT:ICF>)
