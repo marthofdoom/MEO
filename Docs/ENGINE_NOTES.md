@@ -741,7 +741,7 @@ gotchas:
   `MenuSocket` call the click handler does (target slot: the slot, or -1 = first free /
   socket 1 for an item row; a filled slot swaps via the m35e evict). Gotchas: (1) a
   `Selectable` row that is also a drag source must NOT act on `IsItemActivated()` (press) or
-  the drag start socketes the gem; use the `Selectable` return (release, which ImGui
+  the drag start sockets the gem; use the `Selectable` return (release, which ImGui
   suppresses once the press became a drag). (2) A zero-width `Dummy` has no drop rect: the
   empty-socket row is a full-width `InvisibleButton`. (3) Targets are gated on `!busy`;
   sources don't touch `gr`/`g_gemSel`/zone state, and everything stays under `NoNav`.
