@@ -735,3 +735,17 @@ gotchas:
   and `exchange()`-consume the atomic requests once per frame so a held direction can't
   repeat (down-edge only). Clear ImGui keys on `WM_KILLFOCUS`. `d3d11.h` pulls `wingdi.h`
   which `#define`s `GetObject`→`GetObjectW`; `#undef GetObject` after the D3D includes.
+- **Mouse drag-and-drop coexists with fully manual nav.** Loose-gem rows are
+  `BeginDragDropSource` (payload `"MEO_GEM"` = base + uid by value); filled-socket rows,
+  empty-socket rows and item rows are `BeginDragDropTarget`s that queue the SAME
+  `MenuSocket` call the click handler does (target slot: the slot, or -1 = first free /
+  socket 1 for an item row; a filled slot swaps via the m35e evict). Gotchas: (1) a
+  `Selectable` row that is also a drag source must NOT act on `IsItemActivated()` (press) or
+  the drag start socketes the gem; use the `Selectable` return (release, which ImGui
+  suppresses once the press became a drag). (2) A zero-width `Dummy` has no drop rect: the
+  empty-socket row is a full-width `InvisibleButton`. (3) Targets are gated on `!busy`;
+  sources don't touch `gr`/`g_gemSel`/zone state, and everything stays under `NoNav`.
+- **Gem sound effects** (`bGemSounds`) play 2D UI sounds from the main thread:
+  level-up = SOUN 0x18538 (`TESSound::descriptor`), socket/remove via
+  `BSAudioManager::BuildSoundDataFromEditorID` (+ `BSSoundHandle::IsValid` fallback chain).
+  None are the MAGEnchantedUnsheathe hum SNDRs, so the windowed mute never touches them.

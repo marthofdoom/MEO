@@ -2466,6 +2466,7 @@ float g_followerXpShare = 0.5f;   // [XP] fFollowerXpShare — bug3: fraction of
 float g_followerXpRange = 4096.0f;// [XP] fFollowerXpRange — max distance (units) from the player for a follower to receive the kill-xp share (0 = any loaded follower). ~58 m default = participated-in-the-fight radius.
 bool  g_xpNotify = true;          // [UI] bXPNotify — "Gem XP +N" on kills
 bool  g_enableLogging = true;     // [Debug] bEnableLogging — write MEO.log (default on); ReadConfig sets the spdlog level (m38d)
+bool  g_gemSounds = true;         // [UI] bGemSounds — socket / remove / level-up sound effects (one toggle)
 bool  g_stationTakeover = true;   // [UI] bStationTakeover — gem menu REPLACES the vanilla enchanting menu
 // m54 (marth: Winterhold QE "Enchanted to Meet You"): one-shot pass-through — the next
 // enchanting-bench CraftingMenu open is left VANILLA (no hide, no gem menu). Set by the
@@ -2473,6 +2474,95 @@ bool  g_stationTakeover = true;   // [UI] bStationTakeover — gem menu REPLACES
 std::atomic<bool> g_vanillaStationOnce{ false };
 int   g_menuStyle = 0;            // [UI] iMenuStyle — gem menu skin 0..3 (m24 MCM dropdown)
 bool  g_temperNoPerk = true;      // [UI] bTemperNoPerk — socketed gear tempers w/o Arcane Blacksmith (m33)
+
+// ── Gem sound effects (bGemSounds: ONE toggle for socket / remove / level-up) ──────
+// All three play 2D UI sounds through the engine's own audio manager, on the main
+// thread (menu actions run in SKSE tasks; GrantGemXP is a game-thread path). NONE of
+// these touch the MAGEnchantedUnsheathe hum SNDRs (kEnchHumSndr 0x1037D6..9) that the
+// windowed mute (OpenEnchHumMuteWindow) attenuates, so they are never swallowed by it.
+//  * Level-up: SOUN 0x00018538 "UISkillIncrease" (Skyrim.esm) -> its SDSC descriptor
+//    (SNDR 0x0003C7CF). Same proven FormID path as MRO's skill-up chime: the SOUN is a
+//    TESSound, NOT a BGSSoundDescriptorForm, so LookupByID<BGSSoundDescriptorForm> would
+//    return nullptr; go through TESSound::descriptor.
+//  * Socket / remove: engine-resolved editor IDs via BSAudioManager::BuildSoundDataFromEditorID
+//    (the audio manager resolves SNDR/SOUN names itself, independent of the form editorID
+//    map the LookupByEditorID anti-pattern is about). A chain of candidates is tried and
+//    the first that yields a valid handle plays. UNVERIFIED in-game (no local ESM): see log
+//    line "[sfx]" on first use to learn which candidate resolved.
+static bool PlayUiHandle(RE::BSSoundHandle& a_h) {
+    if (!a_h.IsValid()) {
+        return false;
+    }
+    a_h.SetVolume(1.0f);
+    return a_h.Play();
+}
+
+static bool PlayUiEditorID(const char* a_eid) {
+    auto* am = RE::BSAudioManager::GetSingleton();
+    if (!am || !a_eid) {
+        return false;
+    }
+    RE::BSSoundHandle h;
+    am->BuildSoundDataFromEditorID(h, a_eid, 0x1A);
+    return PlayUiHandle(h);
+}
+
+enum class GemSfx { kSocket, kRemove, kLevelUp };
+
+static void PlayGemSfx(GemSfx a_kind) {
+    if (!g_gemSounds) {
+        return;
+    }
+    static std::atomic<std::uint64_t> s_lastLevelUpMs{ 0 };
+    if (a_kind == GemSfx::kLevelUp) {
+        // At most one level-up cue per half second: a batch (kill XP fanning across
+        // many worn gems / followers) must not stack into a wall of chimes.
+        const std::uint64_t now = NowMs();
+        const std::uint64_t last = s_lastLevelUpMs.load(std::memory_order_relaxed);
+        if (last != 0 && now - last < 500) {
+            return;
+        }
+        s_lastLevelUpMs.store(now, std::memory_order_relaxed);
+        bool ok = false;
+        if (auto* snd = RE::TESForm::LookupByID<RE::TESSound>(0x00018538)) {
+            if (snd->descriptor) {
+                if (auto* am = RE::BSAudioManager::GetSingleton()) {
+                    RE::BSSoundHandle h;
+                    if (am->BuildSoundDataFromDescriptor(h, snd->descriptor)) {
+                        ok = PlayUiHandle(h);
+                    }
+                }
+            }
+        }
+        if (!ok) {
+            ok = PlayUiEditorID("UISkillIncreaseSD");  // same chime, by name
+        }
+        static bool s_logged = false;
+        if (!s_logged) {
+            s_logged = true;
+            spdlog::info("[sfx] level-up chime {}", ok ? "played" : "FAILED to resolve");
+        }
+        return;
+    }
+    static const char* const kSocketEids[] = { "ITMGemUp", "UIMenuOK" };
+    static const char* const kRemoveEids[] = { "ITMGemDown", "UIMenuCancel" };
+    const bool               sock = a_kind == GemSfx::kSocket;
+    const char* const*       eids = sock ? kSocketEids : kRemoveEids;
+    static bool              s_logged[2] = { false, false };
+    for (int i = 0; i < 2; ++i) {
+        if (PlayUiEditorID(eids[i])) {
+            if (!s_logged[sock ? 0 : 1]) {
+                s_logged[sock ? 0 : 1] = true;
+                spdlog::info("[sfx] {} sound via '{}'", sock ? "socket" : "remove", eids[i]);
+            }
+            return;
+        }
+    }
+    if (!s_logged[sock ? 0 : 1]) {
+        s_logged[sock ? 0 : 1] = true;
+        spdlog::warn("[sfx] {} sound: no candidate resolved", sock ? "socket" : "remove");
+    }
+}
 // v1.0.6 (marth): every XP MCM slider is a MULTIPLIER that READS 1.0 = intended
 // balance; the real per-event rate is baked into a k* constant below and scaled by
 // the 1.0-default multiplier. So the slider is a clean "×N from tuned", not a raw rate.
@@ -2537,6 +2627,7 @@ static void ApplyIniFile(const char* a_path) {
         else if (key == "bAllowUncoveredGenerics") g_allowUncoveredGenerics = val != 0.0f;
         else if (key == "bEnableLogging")     g_enableLogging = val != 0.0f;
         else if (key == "bStationTakeover")   g_stationTakeover = val != 0.0f;
+        else if (key == "bGemSounds")         g_gemSounds = val != 0.0f;
         else if (key == "iMenuStyle")         g_menuStyle = std::clamp(static_cast<int>(val), 0, 3);
         else if (key == "bTemperNoPerk")      g_temperNoPerk = val != 0.0f;
         else if (key == "fEnchSkillXP")       g_enchSkillXPMult = val;
@@ -2682,6 +2773,13 @@ struct MenuGemRow {
     int           theme = -1;    // Theme index for the accent swatch
     float         xp = -1.0f;    // banked XP (instance rows); -1 = plain gem
     float         need = 0.0f;
+};
+// Mouse drag-and-drop payload (ImGui "MEO_GEM"): identity of the dragged loose gem,
+// copied by value so a snapshot rebuild mid-drag can't dangle (the drop re-resolves it
+// inside MenuSocket exactly like a click).
+struct GemDragPayload {
+    RE::FormID    base = 0;
+    std::uint16_t uid = 0;
 };
 struct MenuState {
     std::mutex               lock;
@@ -3011,6 +3109,7 @@ bool GrantGemXP(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataLis
             DispelStaleGemEffects();  // m24c: replace can leave the old-level ability stacking
         }
     }
+    PlayGemSfx(GemSfx::kLevelUp);  // debounced; shares the bGemSounds toggle
     const bool isPlayer = a_owner->IsPlayerRef();
     if (isPlayer) {  // m37: a gem reaching a new level is Enchanting practice (× the level)
         GrantEnchantingXP(g_levelSkillXP * newLevel);
@@ -3813,6 +3912,7 @@ void MenuUnsocket(RE::FormID a_base, std::uint16_t a_uid, std::uint8_t a_slot,
     GiveGemInstance(gemIt->second, rec.level, rec.xp);
     const auto& rg = g_gems[gemIt->second];
     Notify(std::format("{} {} returned to your pouch.", GemName(rg), meo::kRoman[rec.level - 1]));
+    PlayGemSfx(GemSfx::kRemove);
 }
 
 // M10 (stage 2b): destroy a socketed gem at a station, reclaiming 1/10 of its
@@ -4142,6 +4242,7 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
     const auto& rg = g_gems[gemIdx];
     Notify(std::format("{} {} socketed into {}.", GemName(rg), meo::kRoman[level - 1],
                        itemForm->GetName()));
+    PlayGemSfx(GemSfx::kSocket);
 }
 
 // M10 (stage 2a): consume the smallest filled, non-reusable soul gem and
@@ -4559,8 +4660,8 @@ namespace menuhook {
             return std::format("{}: {:.0f}", GemName(rg), mag);
         };
         auto rungTooltip = [&](int a_gemIdx, int a_level, const std::string& a_action) {
-            if (!ImGui::IsItemHovered()) {
-                return;
+            if (!ImGui::IsItemHovered() || ImGui::GetDragDropPayload()) {
+                return;  // no row tooltip while a gem is being dragged (drag preview shows instead)
             }
             ImGui::BeginTooltip();
             ImGui::TextUnformatted(a_action.c_str());
@@ -4733,6 +4834,36 @@ namespace menuhook {
         }
         const bool itemsActive = (g_navZone == 0 && g_activePane == 0);
         const bool gemsActive  = (g_navZone == 0 && g_activePane == 1);
+        // Mouse drag-and-drop target (call right after the row's last item). a_slot -1 =
+        // the click flow's default: first empty socket, else replace socket 1. Runs the
+        // SAME MenuSocket call the click handler does (owner/tab + worn flag included);
+        // MenuSocket already does the swap-with-evict for a filled target slot (m35e).
+        // Mouse-only by construction: ImGui drag state never comes from the manual nav.
+        auto gemDropTarget = [&](const MenuItemRow& a_item, int a_slot) {
+            if (busy || !ImGui::BeginDragDropTarget()) {
+                return;
+            }
+            if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("MEO_GEM")) {
+                if (pl->DataSize == static_cast<int>(sizeof(GemDragPayload))) {
+                    GemDragPayload g;
+                    std::memcpy(&g, pl->Data, sizeof(g));
+                    int target = a_slot;
+                    if (target < 0) {
+                        target = 0;  // all filled -> replace socket 1 (same as the click flow)
+                        for (int s = 0; s < a_item.capacity && s < kMaxSockets; ++s) {
+                            if (a_item.slotGem[s].empty()) { target = s; break; }
+                        }
+                    }
+                    g_destroyArm = 0;
+                    const MenuItemRow item = a_item;  // copy for the closure
+                    QueueMenuTask([item, g, target, activeOwner]() {
+                        MenuSocket(item.base, item.uid, g.base, g.uid, target, activeOwner,
+                                   item.worn);
+                    });
+                }
+            }
+            ImGui::EndDragDropTarget();
+        };
         // Left pane: NEVER disabled — selection is pure UI state (identity-
         // tracked across rebuilds since m19e), and eating clicks during the
         // brief busy window read as "the menu misses clicks" in the field.
@@ -4765,6 +4896,7 @@ namespace menuhook {
                 g_navZone = 0;
                 g_activePane = 0;
             }
+            gemDropTarget(row, -1);  // drag a gem onto an item row = socket it (first free slot)
             // Socket pips: one diamond per slot, filled+tinted when occupied.
             float cx = rp.x + 12.0f;
             for (int s = 0; s < row.capacity && s < kMaxSockets; ++s) {
@@ -4806,7 +4938,10 @@ namespace menuhook {
                 ImGui::PushID(s);
                 const ImVec2 rp = ImGui::GetCursorScreenPos();
                 if (sel.slotGem[s].empty()) {
-                    ImGui::Dummy(ImVec2(0.0f, rowH));
+                    // InvisibleButton (full width) instead of a zero-width Dummy so the row has
+                    // a real rect for the drag-drop target; NoNav windows, so no nav focus.
+                    ImGui::InvisibleButton("##emptyslot", ImVec2(innerW, rowH));
+                    if (!station) { gemDropTarget(sel, s); }  // drop a gem = socket this slot
                     DrawDiamond(dlR, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 4.5f,
                                 ImGui::GetColorU32(ImGuiCol_TextDisabled), false);
                     dlR->AddText(ImVec2(rp.x + 28.0f, rp.y + (rowH - lineH) * 0.5f),
@@ -4821,6 +4956,7 @@ namespace menuhook {
                 ImGui::Selectable("##slot", picked || rsel, 0, ImVec2(0.0f, rowH));
                 if (rsel && navMoved) { ImGui::SetScrollHereY(0.5f); }
                 const bool   act = ImGui::IsItemActivated() || (rsel && gemActivate);  // click or gamepad-A
+                if (!station) { gemDropTarget(sel, s); }  // drop a gem = swap into this socket
                 ++gr;
                 rungTooltip(sel.slotGemIdx[s], sel.slotLevel[s],
                             std::string(station ? "Select " : "Remove ") + sel.slotGem[s]);
@@ -4989,9 +5125,20 @@ namespace menuhook {
                 const ImVec2 rp = ImGui::GetCursorScreenPos();
                 ImGui::PushID(1000 + i);
                 const bool rsel = gemsActive && g_gemSel == gr;
-                ImGui::Selectable("##gem", rsel, 0, ImVec2(0.0f, rowH));
+                // Mouse click = the Selectable's RELEASE return (not IsItemActivated/press):
+                // a press would socket the gem the instant a drag starts. ImGui suppresses
+                // the return when the press became a drag, so click-to-socket stays one
+                // single-shot signal; gamepad-A is the separate manual gemActivate edge.
+                const bool gemClicked = ImGui::Selectable("##gem", rsel, 0, ImVec2(0.0f, rowH));
                 if (rsel && navMoved) { ImGui::SetScrollHereY(0.5f); }
-                const bool act = ImGui::IsItemActivated() || (rsel && gemActivate);  // click or gamepad-A
+                const bool act = gemClicked || (rsel && gemActivate);
+                if (!busy && ImGui::BeginDragDropSource()) {  // mouse drag a gem onto a socket/item
+                    const GemDragPayload dp{ gem.base, gem.uid };
+                    ImGui::SetDragDropPayload("MEO_GEM", &dp, sizeof(dp));
+                    ImGui::TextUnformatted(gem.label.c_str());
+                    ImGui::TextDisabled("Level %s", meo::kRoman[std::clamp(gem.level, 1, 5) - 1]);
+                    ImGui::EndDragDropSource();
+                }
                 ++gr;
                 rungTooltip(gem.gemIdx, gem.level,
                             std::format("{} {}", swapping ? "Swap in" : "Socket", gem.label));
