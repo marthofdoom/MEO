@@ -2765,7 +2765,22 @@ struct MenuGemRow {
 struct GemDragPayload {
     RE::FormID    base = 0;
     std::uint16_t uid = 0;
+    bool          isArmor = false;    // domain, for the targets' compatibility peek
+    bool          isSupport = false;  // support gems need a dual-socket item
 };
+// Pending mouse press on a loose-gem row (draw thread only). A press only RECORDS the
+// click; the action runs when the left button is released anywhere (a raw-delta cursor
+// can leave the row between press and release), unless the press became a drag. Identity
+// is base+uid plus the owning tab/item, so a snapshot rebuild or tab change drops it.
+struct PendingGemClick {
+    bool          active = false;
+    RE::FormID    gemBase = 0;
+    std::uint16_t gemUid = 0;
+    int           tab = 0;
+    RE::FormID    itemBase = 0;
+    std::uint16_t itemUid = 0;
+};
+PendingGemClick g_pendingGem;
 struct MenuState {
     std::mutex               lock;
     std::atomic<bool>        open{ false };
@@ -4960,31 +4975,90 @@ namespace menuhook {
         // SAME MenuSocket call the click handler does (owner/tab + worn flag included);
         // MenuSocket already does the swap-with-evict for a filled target slot (m35e).
         // Mouse-only by construction: ImGui drag state never comes from the manual nav.
-        auto gemDropTarget = [&](const MenuItemRow& a_item, int a_slot) {
+        // Compatibility mirror of MenuSocket's rules (domain unless a Conduit is present,
+        // support only in a dual-socket item with no other support, capacity > 0).
+        // a_slot -1 = item-row drop: needs a FREE slot (a full item takes the drop only on
+        // its specific socket row, so a drop on the row never silently replaces socket 1).
+        auto gemFits = [&](const MenuItemRow& a_item, int a_slot, const GemDragPayload& g) {
+            if (a_item.capacity <= 0) { return false; }
+            int target = a_slot;
+            if (target < 0) {
+                for (int s = 0; s < a_item.capacity && s < kMaxSockets; ++s) {
+                    if (a_item.slotGem[s].empty()) { target = s; break; }
+                }
+                if (target < 0) { return false; }
+            }
+            if (g.isSupport) {
+                if (a_item.capacity < 2) { return false; }
+                for (int s = 0; s < a_item.capacity && s < kMaxSockets; ++s) {
+                    if (s == target || a_item.slotGem[s].empty()) { continue; }
+                    const int gi = a_item.slotGemIdx[s];
+                    if (gi >= 0 && gi < static_cast<int>(g_gems.size()) &&
+                        g_gems[gi].def->isSupport) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            return g.isArmor == a_item.isArmor || a_item.hasConduit;
+        };
+        // a_selectIdx >= 0 (item rows): a successful drop also selects that item so the
+        // right pane shows the socketed result.
+        auto gemDropTarget = [&](const MenuItemRow& a_item, int a_slot, int a_selectIdx) {
             if (busy || !ImGui::BeginDragDropTarget()) {
                 return;
             }
-            if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("MEO_GEM")) {
-                if (pl->DataSize == static_cast<int>(sizeof(GemDragPayload))) {
-                    GemDragPayload g;
-                    std::memcpy(&g, pl->Data, sizeof(g));
-                    int target = a_slot;
-                    if (target < 0) {
-                        target = 0;  // all filled -> replace socket 1 (same as the click flow)
-                        for (int s = 0; s < a_item.capacity && s < kMaxSockets; ++s) {
-                            if (a_item.slotGem[s].empty()) { target = s; break; }
+            // Peek first: only compatible targets highlight/accept; the rest stay inert.
+            const ImGuiPayload* peek =
+                ImGui::AcceptDragDropPayload("MEO_GEM", ImGuiDragDropFlags_AcceptPeekOnly);
+            if (peek && peek->DataSize == static_cast<int>(sizeof(GemDragPayload))) {
+                GemDragPayload g;
+                std::memcpy(&g, peek->Data, sizeof(g));
+                const bool fits = gemFits(a_item, a_slot, g);
+                if (!fits && peek->IsDelivery()) {
+                    SKSE::GetTaskInterface()->AddTask(
+                        []() { Notify("That gem doesn't fit there."); });
+                }
+                if (fits) {
+                    const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("MEO_GEM");
+                    if (pl) {
+                        int target = a_slot;
+                        if (target < 0) {
+                            target = 0;
+                            for (int s = 0; s < a_item.capacity && s < kMaxSockets; ++s) {
+                                if (a_item.slotGem[s].empty()) { target = s; break; }
+                            }
                         }
+                        g_destroyArm = 0;
+                        if (a_selectIdx >= 0) {
+                            g_menu.selItem = a_selectIdx;
+                            g_menu.selBase = a_item.base;
+                            g_menu.selUid = a_item.uid;
+                            g_menu.selSlot = -1;
+                            g_navZone = 0;
+                            g_activePane = 0;
+                        }
+                        const MenuItemRow item = a_item;  // copy for the closure
+                        QueueMenuTask([item, g, target, activeOwner]() {
+                            MenuSocket(item.base, item.uid, g.base, g.uid, target, activeOwner,
+                                       item.worn);
+                        });
                     }
-                    g_destroyArm = 0;
-                    const MenuItemRow item = a_item;  // copy for the closure
-                    QueueMenuTask([item, g, target, activeOwner]() {
-                        MenuSocket(item.base, item.uid, g.base, g.uid, target, activeOwner,
-                                   item.worn);
-                    });
                 }
             }
             ImGui::EndDragDropTarget();
         };
+        // Pending gem click bookkeeping (see PendingGemClick). No button down and no
+        // release this frame = stale (menu closed mid-press): drop it.
+        const bool mouseReleased = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+        if (g_pendingGem.active &&
+            (g_pendingGem.tab != g_menu.activeTab ||
+             (!mouseReleased && !ImGui::IsMouseDown(ImGuiMouseButton_Left)))) {
+            g_pendingGem.active = false;
+        }
+        // Drag-start distance for gem rows: larger than ImGui's default so hand jitter
+        // on a click never becomes a drag. Scales with the UI scale.
+        const float dragThreshold = 14.0f * ImGui::GetIO().FontGlobalScale;
         // Left pane: NEVER disabled — selection is pure UI state (identity-
         // tracked across rebuilds since m19e), and eating clicks during the
         // brief busy window read as "the menu misses clicks" in the field.
@@ -5017,7 +5091,7 @@ namespace menuhook {
                 g_navZone = 0;
                 g_activePane = 0;
             }
-            gemDropTarget(row, -1);  // drag a gem onto an item row = socket it (first free slot)
+            gemDropTarget(row, -1, i);  // drag a gem onto an item row = socket it (first free slot) + select it
             // Socket pips: one diamond per slot, filled+tinted when occupied.
             float cx = rp.x + 12.0f;
             for (int s = 0; s < row.capacity && s < kMaxSockets; ++s) {
@@ -5062,7 +5136,7 @@ namespace menuhook {
                     // InvisibleButton (full width) instead of a zero-width Dummy so the row has
                     // a real rect for the drag-drop target; NoNav windows, so no nav focus.
                     ImGui::InvisibleButton("##emptyslot", ImVec2(innerW, rowH));
-                    if (!station) { gemDropTarget(sel, s); }  // drop a gem = socket this slot
+                    if (!station) { gemDropTarget(sel, s, -1); }  // drop a gem = socket this slot
                     DrawDiamond(dlR, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 4.5f,
                                 ImGui::GetColorU32(ImGuiCol_TextDisabled), false);
                     dlR->AddText(ImVec2(rp.x + 28.0f, rp.y + (rowH - lineH) * 0.5f),
@@ -5077,7 +5151,7 @@ namespace menuhook {
                 ImGui::Selectable("##slot", picked || rsel, 0, ImVec2(0.0f, rowH));
                 if (rsel && navMoved) { ImGui::SetScrollHereY(0.5f); }
                 const bool   act = ImGui::IsItemActivated() || (rsel && gemActivate);  // click or gamepad-A
-                if (!station) { gemDropTarget(sel, s); }  // drop a gem = swap into this socket
+                if (!station) { gemDropTarget(sel, s, -1); }  // drop a gem = swap into this socket
                 ++gr;
                 rungTooltip(sel.slotGemIdx[s], sel.slotLevel[s],
                             std::string(station ? "Select " : "Remove ") + sel.slotGem[s]);
@@ -5246,19 +5320,36 @@ namespace menuhook {
                 const ImVec2 rp = ImGui::GetCursorScreenPos();
                 ImGui::PushID(1000 + i);
                 const bool rsel = gemsActive && g_gemSel == gr;
-                // Mouse click = the Selectable's RELEASE return (not IsItemActivated/press):
-                // a press would socket the gem the instant a drag starts. ImGui suppresses
-                // the return when the press became a drag, so click-to-socket stays one
-                // single-shot signal; gamepad-A is the separate manual gemActivate edge.
-                const bool gemClicked = ImGui::Selectable("##gem", rsel, 0, ImVec2(0.0f, rowH));
+                // Mouse click = pending-press model: the press only records the click and the
+                // release ANYWHERE runs it (a raw-delta cursor can leave the row between press
+                // and release; acting on the Selectable's release return missed those clicks).
+                // A press that becomes a drag clears the pending click. Gamepad-A is the
+                // separate manual gemActivate edge.
+                ImGui::Selectable("##gem", rsel, 0, ImVec2(0.0f, rowH));
                 if (rsel && navMoved) { ImGui::SetScrollHereY(0.5f); }
-                const bool act = gemClicked || (rsel && gemActivate);
-                if (!busy && ImGui::BeginDragDropSource()) {  // mouse drag a gem onto a socket/item
-                    const GemDragPayload dp{ gem.base, gem.uid };
+                if (!busy && ImGui::IsItemActivated()) {
+                    g_pendingGem = { true, gem.base, gem.uid, g_menu.activeTab, sel.base, sel.uid };
+                }
+                bool act = rsel && gemActivate;
+                if (g_pendingGem.active && mouseReleased && g_pendingGem.gemBase == gem.base &&
+                    g_pendingGem.gemUid == gem.uid && g_pendingGem.itemBase == sel.base &&
+                    g_pendingGem.itemUid == sel.uid) {
+                    act = true;
+                    g_pendingGem.active = false;
+                }
+                // Drag source: only once the press began on THIS row and the cursor moved
+                // past the larger threshold; once live it stays live (the payload latch).
+                const ImGuiPayload* livePl = ImGui::GetDragDropPayload();
+                const bool dragLive = livePl && livePl->IsDataType("MEO_GEM");
+                if (!busy && ImGui::IsItemActive() &&
+                    (dragLive || ImGui::IsMouseDragging(ImGuiMouseButton_Left, dragThreshold)) &&
+                    ImGui::BeginDragDropSource()) {
+                    const GemDragPayload dp{ gem.base, gem.uid, gem.isArmor, gem.isSupport };
                     ImGui::SetDragDropPayload("MEO_GEM", &dp, sizeof(dp));
                     ImGui::TextUnformatted(gem.label.c_str());
                     ImGui::TextDisabled("Level %s", meo::kRoman[std::clamp(gem.level, 1, 5) - 1]);
                     ImGui::EndDragDropSource();
+                    g_pendingGem.active = false;  // it became a drag
                 }
                 ++gr;
                 rungTooltip(gem.gemIdx, gem.level,
@@ -5302,6 +5393,7 @@ namespace menuhook {
             ImGui::EndDisabled();
         }
         ImGui::EndChild();
+        if (mouseReleased) { g_pendingGem.active = false; }  // fired above or cancelled
         if (busy) {
             ImGui::TextDisabled("Working...");
         } else if (g_menu.station.load() && g_menu.activeTab == 0) {

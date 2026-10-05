@@ -9,8 +9,9 @@ arc; point fixes are folded into their feature entry unless load-bearing.
 - **The gem menu now moves by its title strip only, resizes from any edge, and remembers where you left it.** Dragging the body of the window no longer moves it. Your last position and size come back after closing the menu and after restarting the game.
 - **Drag a gem onto a socket.** In the gem menu you can now drag a loose gem with the mouse and
   drop it on an empty socket, on a filled socket to swap it, or on an item row to socket it into
-  the first free slot. Clicking a gem still works. A click now registers when you release the
-  button. Gamepad controls are unchanged.
+  the first free slot. Only compatible sockets light up, and a drag needs a deliberate move so a
+  shaky click never starts one. Clicking a gem still works and registers when you release the
+  button, even if the cursor slipped off the row. Gamepad controls are unchanged.
 - **Gem sound effects.** Socketing a gem, removing a gem and a gem levelling up now play a sound.
   One new MCM toggle, "Gem sound effects", turns all three off. It is on by default.
 
