@@ -745,7 +745,9 @@ gotchas:
   suppresses once the press became a drag). (2) A zero-width `Dummy` has no drop rect: the
   empty-socket row is a full-width `InvisibleButton`. (3) Targets are gated on `!busy`;
   sources don't touch `gr`/`g_gemSel`/zone state, and everything stays under `NoNav`.
-- **Gem sound effects** (`bGemSounds`) play 2D UI sounds from the main thread:
-  level-up = SOUN 0x18538 (`TESSound::descriptor`), socket/remove via
-  `BSAudioManager::BuildSoundDataFromEditorID` (+ `BSSoundHandle::IsValid` fallback chain).
-  None are the MAGEnchantedUnsheathe hum SNDRs, so the windowed mute never touches them.
+- **Gem sound effects** (`bGemSounds`) play 2D UI sounds from the main thread, by FormID
+  only (`LookupByID<BGSSoundDescriptorForm>` + `BuildSoundDataFromDescriptor`): socket =
+  SNDR 0xC8C71 UIEnchantingItemCreate (fallback 0x3C751 UIMenuOKSD), remove = 0xC8C77
+  UIEnchantingLearnEffect (fallback 0x3C752 UIMenuCancelSD), level-up = 0x3C7CF
+  UISkillIncreaseSD. No editor-ID lookups. None are the MAGEnchantedUnsheathe hum SNDRs, so
+  the windowed mute never touches them.

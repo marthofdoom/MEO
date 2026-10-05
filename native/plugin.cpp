@@ -2476,19 +2476,14 @@ int   g_menuStyle = 0;            // [UI] iMenuStyle — gem menu skin 0..3 (m24
 bool  g_temperNoPerk = true;      // [UI] bTemperNoPerk — socketed gear tempers w/o Arcane Blacksmith (m33)
 
 // ── Gem sound effects (bGemSounds: ONE toggle for socket / remove / level-up) ──────
-// All three play 2D UI sounds through the engine's own audio manager, on the main
-// thread (menu actions run in SKSE tasks; GrantGemXP is a game-thread path). NONE of
-// these touch the MAGEnchantedUnsheathe hum SNDRs (kEnchHumSndr 0x1037D6..9) that the
+// 2D UI sounds through the engine's audio manager, on the main thread (menu actions run
+// in SKSE tasks; GrantGemXP is a game-thread path). FormID-only, no editor-ID lookups.
+// All are Skyrim.esm SNDR records (verified against the ESM):
+//  * socket   = 0x000C8C71 UIEnchantingItemCreate, fallback 0x0003C751 UIMenuOKSD
+//  * remove   = 0x000C8C77 UIEnchantingLearnEffect, fallback 0x0003C752 UIMenuCancelSD
+//  * level-up = 0x0003C7CF UISkillIncreaseSD (the descriptor of SOUN 0x00018538)
+// NONE are the MAGEnchantedUnsheathe hum SNDRs (kEnchHumSndr 0x1037D6..9) that the
 // windowed mute (OpenEnchHumMuteWindow) attenuates, so they are never swallowed by it.
-//  * Level-up: SOUN 0x00018538 "UISkillIncrease" (Skyrim.esm) -> its SDSC descriptor
-//    (SNDR 0x0003C7CF). Same proven FormID path as MRO's skill-up chime: the SOUN is a
-//    TESSound, NOT a BGSSoundDescriptorForm, so LookupByID<BGSSoundDescriptorForm> would
-//    return nullptr; go through TESSound::descriptor.
-//  * Socket / remove: engine-resolved editor IDs via BSAudioManager::BuildSoundDataFromEditorID
-//    (the audio manager resolves SNDR/SOUN names itself, independent of the form editorID
-//    map the LookupByEditorID anti-pattern is about). A chain of candidates is tried and
-//    the first that yields a valid handle plays. UNVERIFIED in-game (no local ESM): see log
-//    line "[sfx]" on first use to learn which candidate resolved.
 static bool PlayUiHandle(RE::BSSoundHandle& a_h) {
     if (!a_h.IsValid()) {
         return false;
@@ -2497,13 +2492,16 @@ static bool PlayUiHandle(RE::BSSoundHandle& a_h) {
     return a_h.Play();
 }
 
-static bool PlayUiEditorID(const char* a_eid) {
+static bool PlayUiSndr(RE::FormID a_id) {
+    auto* d = RE::TESForm::LookupByID<RE::BGSSoundDescriptorForm>(a_id);
     auto* am = RE::BSAudioManager::GetSingleton();
-    if (!am || !a_eid) {
+    if (!d || !am) {
         return false;
     }
     RE::BSSoundHandle h;
-    am->BuildSoundDataFromEditorID(h, a_eid, 0x1A);
+    if (!am->BuildSoundDataFromDescriptor(h, d)) {
+        return false;
+    }
     return PlayUiHandle(h);
 }
 
@@ -2514,6 +2512,15 @@ static void PlayGemSfx(GemSfx a_kind) {
         return;
     }
     static std::atomic<std::uint64_t> s_lastLevelUpMs{ 0 };
+    static bool                       s_logged[3] = { false, false, false };
+    static const char* const          kNames[3] = { "socket", "remove", "level-up" };
+    const int                         k = static_cast<int>(a_kind);
+    RE::FormID                        ids[2] = { 0, 0 };
+    switch (a_kind) {
+    case GemSfx::kSocket:  ids[0] = 0x000C8C71; ids[1] = 0x0003C751; break;
+    case GemSfx::kRemove:  ids[0] = 0x000C8C77; ids[1] = 0x0003C752; break;
+    case GemSfx::kLevelUp: ids[0] = 0x0003C7CF; break;
+    }
     if (a_kind == GemSfx::kLevelUp) {
         // At most one level-up cue per half second: a batch (kill XP fanning across
         // many worn gems / followers) must not stack into a wall of chimes.
@@ -2523,46 +2530,22 @@ static void PlayGemSfx(GemSfx a_kind) {
             return;
         }
         s_lastLevelUpMs.store(now, std::memory_order_relaxed);
-        bool ok = false;
-        if (auto* snd = RE::TESForm::LookupByID<RE::TESSound>(0x00018538)) {
-            if (snd->descriptor) {
-                if (auto* am = RE::BSAudioManager::GetSingleton()) {
-                    RE::BSSoundHandle h;
-                    if (am->BuildSoundDataFromDescriptor(h, snd->descriptor)) {
-                        ok = PlayUiHandle(h);
-                    }
-                }
-            }
-        }
-        if (!ok) {
-            ok = PlayUiEditorID("UISkillIncreaseSD");  // same chime, by name
-        }
-        static bool s_logged = false;
-        if (!s_logged) {
-            s_logged = true;
-            spdlog::info("[sfx] level-up chime {}", ok ? "played" : "FAILED to resolve");
-        }
-        return;
     }
-    static const char* const kSocketEids[] = { "ITMGemUp", "UIMenuOK" };
-    static const char* const kRemoveEids[] = { "ITMGemDown", "UIMenuCancel" };
-    const bool               sock = a_kind == GemSfx::kSocket;
-    const char* const*       eids = sock ? kSocketEids : kRemoveEids;
-    static bool              s_logged[2] = { false, false };
-    for (int i = 0; i < 2; ++i) {
-        if (PlayUiEditorID(eids[i])) {
-            if (!s_logged[sock ? 0 : 1]) {
-                s_logged[sock ? 0 : 1] = true;
-                spdlog::info("[sfx] {} sound via '{}'", sock ? "socket" : "remove", eids[i]);
+    for (RE::FormID id : ids) {
+        if (id && PlayUiSndr(id)) {
+            if (!s_logged[k]) {
+                s_logged[k] = true;
+                spdlog::info("[sfx] {} sound played (SNDR {:08X})", kNames[k], id);
             }
             return;
         }
     }
-    if (!s_logged[sock ? 0 : 1]) {
-        s_logged[sock ? 0 : 1] = true;
-        spdlog::warn("[sfx] {} sound: no candidate resolved", sock ? "socket" : "remove");
+    if (!s_logged[k]) {
+        s_logged[k] = true;
+        spdlog::warn("[sfx] {} sound: no SNDR resolved", kNames[k]);
     }
 }
+
 // v1.0.6 (marth): every XP MCM slider is a MULTIPLIER that READS 1.0 = intended
 // balance; the real per-event rate is baked into a k* constant below and scaled by
 // the 1.0-default multiplier. So the slider is a clean "×N from tuned", not a raw rate.
