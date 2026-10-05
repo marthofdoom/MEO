@@ -4,6 +4,10 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## Unreleased
+
+- **The gem menu now moves by its title strip only, resizes from any edge, and remembers where you left it.** Dragging the body of the window no longer moves it. Your last position and size come back after closing the menu and after restarting the game.
+
 ## v1.0.19 — quest mods that need vanilla enchanting work again (2026-09-27)
 
 - **New "Vanilla Enchanter" button at the enchanting table.** When MEO's gem menu takes over

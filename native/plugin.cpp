@@ -87,6 +87,8 @@
 #include <cstdio>
 #include <cstring>
 #include <cctype>
+#include <charconv>
+#include <filesystem>
 #include <cstdlib>
 #include <deque>
 #include <format>
@@ -4489,6 +4491,97 @@ namespace menuhook {
         c[ImGuiCol_NavHighlight]     = s.accent;  // m32f: controller focus ring
     }
 
+    // ── REMEMBERED WINDOW RECT (port of MFO's WinMem) ───────────────────────
+    // pos/size live in Data/SKSE/Plugins/MEO_UI.ini as FRACTIONS of the display
+    // (resolution independent), game-root-relative like the plugin's own INI/log
+    // so MO2's VFS lands it in overwrite. RENDER THREAD ONLY: the draw captures the
+    // live rect each frame, the Present thunk saves once the menu has closed. That
+    // covers CloseGemMenu() called from main-thread tasks too, since they only flip
+    // g_menu.open and never touch this state. Not the co-save, not the MCM store.
+    constexpr const char* kUiPath = "Data/SKSE/Plugins/MEO_UI.ini";
+    struct WinMem {
+        bool  loaded = false;                  // read attempted
+        bool  have = false;                    // stored rect valid
+        float x = 0, y = 0, w = 0, h = 0;      // fractions to restore
+        bool  dirty = false;                   // live rect differs from baseline
+        float lx = 0, ly = 0, lw = 0, lh = 0;  // live fractions
+    };
+    inline WinMem s_winMem;
+
+    bool ParseWinF(const std::string& a_v, float& a_out) {
+        float       f = 0;
+        const char* b = a_v.data();
+        const char* e = b + a_v.size();
+        const auto  r = std::from_chars(b, e, f);
+        if (r.ec != std::errc() || r.ptr != e || !std::isfinite(f)) return false;
+        a_out = f;
+        return true;
+    }
+
+    void LoadWinMem() {
+        s_winMem.loaded = true;
+        std::ifstream in(kUiPath);
+        if (!in) return;
+        float       v[4] = {};
+        bool        got[4] = {};
+        int         ver = 0;
+        std::string line;
+        auto        trim = [](std::string t) {
+            const auto a = t.find_first_not_of(" \t\r\n\xEF\xBB\xBF");
+            if (a == std::string::npos) return std::string();
+            return t.substr(a, t.find_last_not_of(" \t\r\n") - a + 1);
+        };
+        static const char* names[4] = {"winX", "winY", "winW", "winH"};
+        while (std::getline(in, line)) {
+            const auto eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            const std::string k = trim(line.substr(0, eq)), val = trim(line.substr(eq + 1));
+            for (int i = 0; i < 4; ++i)
+                if (k == names[i]) got[i] = ParseWinF(val, v[i]);
+            if (k == "version") { float f; if (ParseWinF(val, f)) ver = static_cast<int>(f); }
+        }
+        if (ver != 1 || !(got[0] && got[1] && got[2] && got[3])) return;
+        // Out of range -> centred default. x/y may be negative (parked partly off the
+        // left/top edge); the restore clamp fixes it.
+        if (v[0] < -1.0f || v[0] > 1.0f || v[1] < -1.0f || v[1] > 1.0f ||
+            v[2] < 0.05f || v[2] > 1.0f || v[3] < 0.05f || v[3] > 1.0f) return;
+        s_winMem.x = v[0]; s_winMem.y = v[1]; s_winMem.w = v[2]; s_winMem.h = v[3];
+        s_winMem.have = true;
+    }
+
+    void SaveWinMem() {
+        // std::to_chars: locale-independent, so from_chars always reads it back.
+        std::string buf = "version=1\n";
+        const auto  put = [&buf](const char* a_key, float a_v) {
+            char       num[32];
+            const auto r = std::to_chars(num, num + sizeof(num), a_v, std::chars_format::fixed, 5);
+            buf += a_key; buf += '='; buf.append(num, r.ptr); buf += '\n';
+        };
+        put("winX", s_winMem.lx); put("winY", s_winMem.ly);
+        put("winW", s_winMem.lw); put("winH", s_winMem.lh);
+        const std::string tmp = std::string(kUiPath) + ".tmp";
+        {
+            std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+            if (!out) { spdlog::warn("[menu] could not write {}", tmp); return; }
+            out << buf;
+            out.close();
+            if (out.fail()) { spdlog::warn("[menu] short write to {}", tmp); return; }
+        }
+        std::error_code ec;
+        std::filesystem::rename(tmp, kUiPath, ec);  // replaces an existing file
+        if (ec) { spdlog::warn("[menu] rename {} failed: {}", tmp, ec.message()); return; }
+        s_winMem.x = s_winMem.lx; s_winMem.y = s_winMem.ly;
+        s_winMem.w = s_winMem.lw; s_winMem.h = s_winMem.lh;
+        s_winMem.have = true;
+    }
+
+    // Called every frame from the Present thunk (render thread) while the menu is closed.
+    // ONE attempt per close: dirty is cleared first so a failed save is not retried
+    // (and re-logged) every frame.
+    void FlushGemMenuWindowMemory() {
+        if (s_winMem.dirty) { s_winMem.dirty = false; SaveWinMem(); }
+    }
+
     void DrawGemMenu() {
         auto& io = ImGui::GetIO();
         if (g_menu.wantClose.exchange(false)) {
@@ -4512,24 +4605,56 @@ namespace menuhook {
         if (fBody) {
             ImGui::PushFont(fBody);
         }
-        // Centered on each open (Appearing, not Always) so it can be
-        // dragged afterwards; DisplaySize is backbuffer-true by now.
-        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
-                                ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-        ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x * 0.62f, io.DisplaySize.y * 0.68f),
-                                 ImGuiCond_Appearing);
-        // m24c: resizable (drag any edge); ImGui keeps the chosen size for
-        // the rest of the session since the window persists in the context.
-        ImGui::SetNextWindowSizeConstraints(ImVec2(640.0f, 420.0f),
+        // Restore the remembered rect on each open (Appearing, not Always), else centre.
+        // Constraints are the same either way; the window still resizes freely after.
+        constexpr float kMinW = 640.0f, kMinH = 420.0f;
+        if (!s_winMem.loaded) LoadWinMem();
+        if (s_winMem.have) {
+            // Size from fractions clamped to the constraint range, then the position
+            // clamped so the whole window (so the whole header) stays on this display.
+            const float w = std::clamp(s_winMem.w * io.DisplaySize.x, kMinW, std::max(kMinW, io.DisplaySize.x));
+            const float h = std::clamp(s_winMem.h * io.DisplaySize.y, kMinH, std::max(kMinH, io.DisplaySize.y));
+            const float x = std::clamp(s_winMem.x * io.DisplaySize.x, 0.0f, std::max(0.0f, io.DisplaySize.x - w));
+            const float y = std::clamp(s_winMem.y * io.DisplaySize.y, 0.0f, std::max(0.0f, io.DisplaySize.y - h));
+            ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Appearing);
+            ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Appearing);
+        } else {
+            ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                                    ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x * 0.62f, io.DisplaySize.y * 0.68f),
+                                     ImGuiCond_Appearing);
+        }
+        ImGui::SetNextWindowSizeConstraints(ImVec2(kMinW, kMinH),
                                             ImVec2(io.DisplaySize.x, io.DisplaySize.y));
         if (!ImGui::Begin("Gem Socketing", nullptr,
                           ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
-                              ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav)) {  // m37e: all nav is manual — no ImGui cursor on tabs/Close/panes
+                              ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav |
+                              ImGuiWindowFlags_NoMove)) {  // moved only via the header drag strip below  // m37e: all nav is manual — no ImGui cursor on tabs/Close/panes
             ImGui::End();
             if (fBody) {
                 ImGui::PopFont();
             }
             return;
+        }
+        // Remember the live rect (fractions of the display). The first frame of an open
+        // is the baseline (what we just set), so merely opening never dirties the file.
+        if (io.DisplaySize.x > 0.0f && io.DisplaySize.y > 0.0f) {
+            const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+            const float  fx = wp.x / io.DisplaySize.x, fy = wp.y / io.DisplaySize.y;
+            const float  fw = ws.x / io.DisplaySize.x, fh = ws.y / io.DisplaySize.y;
+            const bool   differs = std::fabs(fx - s_winMem.lx) > 0.0005f || std::fabs(fy - s_winMem.ly) > 0.0005f ||
+                                   std::fabs(fw - s_winMem.lw) > 0.0005f || std::fabs(fh - s_winMem.lh) > 0.0005f;
+            const bool   matchesSaved = s_winMem.have && std::fabs(fx - s_winMem.x) <= 0.0005f &&
+                                        std::fabs(fy - s_winMem.y) <= 0.0005f &&
+                                        std::fabs(fw - s_winMem.w) <= 0.0005f &&
+                                        std::fabs(fh - s_winMem.h) <= 0.0005f;
+            if (ImGui::IsWindowAppearing()) {
+                s_winMem.lx = fx; s_winMem.ly = fy; s_winMem.lw = fw; s_winMem.lh = fh;
+                s_winMem.dirty = false;
+            } else if (differs) {
+                s_winMem.lx = fx; s_winMem.ly = fy; s_winMem.lw = fw; s_winMem.lh = fh;
+                s_winMem.dirty = !matchesSaved;
+            }
         }
         auto* dl = ImGui::GetWindowDrawList();
         const float lineH = ImGui::GetTextLineHeight();
@@ -4591,10 +4716,23 @@ namespace menuhook {
             dl->AddLine(ImVec2(wp.x + 26.0f, ry), ImVec2(wp.x + tx - 18.0f, ry), rule);
             dl->AddLine(ImVec2(wp.x + tx + ts.x + 18.0f, ry),
                         ImVec2(wp.x + ImGui::GetWindowSize().x - 26.0f, ry), rule);
+            const float hdrY = ImGui::GetCursorPosY();
             ImGui::SetCursorPosX(tx);
             ImGui::PushStyleColor(ImGuiCol_Text, skin.accent);
             ImGui::TextUnformatted(title);
             ImGui::PopStyleColor();
+            // Drag handle: an invisible button over the whole header strip (the window
+            // itself is NoMove). Nothing else lives in this strip, so no overlap with
+            // tabs/buttons. Mouse only: NoNav on the window keeps it out of manual nav.
+            ImGui::SetCursorPos(ImVec2(ImGui::GetStyle().WindowPadding.x, hdrY));
+            ImGui::InvisibleButton("##hdrdrag", ImVec2(ImGui::GetContentRegionAvail().x, ts.y));
+            if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
+                const ImVec2 cur = ImGui::GetWindowPos(), sz = ImGui::GetWindowSize();
+                // keep at least a grabbable chunk of the header on screen
+                const float nx = std::clamp(cur.x + io.MouseDelta.x, 120.0f - sz.x, io.DisplaySize.x - 120.0f);
+                const float ny = std::clamp(cur.y + io.MouseDelta.y, 0.0f, std::max(0.0f, io.DisplaySize.y - 40.0f));
+                ImGui::SetWindowPos(ImVec2(nx, ny));
+            }
             if (fHead) {
                 ImGui::PopFont();
             }
@@ -5105,6 +5243,7 @@ namespace menuhook {
             ImGui::CreateContext();
             auto& io = ImGui::GetIO();
             io.IniFilename = nullptr;  // never write imgui.ini into the game dir
+            io.ConfigWindowsResizeFromEdges = true;  // explicit so an ImGui bump can't flip it; drag is the header strip (NoMove)
             io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
             io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
             // m23c: bake real typefaces at backbuffer scale (FontGlobalScale
@@ -5186,7 +5325,11 @@ namespace menuhook {
         static void thunk(std::uint32_t a_p1) {
             func(a_p1);
             TickEnchHumMute();  // [snd] single-writer: apply/restore the windowed enchant-hum mute
-            if (!g_d3dReady.load() || !g_menu.open.load()) {
+            if (!g_d3dReady.load()) {
+                return;
+            }
+            if (!g_menu.open.load()) {
+                FlushGemMenuWindowMemory();  // render thread; saves the remembered rect once per close
                 return;
             }
             // xp/hooks-S2: NewFrame drains the IO event queue — hold the IO lock

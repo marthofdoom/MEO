@@ -735,3 +735,13 @@ gotchas:
   and `exchange()`-consume the atomic requests once per frame so a held direction can't
   repeat (down-edge only). Clear ImGui keys on `WM_KILLFOCUS`. `d3d11.h` pulls `wingdi.h`
   which `#define`s `GetObject`→`GetObjectW`; `#undef GetObject` after the D3D includes.
+- **Window move / resize / remembered rect:** `io.ConfigWindowsMoveFromTitleBarOnly` does
+  nothing for a `NoTitleBar` window, so the menu is `NoMove` and an `InvisibleButton` over
+  the header strip moves it (`SetWindowPos(pos + io.MouseDelta)` while active and dragging).
+  The window is `NoNav`, so the strip is mouse-only and manual nav is untouched.
+  `ConfigWindowsResizeFromEdges` is set explicitly. Pos/size persist as display FRACTIONS in
+  `Data/SKSE/Plugins/MEO_UI.ini` (MFO's WinMem shape): render thread only, read lazily at
+  first open, the draw captures the live rect, and the Present thunk saves (temp + rename,
+  one attempt) the frame after `g_menu.open` goes false. That way a `CloseGemMenu()` from a
+  main-thread task needs no lock, because it never touches the rect state. `imgui.ini`
+  stays disabled (`IniFilename = nullptr`).
