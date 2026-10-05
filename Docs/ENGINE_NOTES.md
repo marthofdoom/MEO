@@ -745,3 +745,19 @@ gotchas:
   one attempt) the frame after `g_menu.open` goes false. That way a `CloseGemMenu()` from a
   main-thread task needs no lock, because it never touches the rect state. `imgui.ini`
   stays disabled (`IniFilename = nullptr`).
+- **Mouse drag-and-drop coexists with fully manual nav.** Loose-gem rows are
+  `BeginDragDropSource` (payload `"MEO_GEM"` = base + uid by value); filled-socket rows,
+  empty-socket rows and item rows are `BeginDragDropTarget`s that queue the SAME
+  `MenuSocket` call the click handler does (target slot: the slot, or -1 = first free /
+  socket 1 for an item row; a filled slot swaps via the m35e evict). Gotchas: (1) a
+  `Selectable` row that is also a drag source must NOT act on `IsItemActivated()` (press) or
+  the drag start sockets the gem; use the `Selectable` return (release, which ImGui
+  suppresses once the press became a drag). (2) A zero-width `Dummy` has no drop rect: the
+  empty-socket row is a full-width `InvisibleButton`. (3) Targets are gated on `!busy`;
+  sources don't touch `gr`/`g_gemSel`/zone state, and everything stays under `NoNav`.
+- **Gem sound effects** (`bGemSounds`) play 2D UI sounds from the main thread, by FormID
+  only (`LookupByID<BGSSoundDescriptorForm>` + `BuildSoundDataFromDescriptor`): socket =
+  SNDR 0xC8C71 UIEnchantingItemCreate (fallback 0x3C751 UIMenuOKSD), remove = 0xC8C77
+  UIEnchantingLearnEffect (fallback 0x3C752 UIMenuCancelSD), level-up = 0x3C7CF
+  UISkillIncreaseSD. No editor-ID lookups. None are the MAGEnchantedUnsheathe hum SNDRs, so
+  the windowed mute never touches them.
