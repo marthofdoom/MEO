@@ -6,6 +6,9 @@ arc; point fixes are folded into their feature entry unless load-bearing.
 
 ## v1.0.20 — the gem menu remembers its place, plays sounds, and takes dragged gems (2026-10-04)
 
+- **One mouse cursor in the gem menu.** The menu sometimes showed a second cursor and a
+  click could land where that second cursor was instead of where you aimed. It now follows
+  a single cursor, so clicks and drags go where you point.
 - **The gem menu now moves by its title strip only, resizes from any edge, and remembers where you left it.** Dragging the body of the window no longer moves it. Your last position and size come back after closing the menu and after restarting the game.
 - **Drag a gem onto a socket.** In the gem menu you can now drag a loose gem with the mouse and
   drop it on an empty socket, on a filled socket to swap it, or on an item row to socket it into
