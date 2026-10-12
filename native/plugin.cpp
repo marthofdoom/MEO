@@ -82,6 +82,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cmath>
 #include <cstdio>
@@ -214,6 +215,10 @@ const char* GemName(const ResolvedGem& a_rg) {
 }
 std::unordered_map<RE::FormID, std::pair<int, int>> g_gemByItem;  // item -> {gemIdx, level}
 std::unordered_map<std::string_view, int>         g_gemByGid;
+// ABI v4 (IMEO::GetGemTheme, any thread): set once, AFTER ResolveCatalog() returns
+// at kDataLoaded. g_gems / g_gemByGid / g_mintedDefs are never written after that,
+// so a reader that observes true (acquire) may read them without a lock.
+std::atomic<bool>                                 g_catalogReady{ false };
 std::vector<int>                                  g_lootableGems;  // weapon-domain, world-weapon stamps
 std::vector<int>                                  g_corpseGems;    // weapon+armor, corpse drops
 std::vector<int>                                  g_supportGems;   // m36h: support gems (boss-loot pool)
@@ -9490,6 +9495,36 @@ void ApiSocketGem(RE::FormID a_actorID, RE::FormID a_itemBase, std::uint16_t a_i
                  g_gems[gemIdx].def->gid, level, a_itemBase, uid, a_slot);
 }
 
+// ABI v4: MEO_API's kTheme_ / kGemClass_ / kSupport_ numbers ARE the catalog
+// enums. A reorder of GemCatalog.h's enums must fail here, not ship silently.
+static_assert(static_cast<std::uint8_t>(meo::Theme::kFire) == MEO_API::kTheme_Fire &&
+              static_cast<std::uint8_t>(meo::Theme::kFrost) == MEO_API::kTheme_Frost &&
+              static_cast<std::uint8_t>(meo::Theme::kShock) == MEO_API::kTheme_Shock &&
+              static_cast<std::uint8_t>(meo::Theme::kArcane) == MEO_API::kTheme_Arcane &&
+              static_cast<std::uint8_t>(meo::Theme::kDrain) == MEO_API::kTheme_Drain &&
+              static_cast<std::uint8_t>(meo::Theme::kMartial) == MEO_API::kTheme_Martial &&
+              static_cast<std::uint8_t>(meo::Theme::kRoguish) == MEO_API::kTheme_Roguish &&
+              static_cast<std::uint8_t>(meo::Theme::kHoly) == MEO_API::kTheme_Holy &&
+              static_cast<std::uint8_t>(meo::Theme::kUtility) == MEO_API::kTheme_Utility &&
+              static_cast<std::uint8_t>(meo::Theme::kCount) == MEO_API::kTheme_Utility + 1,
+              "MEO_API kTheme_* must match meo::Theme");
+static_assert(static_cast<std::uint8_t>(meo::GemClass::kSkill) == MEO_API::kGemClass_Skill &&
+              static_cast<std::uint8_t>(meo::GemClass::kLinear) == MEO_API::kGemClass_Linear &&
+              static_cast<std::uint8_t>(meo::GemClass::kResist) == MEO_API::kGemClass_Resist &&
+              static_cast<std::uint8_t>(meo::GemClass::kBinary) == MEO_API::kGemClass_Binary &&
+              static_cast<std::uint8_t>(meo::GemClass::kAbsorb) == MEO_API::kGemClass_Absorb &&
+              static_cast<std::uint8_t>(meo::GemClass::kControl) == MEO_API::kGemClass_Control &&
+              static_cast<std::uint8_t>(meo::GemClass::kStagger) == MEO_API::kGemClass_Stagger &&
+              static_cast<std::uint8_t>(meo::GemClass::kSoulTrap) == MEO_API::kGemClass_SoulTrap &&
+              static_cast<std::uint8_t>(meo::GemClass::kSupport) == MEO_API::kGemClass_Support &&
+              static_cast<std::uint8_t>(meo::GemClass::kOther) == MEO_API::kGemClass_Other,
+              "MEO_API kGemClass_* must match meo::GemClass");
+static_assert(static_cast<std::uint8_t>(meo::SupportType::kNone) == MEO_API::kSupport_None &&
+              static_cast<std::uint8_t>(meo::SupportType::kFocus) == MEO_API::kSupport_Focus &&
+              static_cast<std::uint8_t>(meo::SupportType::kConduit) == MEO_API::kSupport_Conduit &&
+              static_cast<std::uint8_t>(meo::SupportType::kEcho) == MEO_API::kSupport_Echo,
+              "MEO_API kSupport_* must match meo::SupportType");
+
 class MEOInterface : public MEO_API::IMEO {
 public:
     std::uint32_t Version() override { return MEO_API::kABIVersion; }
@@ -9579,6 +9614,44 @@ public:
         });
         return true;
     }
+
+    // ── ABI v4 ──────────────────────────────────────────────────────────────
+    // Reads only the catalog (immutable after kDataLoaded), never g_sockets or
+    // live game state, so it is safe from any thread once g_catalogReady is set.
+    bool GetGemTheme(const char* a_gid, MEO_API::GemTheme* a_out) override {
+        if (!a_gid || !a_out || !g_catalogReady.load(std::memory_order_acquire)) {
+            return false;
+        }
+        const auto gi = g_gemByGid.find(std::string_view(a_gid));
+        if (gi == g_gemByGid.end()) {
+            return false;
+        }
+        const ResolvedGem& rg = g_gems[gi->second];
+        const meo::GemDef* d = rg.def;
+        MEO_API::GemTheme t{};
+        t.theme = static_cast<std::uint8_t>(d->theme);
+        t.gemClass = static_cast<std::uint8_t>(d->gclass);
+        t.supportType = static_cast<std::uint8_t>(d->supportType);
+        // Same rule as GemPerkMult (element perks) and IsElementalGem (Focus).
+        const bool chaos = std::strcmp(d->gid, "chaos") == 0;
+        if (d->theme == meo::Theme::kFire || chaos) t.elements |= MEO_API::kElement_Fire;
+        if (d->theme == meo::Theme::kFrost || chaos) t.elements |= MEO_API::kElement_Frost;
+        if (d->theme == meo::Theme::kShock || chaos) t.elements |= MEO_API::kElement_Shock;
+        t.isArmor = d->isArmor;
+        t.isSupport = d->isSupport;
+        t.minted = rg.minted;
+        t.active = rg.mgef != nullptr || d->isSupport;
+        // The gem a linked Conduit applies in its place when it sits in an item of
+        // the OTHER domain (ApplyItem's conduitTarget). A support is never the
+        // remapped partner, and an inactive normal gem is skipped before the remap.
+        if (!d->isSupport && rg.mgef) {
+            if (const ResolvedGem* sib = ConduitSibling(&rg, !d->isArmor)) {
+                std::snprintf(t.conduitSibling, sizeof(t.conduitSibling), "%s", sib->def->gid);
+            }
+        }
+        *a_out = t;
+        return true;
+    }
 };
 MEOInterface g_meoInterface;
 
@@ -9607,6 +9680,7 @@ void OnMessage(SKSE::MessagingInterface::Message* message) {
     case SKSE::MessagingInterface::kDataLoaded:
         LoadCalibration();
         ResolveCatalog();
+        g_catalogReady.store(true, std::memory_order_release);  // ABI v4 GetGemTheme
         ReadConfig();
         CacheEnchHumSndr();  // [snd] cache the 4 MAGEnchantedUnsheathe SNDR defs for the windowed mute
         RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESSpellCastEvent>(SpellCastSink::GetSingleton());
