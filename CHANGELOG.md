@@ -14,6 +14,14 @@ arc; point fixes are folded into their feature entry unless load-bearing.
   button, even if the cursor slipped off the row. Gamepad controls are unchanged.
 - **Gem sound effects.** Socketing a gem, removing a gem and a gem levelling up now play a sound.
   One new MCM toggle, "Gem sound effects", turns all three off. It is on by default.
+- **ABI v4:** `GetGemTheme(gid)` reports a gem family's classification from MEO's own
+  catalog: its theme (Fire, Frost, Shock, Arcane, Drain, Martial, Roguish, Holy, Utility),
+  its element bits (the same rule as the element perks and Focus, so Chaos counts as all
+  three), its class, its support type, its domain, whether it works in this load order, and
+  the gem a linked Conduit turns it into off-domain (empty when it would go inert). Minted
+  `x_` families are covered too. Purely additive: every existing method keeps its vtable slot,
+  older consumers are unaffected, and a consumer gates on `Version() >= 4`. Safe to call from
+  any thread. No gameplay or save change.
 
 ## v1.0.19 — quest mods that need vanilla enchanting work again (2026-09-27)
 
