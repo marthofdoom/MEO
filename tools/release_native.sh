@@ -13,7 +13,9 @@
 # a stale artifact or a copied line can never reintroduce one.
 #
 # Layout produced (unzip = Data/):
-#   SKSE/Plugins/MEO.dll                    (+ MEO.pdb if CI produced one)
+#   SKSE/Plugins/MEO.dll
+#   (the PDB, if CI produced one, is saved beside the zip as releases/<version>/MEO.pdb
+#    and is NOT shipped in the zip -- marth 2026-10-12: keep the download small)
 #   SKSE/Plugins/MEO/meo_runtime.json
 #   MEO.esp
 #   MEO-README.txt                          (install steps — Synthesis)
@@ -72,13 +74,16 @@ fi
 echo "== native DLL from run $RUN_ID =="
 
 STAGE="$(mktemp -d)"
-trap 'rm -rf "$STAGE"' EXIT
+PDB_KEEP="$STAGE.pdb"
+trap 'rm -rf "$STAGE" "$PDB_KEEP"' EXIT
 mkdir -p "$STAGE/SKSE/Plugins"
 
 # Pull MEO.dll (+ MEO.pdb if present) straight into the Plugins folder.
 gh run download "$RUN_ID" -n MEO-dll -D "$STAGE/SKSE/Plugins"
 [[ -f "$STAGE/SKSE/Plugins/MEO.dll" ]] || { echo "ERROR: artifact had no MEO.dll" >&2; exit 1; }
 echo "DLL: $(stat -c '%s bytes' "$STAGE/SKSE/Plugins/MEO.dll")"
+# Keep the PDB OUT of the stage so it is never zipped.
+[[ -f "$STAGE/SKSE/Plugins/MEO.pdb" ]] && mv "$STAGE/SKSE/Plugins/MEO.pdb" "$PDB_KEEP"
 
 # VERSION-MATCH GATE (Fable, 2026-07-20): the MCM readout is baked from
 # kMEOVersion at ESP-generation time, but the DLL is pulled from CI — if --run
@@ -199,6 +204,11 @@ if find "$STAGE" -type f \( -iname '*.exe' -o -iname '*.dll' -o -iname '*.bat' \
 fi
 
 mkdir -p "$DEST"
+[[ -f "$PDB_KEEP" ]] && cp "$PDB_KEEP" "$DEST/MEO.pdb"
+if [[ -n "$(find "$STAGE" -iname '*.pdb' -print -quit)" ]]; then
+    echo "ERROR: a .pdb is in the stage; it must never be zipped" >&2
+    exit 1
+fi
 ( cd "$STAGE" && zip -qr - . ) > "$ZIP"
 printf '%s\n' "$VER" > "$DEST/VERSION"
 [[ -n "$DESC" ]] && printf '%s\n' "$DESC" > "$DEST/NOTES.txt"
