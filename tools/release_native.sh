@@ -125,7 +125,12 @@ mkdir -p "$STAGE/SKSE/Plugins/MEO/fonts"
 cp data/fonts/head.ttf data/fonts/body.ttf data/fonts/sans.ttf data/fonts/cjk.otf \
    data/fonts/OFL-*.txt "$STAGE/SKSE/Plugins/MEO/fonts/"
 cp out/MEO.esp "$STAGE/"
+# MCM/Settings/MEO.ini is deliberately NOT shipped. It is the user's own MCM
+# Helper store: a zip that carries it overwrites every updating user's saved
+# settings. A fresh install needs none: MCM Helper creates the store, and the
+# plugin treats an absent store as normal. The assert after the zip keeps it out.
 mkdir -p "$STAGE/MCM";     cp -r out/MCM/. "$STAGE/MCM/"
+rm -rf "$STAGE/MCM/Settings"
 mkdir -p "$STAGE/Scripts"; cp out/Scripts/MEO_MCM.pex "$STAGE/Scripts/"
 
 # MO2 metadata card + install steps shipped inside the mod folder.
@@ -178,7 +183,7 @@ EOF
 
 # Completeness gate: refuse to write a release missing any required file.
 for req in "SKSE/Plugins/MEO.dll" "MEO.esp" "Scripts/MEO_MCM.pex" \
-           "MCM/Config/MEO/config.json" "MCM/Settings/MEO.ini" \
+           "MCM/Config/MEO/config.json" \
            "SKSE/Plugins/MEO/meo_runtime.json" "SKSE/Plugins/MEO/gem_catalog.json" \
            "SKSE/Plugins/MEO/pool_forms.frozen.json" \
            "SKSE/Plugins/MEO/rulings/summermyst.rulings.json" \
@@ -210,6 +215,10 @@ if [[ -n "$(find "$STAGE" -iname '*.pdb' -print -quit)" ]]; then
     exit 1
 fi
 ( cd "$STAGE" && zip -qr - . ) > "$ZIP"
+if unzip -Z1 "$ZIP" | grep -q '^MCM/Settings/'; then
+    echo "ERROR: ${ZIP} contains MCM/Settings/ -- it would overwrite users' MCM settings." >&2
+    rm -f "$ZIP"; exit 1
+fi
 printf '%s\n' "$VER" > "$DEST/VERSION"
 [[ -n "$DESC" ]] && printf '%s\n' "$DESC" > "$DEST/NOTES.txt"
 printf 'built from native run %s (no executable packaged; installs via Synthesis)\n' "$RUN_ID" >> "$DEST/NOTES.txt"

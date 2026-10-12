@@ -50,7 +50,12 @@ fi
 cp out/SKSE/Plugins/MEO/meo_runtime.json "$STAGE/SKSE/Plugins/MEO/"
 cp data/fonts/head.ttf data/fonts/body.ttf data/fonts/sans.ttf data/fonts/cjk.otf data/fonts/OFL-*.txt "$STAGE/SKSE/Plugins/MEO/fonts/"
 cp out/MEO.esp "$STAGE/"
+# MCM/Settings/MEO.ini is deliberately NOT shipped. It is the user's own MCM
+# Helper store: a zip that carries it overwrites every updating user's saved
+# settings. A fresh install needs none: MCM Helper creates the store, and the
+# plugin treats an absent store as normal. The assert after the zip keeps it out.
 mkdir -p "$STAGE/MCM";     cp -r out/MCM/. "$STAGE/MCM/"
+rm -rf "$STAGE/MCM/Settings"
 mkdir -p "$STAGE/Scripts"; cp out/Scripts/MEO_MCM.pex "$STAGE/Scripts/"
 cp assets/MEO-README.txt "$STAGE/MEO-README.txt"
 
@@ -69,13 +74,17 @@ EOF
 for req in "SKSE/Plugins/MEO.dll" "SKSE/Plugins/MEO/meo_runtime.json" \
            "SKSE/Plugins/MEO/fonts/head.ttf" "SKSE/Plugins/MEO/fonts/body.ttf" \
            "SKSE/Plugins/MEO/fonts/sans.ttf" "MEO.esp" \
-           "MCM/Config/MEO/config.json" "MCM/Settings/MEO.ini" \
+           "MCM/Config/MEO/config.json" \
            "Scripts/MEO_MCM.pex" "fomod/info.xml" "MEO-README.txt"; do
     [[ -f "$STAGE/$req" ]] || { echo "ERROR: release incomplete — missing $req" >&2; exit 1; }
 done
 
 mkdir -p "$DEST"
 ( cd "$STAGE" && zip -qr - . ) > "$ZIP"
+if unzip -Z1 "$ZIP" | grep -q '^MCM/Settings/'; then
+    echo "ERROR: ${ZIP} contains MCM/Settings/ -- it would overwrite users' MCM settings." >&2
+    rm -f "$ZIP"; exit 1
+fi
 cp assets/MEO.synth "$DEST/MEO.synth"          # static Synthesis onboarding file
 printf '%s\n' "$VER" > "$DEST/VERSION"
 { [[ -n "$DESC" ]] && printf '%s\n' "$DESC"; printf 'built from native run %s\n' "$RUN_ID"; } > "$DEST/NOTES.txt"
