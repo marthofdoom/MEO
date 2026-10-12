@@ -88,6 +88,8 @@
 #include <cstdio>
 #include <cstring>
 #include <cctype>
+#include <charconv>
+#include <filesystem>
 #include <cstdlib>
 #include <deque>
 #include <format>
@@ -169,7 +171,7 @@ constexpr std::uint32_t kSerVersion = 12;  // v12: + loose-record holderRefID. v
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.19";  // vanilla-enchanter pass-through + quest items never convert (Winterhold QE)
+constexpr const char* kMEOVersion = "1.0.20";  // menu drag/resize/remember + gem SFX + drag gems into sockets
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
@@ -2471,6 +2473,7 @@ float g_followerXpShare = 0.5f;   // [XP] fFollowerXpShare — bug3: fraction of
 float g_followerXpRange = 4096.0f;// [XP] fFollowerXpRange — max distance (units) from the player for a follower to receive the kill-xp share (0 = any loaded follower). ~58 m default = participated-in-the-fight radius.
 bool  g_xpNotify = true;          // [UI] bXPNotify — "Gem XP +N" on kills
 bool  g_enableLogging = true;     // [Debug] bEnableLogging — write MEO.log (default on); ReadConfig sets the spdlog level (m38d)
+bool  g_gemSounds = true;         // [UI] bGemSounds — socket / remove / level-up sound effects (one toggle)
 bool  g_stationTakeover = true;   // [UI] bStationTakeover — gem menu REPLACES the vanilla enchanting menu
 // m54 (marth: Winterhold QE "Enchanted to Meet You"): one-shot pass-through — the next
 // enchanting-bench CraftingMenu open is left VANILLA (no hide, no gem menu). Set by the
@@ -2478,6 +2481,78 @@ bool  g_stationTakeover = true;   // [UI] bStationTakeover — gem menu REPLACES
 std::atomic<bool> g_vanillaStationOnce{ false };
 int   g_menuStyle = 0;            // [UI] iMenuStyle — gem menu skin 0..3 (m24 MCM dropdown)
 bool  g_temperNoPerk = true;      // [UI] bTemperNoPerk — socketed gear tempers w/o Arcane Blacksmith (m33)
+
+// ── Gem sound effects (bGemSounds: ONE toggle for socket / remove / level-up) ──────
+// 2D UI sounds through the engine's audio manager, on the main thread (menu actions run
+// in SKSE tasks; GrantGemXP is a game-thread path). FormID-only, no editor-ID lookups.
+// All are Skyrim.esm SNDR records (verified against the ESM):
+//  * socket   = 0x000C8C71 UIEnchantingItemCreate, fallback 0x0003C751 UIMenuOKSD
+//  * remove   = 0x000C8C77 UIEnchantingLearnEffect, fallback 0x0003C752 UIMenuCancelSD
+//  * level-up = 0x0003C7CF UISkillIncreaseSD (the descriptor of SOUN 0x00018538)
+// NONE are the MAGEnchantedUnsheathe hum SNDRs (kEnchHumSndr 0x1037D6..9) that the
+// windowed mute (OpenEnchHumMuteWindow) attenuates, so they are never swallowed by it.
+static bool PlayUiHandle(RE::BSSoundHandle& a_h) {
+    if (!a_h.IsValid()) {
+        return false;
+    }
+    a_h.SetVolume(1.0f);
+    return a_h.Play();
+}
+
+static bool PlayUiSndr(RE::FormID a_id) {
+    auto* d = RE::TESForm::LookupByID<RE::BGSSoundDescriptorForm>(a_id);
+    auto* am = RE::BSAudioManager::GetSingleton();
+    if (!d || !am) {
+        return false;
+    }
+    RE::BSSoundHandle h;
+    if (!am->BuildSoundDataFromDescriptor(h, d)) {
+        return false;
+    }
+    return PlayUiHandle(h);
+}
+
+enum class GemSfx { kSocket, kRemove, kLevelUp };
+
+static void PlayGemSfx(GemSfx a_kind) {
+    if (!g_gemSounds) {
+        return;
+    }
+    static std::atomic<std::uint64_t> s_lastLevelUpMs{ 0 };
+    static bool                       s_logged[3] = { false, false, false };
+    static const char* const          kNames[3] = { "socket", "remove", "level-up" };
+    const int                         k = static_cast<int>(a_kind);
+    RE::FormID                        ids[2] = { 0, 0 };
+    switch (a_kind) {
+    case GemSfx::kSocket:  ids[0] = 0x000C8C71; ids[1] = 0x0003C751; break;
+    case GemSfx::kRemove:  ids[0] = 0x000C8C77; ids[1] = 0x0003C752; break;
+    case GemSfx::kLevelUp: ids[0] = 0x0003C7CF; break;
+    }
+    if (a_kind == GemSfx::kLevelUp) {
+        // At most one level-up cue per half second: a batch (kill XP fanning across
+        // many worn gems / followers) must not stack into a wall of chimes.
+        const std::uint64_t now = NowMs();
+        const std::uint64_t last = s_lastLevelUpMs.load(std::memory_order_relaxed);
+        if (last != 0 && now - last < 500) {
+            return;
+        }
+        s_lastLevelUpMs.store(now, std::memory_order_relaxed);
+    }
+    for (RE::FormID id : ids) {
+        if (id && PlayUiSndr(id)) {
+            if (!s_logged[k]) {
+                s_logged[k] = true;
+                spdlog::info("[sfx] {} sound played (SNDR {:08X})", kNames[k], id);
+            }
+            return;
+        }
+    }
+    if (!s_logged[k]) {
+        s_logged[k] = true;
+        spdlog::warn("[sfx] {} sound: no SNDR resolved", kNames[k]);
+    }
+}
+
 // v1.0.6 (marth): every XP MCM slider is a MULTIPLIER that READS 1.0 = intended
 // balance; the real per-event rate is baked into a k* constant below and scaled by
 // the 1.0-default multiplier. So the slider is a clean "×N from tuned", not a raw rate.
@@ -2542,6 +2617,7 @@ static void ApplyIniFile(const char* a_path) {
         else if (key == "bAllowUncoveredGenerics") g_allowUncoveredGenerics = val != 0.0f;
         else if (key == "bEnableLogging")     g_enableLogging = val != 0.0f;
         else if (key == "bStationTakeover")   g_stationTakeover = val != 0.0f;
+        else if (key == "bGemSounds")         g_gemSounds = val != 0.0f;
         else if (key == "iMenuStyle")         g_menuStyle = std::clamp(static_cast<int>(val), 0, 3);
         else if (key == "bTemperNoPerk")      g_temperNoPerk = val != 0.0f;
         else if (key == "fEnchSkillXP")       g_enchSkillXPMult = val;
@@ -2688,6 +2764,28 @@ struct MenuGemRow {
     float         xp = -1.0f;    // banked XP (instance rows); -1 = plain gem
     float         need = 0.0f;
 };
+// Mouse drag-and-drop payload (ImGui "MEO_GEM"): identity of the dragged loose gem,
+// copied by value so a snapshot rebuild mid-drag can't dangle (the drop re-resolves it
+// inside MenuSocket exactly like a click).
+struct GemDragPayload {
+    RE::FormID    base = 0;
+    std::uint16_t uid = 0;
+    bool          isArmor = false;    // domain, for the targets' compatibility peek
+    bool          isSupport = false;  // support gems need a dual-socket item
+};
+// Pending mouse press on a loose-gem row (draw thread only). A press only RECORDS the
+// click; the action runs when the left button is released anywhere (a raw-delta cursor
+// can leave the row between press and release), unless the press became a drag. Identity
+// is base+uid plus the owning tab/item, so a snapshot rebuild or tab change drops it.
+struct PendingGemClick {
+    bool          active = false;
+    RE::FormID    gemBase = 0;
+    std::uint16_t gemUid = 0;
+    int           tab = 0;
+    RE::FormID    itemBase = 0;
+    std::uint16_t itemUid = 0;
+};
+PendingGemClick g_pendingGem;
 struct MenuState {
     std::mutex               lock;
     std::atomic<bool>        open{ false };
@@ -3016,6 +3114,7 @@ bool GrantGemXP(RE::Actor* a_owner, RE::TESBoundObject* a_base, RE::ExtraDataLis
             DispelStaleGemEffects();  // m24c: replace can leave the old-level ability stacking
         }
     }
+    PlayGemSfx(GemSfx::kLevelUp);  // debounced; shares the bGemSounds toggle
     const bool isPlayer = a_owner->IsPlayerRef();
     if (isPlayer) {  // m37: a gem reaching a new level is Enchanting practice (× the level)
         GrantEnchantingXP(g_levelSkillXP * newLevel);
@@ -3818,6 +3917,7 @@ void MenuUnsocket(RE::FormID a_base, std::uint16_t a_uid, std::uint8_t a_slot,
     GiveGemInstance(gemIt->second, rec.level, rec.xp);
     const auto& rg = g_gems[gemIt->second];
     Notify(std::format("{} {} returned to your pouch.", GemName(rg), meo::kRoman[rec.level - 1]));
+    PlayGemSfx(GemSfx::kRemove);
 }
 
 // M10 (stage 2b): destroy a socketed gem at a station, reclaiming 1/10 of its
@@ -4147,6 +4247,7 @@ void MenuSocket(RE::FormID a_itemBase, std::uint16_t a_itemUid, RE::FormID a_gem
     const auto& rg = g_gems[gemIdx];
     Notify(std::format("{} {} socketed into {}.", GemName(rg), meo::kRoman[level - 1],
                        itemForm->GetName()));
+    PlayGemSfx(GemSfx::kSocket);
 }
 
 // M10 (stage 2a): consume the smallest filled, non-reusable soul gem and
@@ -4494,6 +4595,97 @@ namespace menuhook {
         c[ImGuiCol_NavHighlight]     = s.accent;  // m32f: controller focus ring
     }
 
+    // ── REMEMBERED WINDOW RECT (port of MFO's WinMem) ───────────────────────
+    // pos/size live in Data/SKSE/Plugins/MEO_UI.ini as FRACTIONS of the display
+    // (resolution independent), game-root-relative like the plugin's own INI/log
+    // so MO2's VFS lands it in overwrite. RENDER THREAD ONLY: the draw captures the
+    // live rect each frame, the Present thunk saves once the menu has closed. That
+    // covers CloseGemMenu() called from main-thread tasks too, since they only flip
+    // g_menu.open and never touch this state. Not the co-save, not the MCM store.
+    constexpr const char* kUiPath = "Data/SKSE/Plugins/MEO_UI.ini";
+    struct WinMem {
+        bool  loaded = false;                  // read attempted
+        bool  have = false;                    // stored rect valid
+        float x = 0, y = 0, w = 0, h = 0;      // fractions to restore
+        bool  dirty = false;                   // live rect differs from baseline
+        float lx = 0, ly = 0, lw = 0, lh = 0;  // live fractions
+    };
+    inline WinMem s_winMem;
+
+    bool ParseWinF(const std::string& a_v, float& a_out) {
+        float       f = 0;
+        const char* b = a_v.data();
+        const char* e = b + a_v.size();
+        const auto  r = std::from_chars(b, e, f);
+        if (r.ec != std::errc() || r.ptr != e || !std::isfinite(f)) return false;
+        a_out = f;
+        return true;
+    }
+
+    void LoadWinMem() {
+        s_winMem.loaded = true;
+        std::ifstream in(kUiPath);
+        if (!in) return;
+        float       v[4] = {};
+        bool        got[4] = {};
+        int         ver = 0;
+        std::string line;
+        auto        trim = [](std::string t) {
+            const auto a = t.find_first_not_of(" \t\r\n\xEF\xBB\xBF");
+            if (a == std::string::npos) return std::string();
+            return t.substr(a, t.find_last_not_of(" \t\r\n") - a + 1);
+        };
+        static const char* names[4] = {"winX", "winY", "winW", "winH"};
+        while (std::getline(in, line)) {
+            const auto eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            const std::string k = trim(line.substr(0, eq)), val = trim(line.substr(eq + 1));
+            for (int i = 0; i < 4; ++i)
+                if (k == names[i]) got[i] = ParseWinF(val, v[i]);
+            if (k == "version") { float f; if (ParseWinF(val, f)) ver = static_cast<int>(f); }
+        }
+        if (ver != 1 || !(got[0] && got[1] && got[2] && got[3])) return;
+        // Out of range -> centred default. x/y may be negative (parked partly off the
+        // left/top edge); the restore clamp fixes it.
+        if (v[0] < -1.0f || v[0] > 1.0f || v[1] < -1.0f || v[1] > 1.0f ||
+            v[2] < 0.05f || v[2] > 1.0f || v[3] < 0.05f || v[3] > 1.0f) return;
+        s_winMem.x = v[0]; s_winMem.y = v[1]; s_winMem.w = v[2]; s_winMem.h = v[3];
+        s_winMem.have = true;
+    }
+
+    void SaveWinMem() {
+        // std::to_chars: locale-independent, so from_chars always reads it back.
+        std::string buf = "version=1\n";
+        const auto  put = [&buf](const char* a_key, float a_v) {
+            char       num[32];
+            const auto r = std::to_chars(num, num + sizeof(num), a_v, std::chars_format::fixed, 5);
+            buf += a_key; buf += '='; buf.append(num, r.ptr); buf += '\n';
+        };
+        put("winX", s_winMem.lx); put("winY", s_winMem.ly);
+        put("winW", s_winMem.lw); put("winH", s_winMem.lh);
+        const std::string tmp = std::string(kUiPath) + ".tmp";
+        {
+            std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+            if (!out) { spdlog::warn("[menu] could not write {}", tmp); return; }
+            out << buf;
+            out.close();
+            if (out.fail()) { spdlog::warn("[menu] short write to {}", tmp); return; }
+        }
+        std::error_code ec;
+        std::filesystem::rename(tmp, kUiPath, ec);  // replaces an existing file
+        if (ec) { spdlog::warn("[menu] rename {} failed: {}", tmp, ec.message()); return; }
+        s_winMem.x = s_winMem.lx; s_winMem.y = s_winMem.ly;
+        s_winMem.w = s_winMem.lw; s_winMem.h = s_winMem.lh;
+        s_winMem.have = true;
+    }
+
+    // Called every frame from the Present thunk (render thread) while the menu is closed.
+    // ONE attempt per close: dirty is cleared first so a failed save is not retried
+    // (and re-logged) every frame.
+    void FlushGemMenuWindowMemory() {
+        if (s_winMem.dirty) { s_winMem.dirty = false; SaveWinMem(); }
+    }
+
     void DrawGemMenu() {
         auto& io = ImGui::GetIO();
         if (g_menu.wantClose.exchange(false)) {
@@ -4517,24 +4709,56 @@ namespace menuhook {
         if (fBody) {
             ImGui::PushFont(fBody);
         }
-        // Centered on each open (Appearing, not Always) so it can be
-        // dragged afterwards; DisplaySize is backbuffer-true by now.
-        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
-                                ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-        ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x * 0.62f, io.DisplaySize.y * 0.68f),
-                                 ImGuiCond_Appearing);
-        // m24c: resizable (drag any edge); ImGui keeps the chosen size for
-        // the rest of the session since the window persists in the context.
-        ImGui::SetNextWindowSizeConstraints(ImVec2(640.0f, 420.0f),
+        // Restore the remembered rect on each open (Appearing, not Always), else centre.
+        // Constraints are the same either way; the window still resizes freely after.
+        constexpr float kMinW = 640.0f, kMinH = 420.0f;
+        if (!s_winMem.loaded) LoadWinMem();
+        if (s_winMem.have) {
+            // Size from fractions clamped to the constraint range, then the position
+            // clamped so the whole window (so the whole header) stays on this display.
+            const float w = std::clamp(s_winMem.w * io.DisplaySize.x, kMinW, std::max(kMinW, io.DisplaySize.x));
+            const float h = std::clamp(s_winMem.h * io.DisplaySize.y, kMinH, std::max(kMinH, io.DisplaySize.y));
+            const float x = std::clamp(s_winMem.x * io.DisplaySize.x, 0.0f, std::max(0.0f, io.DisplaySize.x - w));
+            const float y = std::clamp(s_winMem.y * io.DisplaySize.y, 0.0f, std::max(0.0f, io.DisplaySize.y - h));
+            ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Appearing);
+            ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Appearing);
+        } else {
+            ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                                    ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x * 0.62f, io.DisplaySize.y * 0.68f),
+                                     ImGuiCond_Appearing);
+        }
+        ImGui::SetNextWindowSizeConstraints(ImVec2(kMinW, kMinH),
                                             ImVec2(io.DisplaySize.x, io.DisplaySize.y));
         if (!ImGui::Begin("Gem Socketing", nullptr,
                           ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
-                              ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav)) {  // m37e: all nav is manual — no ImGui cursor on tabs/Close/panes
+                              ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav |
+                              ImGuiWindowFlags_NoMove)) {  // moved only via the header drag strip below  // m37e: all nav is manual — no ImGui cursor on tabs/Close/panes
             ImGui::End();
             if (fBody) {
                 ImGui::PopFont();
             }
             return;
+        }
+        // Remember the live rect (fractions of the display). The first frame of an open
+        // is the baseline (what we just set), so merely opening never dirties the file.
+        if (io.DisplaySize.x > 0.0f && io.DisplaySize.y > 0.0f) {
+            const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+            const float  fx = wp.x / io.DisplaySize.x, fy = wp.y / io.DisplaySize.y;
+            const float  fw = ws.x / io.DisplaySize.x, fh = ws.y / io.DisplaySize.y;
+            const bool   differs = std::fabs(fx - s_winMem.lx) > 0.0005f || std::fabs(fy - s_winMem.ly) > 0.0005f ||
+                                   std::fabs(fw - s_winMem.lw) > 0.0005f || std::fabs(fh - s_winMem.lh) > 0.0005f;
+            const bool   matchesSaved = s_winMem.have && std::fabs(fx - s_winMem.x) <= 0.0005f &&
+                                        std::fabs(fy - s_winMem.y) <= 0.0005f &&
+                                        std::fabs(fw - s_winMem.w) <= 0.0005f &&
+                                        std::fabs(fh - s_winMem.h) <= 0.0005f;
+            if (ImGui::IsWindowAppearing()) {
+                s_winMem.lx = fx; s_winMem.ly = fy; s_winMem.lw = fw; s_winMem.lh = fh;
+                s_winMem.dirty = false;
+            } else if (differs) {
+                s_winMem.lx = fx; s_winMem.ly = fy; s_winMem.lw = fw; s_winMem.lh = fh;
+                s_winMem.dirty = !matchesSaved;
+            }
         }
         auto* dl = ImGui::GetWindowDrawList();
         const float lineH = ImGui::GetTextLineHeight();
@@ -4564,8 +4788,8 @@ namespace menuhook {
             return std::format("{}: {:.0f}", GemName(rg), mag);
         };
         auto rungTooltip = [&](int a_gemIdx, int a_level, const std::string& a_action) {
-            if (!ImGui::IsItemHovered()) {
-                return;
+            if (!ImGui::IsItemHovered() || ImGui::GetDragDropPayload()) {
+                return;  // no row tooltip while a gem is being dragged (drag preview shows instead)
             }
             ImGui::BeginTooltip();
             ImGui::TextUnformatted(a_action.c_str());
@@ -4596,10 +4820,23 @@ namespace menuhook {
             dl->AddLine(ImVec2(wp.x + 26.0f, ry), ImVec2(wp.x + tx - 18.0f, ry), rule);
             dl->AddLine(ImVec2(wp.x + tx + ts.x + 18.0f, ry),
                         ImVec2(wp.x + ImGui::GetWindowSize().x - 26.0f, ry), rule);
+            const float hdrY = ImGui::GetCursorPosY();
             ImGui::SetCursorPosX(tx);
             ImGui::PushStyleColor(ImGuiCol_Text, skin.accent);
             ImGui::TextUnformatted(title);
             ImGui::PopStyleColor();
+            // Drag handle: an invisible button over the whole header strip (the window
+            // itself is NoMove). Nothing else lives in this strip, so no overlap with
+            // tabs/buttons. Mouse only: NoNav on the window keeps it out of manual nav.
+            ImGui::SetCursorPos(ImVec2(ImGui::GetStyle().WindowPadding.x, hdrY));
+            ImGui::InvisibleButton("##hdrdrag", ImVec2(ImGui::GetContentRegionAvail().x, ts.y));
+            if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
+                const ImVec2 cur = ImGui::GetWindowPos(), sz = ImGui::GetWindowSize();
+                // keep at least a grabbable chunk of the header on screen
+                const float nx = std::clamp(cur.x + io.MouseDelta.x, 120.0f - sz.x, io.DisplaySize.x - 120.0f);
+                const float ny = std::clamp(cur.y + io.MouseDelta.y, 0.0f, std::max(0.0f, io.DisplaySize.y - 40.0f));
+                ImGui::SetWindowPos(ImVec2(nx, ny));
+            }
             if (fHead) {
                 ImGui::PopFont();
             }
@@ -4738,6 +4975,95 @@ namespace menuhook {
         }
         const bool itemsActive = (g_navZone == 0 && g_activePane == 0);
         const bool gemsActive  = (g_navZone == 0 && g_activePane == 1);
+        // Mouse drag-and-drop target (call right after the row's last item). a_slot -1 =
+        // the click flow's default: first empty socket, else replace socket 1. Runs the
+        // SAME MenuSocket call the click handler does (owner/tab + worn flag included);
+        // MenuSocket already does the swap-with-evict for a filled target slot (m35e).
+        // Mouse-only by construction: ImGui drag state never comes from the manual nav.
+        // Compatibility mirror of MenuSocket's rules (domain unless a Conduit is present,
+        // support only in a dual-socket item with no other support, capacity > 0).
+        // a_slot -1 = item-row drop: needs a FREE slot (a full item takes the drop only on
+        // its specific socket row, so a drop on the row never silently replaces socket 1).
+        auto gemFits = [&](const MenuItemRow& a_item, int a_slot, const GemDragPayload& g) {
+            if (a_item.capacity <= 0) { return false; }
+            int target = a_slot;
+            if (target < 0) {
+                for (int s = 0; s < a_item.capacity && s < kMaxSockets; ++s) {
+                    if (a_item.slotGem[s].empty()) { target = s; break; }
+                }
+                if (target < 0) { return false; }
+            }
+            if (g.isSupport) {
+                if (a_item.capacity < 2) { return false; }
+                for (int s = 0; s < a_item.capacity && s < kMaxSockets; ++s) {
+                    if (s == target || a_item.slotGem[s].empty()) { continue; }
+                    const int gi = a_item.slotGemIdx[s];
+                    if (gi >= 0 && gi < static_cast<int>(g_gems.size()) &&
+                        g_gems[gi].def->isSupport) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            return g.isArmor == a_item.isArmor || a_item.hasConduit;
+        };
+        // a_selectIdx >= 0 (item rows): a successful drop also selects that item so the
+        // right pane shows the socketed result.
+        auto gemDropTarget = [&](const MenuItemRow& a_item, int a_slot, int a_selectIdx) {
+            if (busy || !ImGui::BeginDragDropTarget()) {
+                return;
+            }
+            // Peek first: only compatible targets highlight/accept; the rest stay inert.
+            const ImGuiPayload* peek =
+                ImGui::AcceptDragDropPayload("MEO_GEM", ImGuiDragDropFlags_AcceptPeekOnly);
+            if (peek && peek->DataSize == static_cast<int>(sizeof(GemDragPayload))) {
+                GemDragPayload g;
+                std::memcpy(&g, peek->Data, sizeof(g));
+                const bool fits = gemFits(a_item, a_slot, g);
+                if (!fits && peek->IsDelivery()) {
+                    SKSE::GetTaskInterface()->AddTask(
+                        []() { Notify("That gem doesn't fit there."); });
+                }
+                if (fits) {
+                    const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("MEO_GEM");
+                    if (pl) {
+                        int target = a_slot;
+                        if (target < 0) {
+                            target = 0;
+                            for (int s = 0; s < a_item.capacity && s < kMaxSockets; ++s) {
+                                if (a_item.slotGem[s].empty()) { target = s; break; }
+                            }
+                        }
+                        g_destroyArm = 0;
+                        if (a_selectIdx >= 0) {
+                            g_menu.selItem = a_selectIdx;
+                            g_menu.selBase = a_item.base;
+                            g_menu.selUid = a_item.uid;
+                            g_menu.selSlot = -1;
+                            g_navZone = 0;
+                            g_activePane = 0;
+                        }
+                        const MenuItemRow item = a_item;  // copy for the closure
+                        QueueMenuTask([item, g, target, activeOwner]() {
+                            MenuSocket(item.base, item.uid, g.base, g.uid, target, activeOwner,
+                                       item.worn);
+                        });
+                    }
+                }
+            }
+            ImGui::EndDragDropTarget();
+        };
+        // Pending gem click bookkeeping (see PendingGemClick). No button down and no
+        // release this frame = stale (menu closed mid-press): drop it.
+        const bool mouseReleased = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+        if (g_pendingGem.active &&
+            (g_pendingGem.tab != g_menu.activeTab ||
+             (!mouseReleased && !ImGui::IsMouseDown(ImGuiMouseButton_Left)))) {
+            g_pendingGem.active = false;
+        }
+        // Drag-start distance for gem rows: larger than ImGui's default so hand jitter
+        // on a click never becomes a drag. Scales with the UI scale.
+        const float dragThreshold = 14.0f * ImGui::GetIO().FontGlobalScale;
         // Left pane: NEVER disabled — selection is pure UI state (identity-
         // tracked across rebuilds since m19e), and eating clicks during the
         // brief busy window read as "the menu misses clicks" in the field.
@@ -4770,6 +5096,7 @@ namespace menuhook {
                 g_navZone = 0;
                 g_activePane = 0;
             }
+            gemDropTarget(row, -1, i);  // drag a gem onto an item row = socket it (first free slot) + select it
             // Socket pips: one diamond per slot, filled+tinted when occupied.
             float cx = rp.x + 12.0f;
             for (int s = 0; s < row.capacity && s < kMaxSockets; ++s) {
@@ -4811,7 +5138,10 @@ namespace menuhook {
                 ImGui::PushID(s);
                 const ImVec2 rp = ImGui::GetCursorScreenPos();
                 if (sel.slotGem[s].empty()) {
-                    ImGui::Dummy(ImVec2(0.0f, rowH));
+                    // InvisibleButton (full width) instead of a zero-width Dummy so the row has
+                    // a real rect for the drag-drop target; NoNav windows, so no nav focus.
+                    ImGui::InvisibleButton("##emptyslot", ImVec2(innerW, rowH));
+                    if (!station) { gemDropTarget(sel, s, -1); }  // drop a gem = socket this slot
                     DrawDiamond(dlR, ImVec2(rp.x + 12.0f, rp.y + rowH * 0.5f), 4.5f,
                                 ImGui::GetColorU32(ImGuiCol_TextDisabled), false);
                     dlR->AddText(ImVec2(rp.x + 28.0f, rp.y + (rowH - lineH) * 0.5f),
@@ -4826,6 +5156,7 @@ namespace menuhook {
                 ImGui::Selectable("##slot", picked || rsel, 0, ImVec2(0.0f, rowH));
                 if (rsel && navMoved) { ImGui::SetScrollHereY(0.5f); }
                 const bool   act = ImGui::IsItemActivated() || (rsel && gemActivate);  // click or gamepad-A
+                if (!station) { gemDropTarget(sel, s, -1); }  // drop a gem = swap into this socket
                 ++gr;
                 rungTooltip(sel.slotGemIdx[s], sel.slotLevel[s],
                             std::string(station ? "Select " : "Remove ") + sel.slotGem[s]);
@@ -4994,9 +5325,37 @@ namespace menuhook {
                 const ImVec2 rp = ImGui::GetCursorScreenPos();
                 ImGui::PushID(1000 + i);
                 const bool rsel = gemsActive && g_gemSel == gr;
+                // Mouse click = pending-press model: the press only records the click and the
+                // release ANYWHERE runs it (a raw-delta cursor can leave the row between press
+                // and release; acting on the Selectable's release return missed those clicks).
+                // A press that becomes a drag clears the pending click. Gamepad-A is the
+                // separate manual gemActivate edge.
                 ImGui::Selectable("##gem", rsel, 0, ImVec2(0.0f, rowH));
                 if (rsel && navMoved) { ImGui::SetScrollHereY(0.5f); }
-                const bool act = ImGui::IsItemActivated() || (rsel && gemActivate);  // click or gamepad-A
+                if (!busy && ImGui::IsItemActivated()) {
+                    g_pendingGem = { true, gem.base, gem.uid, g_menu.activeTab, sel.base, sel.uid };
+                }
+                bool act = rsel && gemActivate;
+                if (g_pendingGem.active && mouseReleased && g_pendingGem.gemBase == gem.base &&
+                    g_pendingGem.gemUid == gem.uid && g_pendingGem.itemBase == sel.base &&
+                    g_pendingGem.itemUid == sel.uid) {
+                    act = true;
+                    g_pendingGem.active = false;
+                }
+                // Drag source: only once the press began on THIS row and the cursor moved
+                // past the larger threshold; once live it stays live (the payload latch).
+                const ImGuiPayload* livePl = ImGui::GetDragDropPayload();
+                const bool dragLive = livePl && livePl->IsDataType("MEO_GEM");
+                if (!busy && ImGui::IsItemActive() &&
+                    (dragLive || ImGui::IsMouseDragging(ImGuiMouseButton_Left, dragThreshold)) &&
+                    ImGui::BeginDragDropSource()) {
+                    const GemDragPayload dp{ gem.base, gem.uid, gem.isArmor, gem.isSupport };
+                    ImGui::SetDragDropPayload("MEO_GEM", &dp, sizeof(dp));
+                    ImGui::TextUnformatted(gem.label.c_str());
+                    ImGui::TextDisabled("Level %s", meo::kRoman[std::clamp(gem.level, 1, 5) - 1]);
+                    ImGui::EndDragDropSource();
+                    g_pendingGem.active = false;  // it became a drag
+                }
                 ++gr;
                 rungTooltip(gem.gemIdx, gem.level,
                             std::format("{} {}", swapping ? "Swap in" : "Socket", gem.label));
@@ -5039,6 +5398,7 @@ namespace menuhook {
             ImGui::EndDisabled();
         }
         ImGui::EndChild();
+        if (mouseReleased) { g_pendingGem.active = false; }  // fired above or cancelled
         if (busy) {
             ImGui::TextDisabled("Working...");
         } else if (g_menu.station.load() && g_menu.activeTab == 0) {
@@ -5110,6 +5470,7 @@ namespace menuhook {
             ImGui::CreateContext();
             auto& io = ImGui::GetIO();
             io.IniFilename = nullptr;  // never write imgui.ini into the game dir
+            io.ConfigWindowsResizeFromEdges = true;  // explicit so an ImGui bump can't flip it; drag is the header strip (NoMove)
             io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
             io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
             // m23c: bake real typefaces at backbuffer scale (FontGlobalScale
@@ -5191,7 +5552,11 @@ namespace menuhook {
         static void thunk(std::uint32_t a_p1) {
             func(a_p1);
             TickEnchHumMute();  // [snd] single-writer: apply/restore the windowed enchant-hum mute
-            if (!g_d3dReady.load() || !g_menu.open.load()) {
+            if (!g_d3dReady.load()) {
+                return;
+            }
+            if (!g_menu.open.load()) {
+                FlushGemMenuWindowMemory();  // render thread; saves the remembered rect once per close
                 return;
             }
             // xp/hooks-S2: NewFrame drains the IO event queue — hold the IO lock

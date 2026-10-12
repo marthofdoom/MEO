@@ -738,3 +738,40 @@ gotchas:
   and `exchange()`-consume the atomic requests once per frame so a held direction can't
   repeat (down-edge only). Clear ImGui keys on `WM_KILLFOCUS`. `d3d11.h` pulls `wingdi.h`
   which `#define`s `GetObject`→`GetObjectW`; `#undef GetObject` after the D3D includes.
+- **Window move / resize / remembered rect:** `io.ConfigWindowsMoveFromTitleBarOnly` does
+  nothing for a `NoTitleBar` window, so the menu is `NoMove` and an `InvisibleButton` over
+  the header strip moves it (`SetWindowPos(pos + io.MouseDelta)` while active and dragging).
+  The window is `NoNav`, so the strip is mouse-only and manual nav is untouched.
+  `ConfigWindowsResizeFromEdges` is set explicitly. Pos/size persist as display FRACTIONS in
+  `Data/SKSE/Plugins/MEO_UI.ini` (MFO's WinMem shape): render thread only, read lazily at
+  first open, the draw captures the live rect, and the Present thunk saves (temp + rename,
+  one attempt) the frame after `g_menu.open` goes false. That way a `CloseGemMenu()` from a
+  main-thread task needs no lock, because it never touches the rect state. `imgui.ini`
+  stays disabled (`IniFilename = nullptr`).
+- **Mouse drag-and-drop coexists with fully manual nav.** Loose-gem rows are
+  `BeginDragDropSource` (payload `"MEO_GEM"` = base + uid + isArmor + isSupport by value);
+  filled-socket rows, empty-socket rows and item rows are `BeginDragDropTarget`s that queue
+  the SAME `MenuSocket` call the click handler does (target slot: the slot, or the first
+  FREE slot for an item row; a filled slot swaps via the m35e evict). Gotchas: (1) Gem-row
+  clicks use a PENDING-PRESS model: the press (`IsItemActivated`) only records
+  `{gem base+uid, tab, item}` in `g_pendingGem`, and `IsMouseReleased(0)` anywhere runs the
+  click. Acting on the `Selectable` release return reintroduced the missed-click bug (the
+  raw-delta cursor drifts off the row between press and release). The pending click is
+  cleared when the press becomes a drag, the tab changes, the row/item identity is gone, or
+  the button is up without a release frame (menu closed mid-press). (2) The drag source
+  starts only when `IsItemActive()` (press began on that row) and the mouse moved
+  >= 14 px x UI scale (ImGui's default 6 px made jitter into drags); once the payload is
+  live it stays live. (3) Targets peek (`AcceptPeekOnly`) and only highlight/accept a
+  compatible gem: domain match unless the item has a Conduit, capacity > 0, support only
+  with capacity 2 and no other support. An item-row drop needs a free slot (a full item
+  takes drops on its specific socket row, never a silent replace of socket 1). A refused
+  drop shows a notification. A successful item-row drop also selects that item. (4) A
+  zero-width `Dummy` has no drop rect: the empty-socket row is a full-width
+  `InvisibleButton`. (5) Targets are gated on `!busy`; sources don't touch
+  `gr`/`g_gemSel`/zone state, and everything stays under `NoNav`.
+- **Gem sound effects** (`bGemSounds`) play 2D UI sounds from the main thread, by FormID
+  only (`LookupByID<BGSSoundDescriptorForm>` + `BuildSoundDataFromDescriptor`): socket =
+  SNDR 0xC8C71 UIEnchantingItemCreate (fallback 0x3C751 UIMenuOKSD), remove = 0xC8C77
+  UIEnchantingLearnEffect (fallback 0x3C752 UIMenuCancelSD), level-up = 0x3C7CF
+  UISkillIncreaseSD. No editor-ID lookups. None are the MAGEnchantedUnsheathe hum SNDRs, so
+  the windowed mute never touches them.
