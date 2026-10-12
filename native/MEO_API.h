@@ -1,6 +1,6 @@
 #pragma once
 // ─────────────────────────────────────────────────────────────────────────────
-// MEO (marth's Enchanting Overhaul) — SKSE inter-plugin C++ API, v1.
+// MEO (marth's Enchanting Overhaul) — SKSE inter-plugin C++ API, v4.
 //
 // For SKSE-plugin consumers (e.g. MFO). Copy this header into your project. MEO
 // must be present in the load order; if it isn't, Request() returns nullptr and
@@ -23,6 +23,7 @@
 // the main thread. GetGemTheme (ABI v4) is safe from ANY thread: it reads only MEO's
 // gem catalog, which is built once at kDataLoaded and never changes afterwards.
 // ─────────────────────────────────────────────────────────────────────────────
+#include <cstddef>
 #include <cstdint>
 
 namespace RE {
@@ -157,6 +158,8 @@ namespace MEO_API {
                                           // support gem and for an inactive gem.
     };
     static_assert(sizeof(GemTheme) == 72, "MEO_API::GemTheme layout is frozen");
+    static_assert(alignof(GemTheme) == 1, "MEO_API::GemTheme layout is frozen");
+    static_assert(offsetof(GemTheme, conduitSibling) == 8, "MEO_API::GemTheme layout is frozen");
 
     class IMEO {
     public:

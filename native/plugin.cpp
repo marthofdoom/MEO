@@ -9632,7 +9632,7 @@ public:
         t.theme = static_cast<std::uint8_t>(d->theme);
         t.gemClass = static_cast<std::uint8_t>(d->gclass);
         t.supportType = static_cast<std::uint8_t>(d->supportType);
-        // Same rule as GemPerkMult (element perks) and IsElementalGem (Focus).
+        // Same predicate as GemPerkMult (element perks) and IsElementalGem (Focus); keep all three in sync.
         const bool chaos = std::strcmp(d->gid, "chaos") == 0;
         if (d->theme == meo::Theme::kFire || chaos) t.elements |= MEO_API::kElement_Fire;
         if (d->theme == meo::Theme::kFrost || chaos) t.elements |= MEO_API::kElement_Frost;

@@ -473,8 +473,11 @@ the portable "never again" digest for sibling projects.
     one player sweep; OFF->ON restores nothing (source-resumes — stripped
     instances stay plain).
 29. **`MEO_API.h` is a compiled-consumer contract** (MFO links against it):
-    vtable slots 0–3 (`Version`/`GetSocketCapacity`/`GetActorGems`/`MoveGems`)
-    and the `GemInfo` POD layout are frozen forever. Extend ONLY by appending a
+    vtable slots 0–10 (`Version`/`GetSocketCapacity`/`GetActorGems`/`MoveGems`/
+    `GetActorGemsCarried`/`GetEmptySocketCount`/`GetGemDetails`/`GetLooseGems`/
+    `SocketGem`/`UnsocketGem`/`GetGemTheme`, with the protected dtor LAST) and the
+    `GemInfo`, `GemDetail`, `LooseGemInfo`, `GemTheme` and `InterfaceRequest` POD
+    layouts are frozen forever. Extend ONLY by appending a
     uniquely-named virtual before the protected dtor and bumping `kABIVersion`
     (v2 added `GetActorGemsCarried`; v3 added the follower gem-management
     methods; v4 added `GetGemTheme` + the `GemTheme` POD); never reorder, remove,
