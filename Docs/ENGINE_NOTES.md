@@ -394,7 +394,10 @@ installed in `SKSEPluginLoad` — before the renderer exists):
 - **Extending the MEO inter-plugin ABI** (2026-08-24: ABI v2 added
   `GetActorGemsCarried`; ABI v3 added the follower gem-management surface —
   `GetEmptySocketCount`/`GetGemDetails`/`GetLooseGems`/`SocketGem`/`UnsocketGem`,
-  which read and mutate a specific actor's OWN inventory, never the shared pouch).
+  which read and mutate a specific actor's OWN inventory, never the shared pouch;
+  2026-10-12: ABI v4 added `GetGemTheme`, a gem family's catalog classification by
+  gid — theme / element bits / class / support type / domain / Conduit sibling —
+  into a new 72-byte `GemTheme` POD, any-thread because it reads only the catalog).
   `IMEO` uses the versioned-vtable idiom: a `protected`,
   non-deletable dtor declared LAST, so appending a new pure virtual after the last
   existing method (before the `protected:` dtor) keeps every shipped slot fixed

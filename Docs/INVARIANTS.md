@@ -473,11 +473,21 @@ the portable "never again" digest for sibling projects.
     one player sweep; OFF->ON restores nothing (source-resumes — stripped
     instances stay plain).
 29. **`MEO_API.h` is a compiled-consumer contract** (MFO links against it):
-    vtable slots 0–3 (`Version`/`GetSocketCapacity`/`GetActorGems`/`MoveGems`)
-    and the `GemInfo` POD layout are frozen forever. Extend ONLY by appending a
+    vtable slots 0–10 (`Version`/`GetSocketCapacity`/`GetActorGems`/`MoveGems`/
+    `GetActorGemsCarried`/`GetEmptySocketCount`/`GetGemDetails`/`GetLooseGems`/
+    `SocketGem`/`UnsocketGem`/`GetGemTheme`, with the protected dtor LAST) and the
+    `GemInfo`, `GemDetail`, `LooseGemInfo`, `GemTheme` and `InterfaceRequest` POD
+    layouts are frozen forever. Extend ONLY by appending a
     uniquely-named virtual before the protected dtor and bumping `kABIVersion`
     (v2 added `GetActorGemsCarried`; v3 added the follower gem-management
-    methods); never reorder, remove, or overload an existing method name. The
+    methods; v4 added `GetGemTheme` + the `GemTheme` POD); never reorder, remove,
+    or overload an existing method name. The v4 `kTheme_`/`kGemClass_`/`kSupport_`
+    numbers ARE `GemCatalog.h`'s enum values (static_asserted in plugin.cpp), so
+    those enums' order is now part of the ABI too. `GetGemTheme` is any-thread
+    ONLY because the catalog is immutable after `ResolveCatalog()` at kDataLoaded
+    (`g_catalogReady`): anything that ever re-resolves or mutates `g_gems` /
+    `g_gemByGid` later must first make `GetGemTheme` main-thread-only (a new ABI
+    version), or it is a data race. The
     ABI-v3 mutations (`SocketGem`/`UnsocketGem`) and reads operate on the actor's
     OWN inventory; MEO's own menu still uses the shared pouch (`GiveGemInstance`)
     — that split MUST hold. See ENGINE_NOTES "Extending the MEO inter-plugin ABI".
