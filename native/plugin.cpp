@@ -1195,7 +1195,7 @@ void ResolveCatalog() {
                 if (auto* m = dh->LookupForm<RE::EffectSetting>(lvIt->second[l].fid,
                                                                lvIt->second[l].plugin)) {
                     // m52: older calibration carries Thaumaturgy's hidden
-                    // Spell-Strike perk MGELs on the top rungs — keep the
+                    // Spell-Strike perk MGEFs on the top rungs — keep the
                     // previous level's effect instead.
                     if (m->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kHideInUI)) {
                         ++hiddenRungs;
