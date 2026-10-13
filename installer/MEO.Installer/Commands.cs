@@ -880,6 +880,27 @@ static class Commands
                     ? (fx.M, Math.Min(prev.MinMag, fx.Mag)) : (fx.M, fx.Mag);
             }
         }
+        static string Root(string? rs)
+        {
+            if (rs is null) return "";
+            var rp = rs.IndexOf('(');
+            return (rp > 0 ? rs[..rp] : rs).Trim().ToLowerInvariant();
+        }
+        // m52 (marth's deck: Chaos shows as Fire, Fire shows unknown): name-kin
+        // alone is not kin. Thaumaturgy's Spell-Strike perk MGEFs reuse the
+        // vanilla element names, are HideInUI + empty-description, and ride on
+        // generic enchants; Chaos's fire component is named 'Fire Damage'.
+        var allRiders = adopted.Values.SelectMany(x => x).ToHashSet();
+        var primKeys = new Dictionary<FormKey, string>();   // family primary -> famKey
+        var primRoots = new Dictionary<string, string>();   // famKey -> primary name root
+        foreach (var fk0 in outFams.Keys)
+        {
+            var rf = data.FamilyRefs[fk0];
+            if (rf.Count == 0) continue;
+            primKeys[rf[0].Key] = fk0;
+            if (cache.TryResolve<IMagicEffectGetter>(rf[0].Key, out var m52pm))
+                primRoots[fk0] = Root(m52pm.Name?.String ?? m52pm.EditorID);
+        }
         foreach (var (famKey, obj) in outFams)
         {
             var refs = data.FamilyRefs[famKey];
@@ -890,20 +911,38 @@ static class Commands
             // rung must ALSO match the primary's cast shape and be a name
             // relative — '<primary name>' or '<primary name> (Rank N)'.
             if (!cache.TryResolve<IMagicEffectGetter>(refs[0].Key, out var prim0)) continue;
-            static string Root(string? s)
-            {
-                if (s is null) return "";
-                var p = s.IndexOf('(');
-                return (p > 0 ? s[..p] : s).Trim().ToLowerInvariant();
-            }
             var primRoot = Root(prim0.Name?.String ?? prim0.EditorID);
             if (primRoot.Length == 0) continue;
-            var tiers = kin.Values
+            // A composite family (its riders carry ANOTHER family's element,
+            // e.g. chaos's Frost/Shock Damage) has no single-signature ladder.
+            var composite = adopted[famKey].Select(fk =>
+                    cache.TryResolve<IMagicEffectGetter>(fk, out var m52rm)
+                        ? Root(m52rm.Name?.String ?? m52rm.EditorID) : "")
+                .FirstOrDefault(r => r.Length > 0 && r != primRoot &&
+                    primRoots.Any(kv => kv.Key != famKey && kv.Value == r));
+            if (composite is not null)
+            {
+                Console.WriteLine($"  {famKey}: ladder skipped (composite family; carries '{composite}')");
+                continue;
+            }
+            var named = kin.Values
                 .Where(k => Root(k.M.Name?.String ?? k.M.EditorID) == primRoot &&
                             k.M.CastType == prim0.CastType &&
                             k.M.TargetType == prim0.TargetType)
+                .ToList();
+            bool Hidden(IMagicEffectGetter m) => m.Flags.HasFlag(MagicEffect.Flag.HideInUI);
+            bool OtherPrim(IMagicEffectGetter m) =>
+                primKeys.TryGetValue(m.FormKey, out var m52fam) && m52fam != famKey;
+            int nHidden = named.Count(k => Hidden(k.M));
+            int nRider = named.Count(k => !Hidden(k.M) && allRiders.Contains(k.M.FormKey));
+            int nPrim = named.Count(k => !Hidden(k.M) && !allRiders.Contains(k.M.FormKey) && OtherPrim(k.M));
+            var tiers = named
+                .Where(k => !Hidden(k.M) && !allRiders.Contains(k.M.FormKey) && !OtherPrim(k.M))
                 .OrderBy(k => k.MinMag).Select(k => k.M)
                 .DistinctBy(m => m.FormKey).ToList();
+            if (nHidden + nRider + nPrim > 0)
+                Console.WriteLine($"  {famKey}: ladder candidates dropped — {nHidden} hidden (HideInUI), " +
+                                  $"{nRider} adopted rider(s), {nPrim} other family's primary");
             if (tiers.Count < 2 || tiers.Count > 5) continue;  // no plausible ladder
             var lvl = new List<object>();
             for (int l = 0; l < 5; l++)

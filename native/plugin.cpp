@@ -1172,6 +1172,16 @@ void ResolveCatalog() {
         for (auto& c : n) c = static_cast<char>(std::tolower(c));
         famNames.insert(std::move(n));
     }
+    // m52 (marth's deck: Chaos shows as Fire, Fire shows unknown): every
+    // catalog gem's base MGEF, so a ladder rung that IS another family's
+    // effect (name-kin collided across families) can be refused below.
+    std::unordered_map<RE::EffectSetting*, std::string_view> baseMgefs;
+    for (const auto& d2 : meo::kGems) {
+        if (d2.isSupport) continue;
+        if (auto* bm = dh->LookupForm<RE::EffectSetting>(d2.mgefID, d2.plugin)) {
+            baseMgefs.emplace(bm, d2.gid);
+        }
+    }
     for (const auto& def : meo::kGems) {
         ResolvedGem rg;
         rg.def = &def;
@@ -1179,11 +1189,35 @@ void ResolveCatalog() {
         rg.mgefLv.fill(rg.mgef);
         if (auto lvIt = g_calLevels.find(def.gid); lvIt != g_calLevels.end() && rg.mgef) {
             std::string ladder;
+            int hiddenRungs = 0;
+            std::string_view foreign;  // gid of another gem whose base effect a rung IS
             for (int l = 0; l < 5; ++l) {
                 if (auto* m = dh->LookupForm<RE::EffectSetting>(lvIt->second[l].fid,
                                                                lvIt->second[l].plugin)) {
-                    rg.mgefLv[l] = m;
+                    // m52: older calibration carries Thaumaturgy's hidden
+                    // Spell-Strike perk MGELs on the top rungs — keep the
+                    // previous level's effect instead.
+                    if (m->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kHideInUI)) {
+                        ++hiddenRungs;
+                        if (l > 0) rg.mgefLv[l] = rg.mgefLv[l - 1];
+                    } else {
+                        rg.mgefLv[l] = m;
+                        if (m != rg.mgef) {
+                            if (auto bit = baseMgefs.find(m); bit != baseMgefs.end()) {
+                                foreign = bit->second;
+                            }
+                        }
+                    }
                 }
+            }
+            if (!foreign.empty()) {
+                spdlog::info("[catalog] '{}' ladder dropped: rung is '{}''s base effect", def.gid, foreign);
+                rg.mgefLv.fill(rg.mgef);
+                hiddenRungs = 0;
+            } else if (hiddenRungs) {
+                spdlog::info("[catalog] '{}' ladder: {} hidden rung(s) rejected", def.gid, hiddenRungs);
+            }
+            for (int l = 0; l < 5; ++l) {
                 ladder += std::format("{}{}", l ? "/" : "", rg.mgefLv[l] == rg.mgef ? "-" : "+");
             }
             for (int l = 1; l < 5; ++l) {  // m29: name what each new rung grants
@@ -1209,7 +1243,9 @@ void ResolveCatalog() {
                     rg.lvNotes.emplace_back(l + 1, s + ".");
                 }
             }
-            spdlog::info("[catalog] '{}' rank ladder active ({})", def.gid, ladder);
+            if (ladder.find('+') != std::string::npos) {
+                spdlog::info("[catalog] '{}' rank ladder active ({})", def.gid, ladder);
+            }
         }
         if (rg.mgef) {
             const char* live = rg.mgef->GetName();

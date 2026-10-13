@@ -4,6 +4,10 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
+## Unreleased
+
+- **Chaos gems no longer show as Fire, and high-level gems keep their real effect and description.** On lists that add their own Spell-Strike effects (Thaumaturgy), a high-level Fire gem could show no description and lose its normal effect, and Chaos could be presented as plain Fire. Re-run Synthesis to rebuild the calibration; the game plugin also ignores the bad rank-ladder entries in calibration files made by older versions.
+
 ## v1.0.20 — the gem menu remembers its place, plays sounds, and takes dragged gems (2026-10-04)
 
 - **One mouse cursor in the gem menu.** The menu sometimes showed a second cursor and a

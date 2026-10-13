@@ -775,3 +775,19 @@ gotchas:
   UIEnchantingLearnEffect (fallback 0x3C752 UIMenuCancelSD), level-up = 0x3C7CF
   UISkillIncreaseSD. No editor-ID lookups. None are the MAGEnchantedUnsheathe hum SNDRs, so
   the windowed mute never touches them.
+
+## 14. Name-matched MGEFs are not kin (m52, deck-verified on Tuxborn)
+
+Thaumaturgy's Spell-Strike perk MGEFs (e.g. `MAG_PerkSpellStrikeFireEffect`
+0x2F80A9, `...AbsorbHealth...`, `...Banish`, `...Fear`) share the vanilla element
+names ("Fire Damage" ...), carry the HideInUI flag (0x8000) with an EMPTY
+description (DNAM), and ride as riders on the list's generic enchants. A
+name-root + signature kin test therefore crowns them on every family's top
+rungs: a high-level Fire gem lost its description ("unknown") and its real
+effect. Likewise DLC2 Chaos's fire component (`DLC2EnchFireDamageFFContact50`)
+is named "Fire Damage", so Chaos's ladder collapsed onto the plain Fire ladder
+(Skyrim.esm 0x04605A) and Chaos presented as Fire. Never treat a name-matched
+MGEF as kin without the HideInUI / adopted-rider / other-family-primary checks,
+and skip composite families (riders carrying another family's element). MEO
+enforces this in the Synthesis generator and again in the DLL catalog loader
+(old calibration files still carry the bad ladders).
