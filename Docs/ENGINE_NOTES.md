@@ -791,3 +791,7 @@ MGEF as kin without the HideInUI / adopted-rider / other-family-primary checks,
 and skip composite families (riders carrying another family's element). MEO
 enforces this in the Synthesis generator and again in the DLL catalog loader
 (old calibration files still carry the bad ladders).
+
+Units (m52b): ShoutRecoveryMult (AV 86) is a 0..1 multiplier; vanilla and Requiem
+enchants on the Fortify Shout MGEF (Skyrim.esm 0x08850D) use 0.1-0.2 for 10-20%. MEO
+keeps gem curves in percent (tooltip, API) and scales x0.01 at emit (`EngineMagScale`).

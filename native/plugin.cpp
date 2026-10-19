@@ -1702,6 +1702,14 @@ float GemBaseMag(const meo::GemDef* a_def, int a_lvIdx) {
     return a_def->magnitude[li];
 }
 
+// m52b (user report: Fortify Shout lowers the cooldown by 10 points, not 10%): gem
+// curves are in PERCENT units, but ShoutRecoveryMult is a 0..1 multiplier (vanilla and
+// Requiem enchants use 0.1-0.2 for 10-20%). Applied only where a magnitude is written
+// into an engine Effect; the tooltip and the API keep the percent value.
+float EngineMagScale(const RE::EffectSetting* a_m) {
+    return (a_m && a_m->data.primaryAV == RE::ActorValue::kShoutRecoveryMult) ? 0.01f : 1.0f;
+}
+
 float GemPerkMult(const meo::GemDef* a_def) {
     if (!a_def) {
         return 1.0f;
@@ -2129,10 +2137,10 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
             (1.0f + 0.05f * g_attuneRank) * GemPerkMult(eg->def);
         const float primaryMag = conduitTarget ? baseMag * conduitRatio : baseMag * supportMag;
         auto& eff = effects[e++];
-        eff.effectItem.magnitude = primaryMag;
+        eff.baseEffect = eg->mgefLv[lvIdx];  // m28: rank ladder
+        eff.effectItem.magnitude = primaryMag * EngineMagScale(eff.baseEffect);  // m52b (riders keep unscaled primaryMag)
         eff.effectItem.area = echoArea;  // m36: Echo weapon AoE (0 otherwise)
         eff.effectItem.duration = static_cast<std::uint32_t>(eg->def->duration);
-        eff.baseEffect = eg->mgefLv[lvIdx];  // m28: rank ladder
         eff.cost = 0.0f;
         if (!conduitTarget) {
             for (int r = 0; r < filled[i].rg->nRiders; ++r) {
@@ -8069,7 +8077,8 @@ EchoPayload ComputeEchoPayload(RE::Actor* a_actor) {
                 // a follower source's shared magnitude is intentionally scaled by the
                 // player's attunement & perks (followers carry none of their own).
                 out.mag = GemBaseMag(normal->def, lvIdx) * g_magnitudeMult *
-                          (1.0f + 0.05f * g_attuneRank) * GemPerkMult(normal->def) * echoFrac;
+                          (1.0f + 0.05f * g_attuneRank) * GemPerkMult(normal->def) * echoFrac *
+                          EngineMagScale(out.mgef);  // m52b: written into the engine Effect
                 out.gid = normal->def->gid;
                 return out;  // first linked Echo-armor on this actor wins
             }

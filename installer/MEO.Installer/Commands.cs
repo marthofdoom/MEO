@@ -754,7 +754,9 @@ static class Commands
             if (prim.Mag > 0)  // m35b: collect the list's own magnitudes for this family
             {
                 if (!famMags.TryGetValue(best, out var ml)) famMags[best] = ml = [];
-                for (int w = 0; w < weight; w++) ml.Add(prim.Mag);
+                // m52b: ShoutRecoveryMult is a 0..1 multiplier (0.1 = 10%); the curve stays in percent
+                var pm = prim.M!.Archetype.ActorValue == ActorValue.ShoutRecoveryMult ? prim.Mag * 100f : prim.Mag;
+                for (int w = 0; w < weight; w++) ml.Add(pm);
             }
             // m32: a zero-magnitude primary (paralyze, soul trap) can't ratio-
             // normalize — its riders ride ABSOLUTE instead: flat magnitude and
