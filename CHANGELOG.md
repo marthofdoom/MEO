@@ -4,7 +4,7 @@ Newest first. Every version that reached the game shipped as a complete
 standalone zip in `releases/vX.Y.Z/` (tag = release). Grouped by milestone
 arc; point fixes are folded into their feature entry unless load-bearing.
 
-## Unreleased
+## v1.0.21 — gems keep their real effect and strength on every list (2026-10-25)
 
 - **Chaos gems no longer show as Fire, and high-level gems keep their real effect and description.** On lists that add their own Spell-Strike effects (Thaumaturgy), a high-level Fire gem could show no description and lose its normal effect, and Chaos could be presented as plain Fire. Re-run Synthesis to rebuild the calibration; the game plugin also ignores the bad rank-ladder entries in calibration files made by older versions.
 - **Fortify Shout gems now cut the shout cooldown by percent.** They reduced it by whole points instead of percent (a level I gem wiped it out); they now apply 10–30% as shown.

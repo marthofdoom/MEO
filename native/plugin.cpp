@@ -171,7 +171,7 @@ constexpr std::uint32_t kSerVersion = 12;  // v12: + loose-record holderRefID. v
 // the console print, exposed to Papyrus via GetDLLVersion() below, and read by
 // MEO_GenerateESP.py to stamp the MCM Debug-page "Version" readout at build time
 // (so DLL, log, console, and menu can never disagree).
-constexpr const char* kMEOVersion = "1.0.20";  // menu drag/resize/remember + gem SFX + drag gems into sockets
+constexpr const char* kMEOVersion = "1.0.21";  // gem effects stay true per list: rank-ladder kin filter + per-list magnitude units
 
 // ── Catalog resolved against the live load order (kDataLoaded) ───────
 constexpr const char* kPluginName = "MEO.esp";
