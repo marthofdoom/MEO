@@ -754,7 +754,7 @@ static class Commands
             if (prim.Mag > 0)  // m35b: collect the list's own magnitudes for this family
             {
                 if (!famMags.TryGetValue(best, out var ml)) famMags[best] = ml = [];
-                for (int w = 0; w < weight; w++) ml.Add(prim.Mag);
+                for (int w = 0; w < weight; w++) ml.Add(prim.Mag);  // raw; m52c converts units below
             }
             // m32: a zero-magnitude primary (paralyze, soul trap) can't ratio-
             // normalize — its riders ride ABSOLUTE instead: flat magnitude and
@@ -880,6 +880,27 @@ static class Commands
                     ? (fx.M, Math.Min(prev.MinMag, fx.Mag)) : (fx.M, fx.Mag);
             }
         }
+        static string Root(string? rs)
+        {
+            if (rs is null) return "";
+            var rp = rs.IndexOf('(');
+            return (rp > 0 ? rs[..rp] : rs).Trim().ToLowerInvariant();
+        }
+        // m52 (marth's deck: Chaos shows as Fire, Fire shows unknown): name-kin
+        // alone is not kin. Thaumaturgy's Spell-Strike perk MGEFs reuse the
+        // vanilla element names, are HideInUI + empty-description, and ride on
+        // generic enchants; Chaos's fire component is named 'Fire Damage'.
+        var allRiders = adopted.Values.SelectMany(x => x).ToHashSet();
+        var primKeys = new Dictionary<FormKey, string>();   // family primary -> famKey
+        var primRoots = new Dictionary<string, string>();   // famKey -> primary name root
+        foreach (var fk0 in outFams.Keys)
+        {
+            var rf = data.FamilyRefs[fk0];
+            if (rf.Count == 0) continue;
+            primKeys[rf[0].Key] = fk0;
+            if (cache.TryResolve<IMagicEffectGetter>(rf[0].Key, out var m52pm))
+                primRoots[fk0] = Root(m52pm.Name?.String ?? m52pm.EditorID);
+        }
         foreach (var (famKey, obj) in outFams)
         {
             var refs = data.FamilyRefs[famKey];
@@ -890,20 +911,48 @@ static class Commands
             // rung must ALSO match the primary's cast shape and be a name
             // relative — '<primary name>' or '<primary name> (Rank N)'.
             if (!cache.TryResolve<IMagicEffectGetter>(refs[0].Key, out var prim0)) continue;
-            static string Root(string? s)
-            {
-                if (s is null) return "";
-                var p = s.IndexOf('(');
-                return (p > 0 ? s[..p] : s).Trim().ToLowerInvariant();
-            }
             var primRoot = Root(prim0.Name?.String ?? prim0.EditorID);
             if (primRoot.Length == 0) continue;
-            var tiers = kin.Values
+            // A composite family (its riders carry ANOTHER family's element,
+            // e.g. chaos's Frost/Shock Damage) has no single-signature ladder.
+            var composite = adopted[famKey].Select(fk =>
+                    cache.TryResolve<IMagicEffectGetter>(fk, out var m52rm)
+                        ? Root(m52rm.Name?.String ?? m52rm.EditorID) : "")
+                .FirstOrDefault(r => r.Length > 0 && r != primRoot &&
+                    primRoots.Any(kv => kv.Key != famKey && kv.Value == r));
+            if (composite is not null)
+            {
+                Console.WriteLine($"  {famKey}: ladder skipped (composite family; carries '{composite}')");
+                continue;
+            }
+            var named = kin.Values
                 .Where(k => Root(k.M.Name?.String ?? k.M.EditorID) == primRoot &&
                             k.M.CastType == prim0.CastType &&
                             k.M.TargetType == prim0.TargetType)
+                .ToList();
+            bool Hidden(IMagicEffectGetter m) => m.Flags.HasFlag(MagicEffect.Flag.HideInUI);
+            // m52c (audit: Chaos Frost/Shock parts won L4-5; a Requiem artifact MGEF won
+            // Absorb Health L4-5): a conditioned rung on an unconditioned base, or a rung
+            // with another archetype/AV than the base, is a different effect.
+            bool CondRung(IMagicEffectGetter m) => m.Conditions.Count > 0 && prim0.Conditions.Count == 0;
+            bool ShapeRung(IMagicEffectGetter m) =>
+                m.Archetype.Type != prim0.Archetype.Type || m.Archetype.ActorValue != prim0.Archetype.ActorValue;
+            bool Bad(IMagicEffectGetter m) => Hidden(m) || CondRung(m) || ShapeRung(m);
+            bool OtherPrim(IMagicEffectGetter m) =>
+                primKeys.TryGetValue(m.FormKey, out var m52fam) && m52fam != famKey;
+            int nHidden = named.Count(k => Hidden(k.M));
+            int nCond = named.Count(k => !Hidden(k.M) && CondRung(k.M));
+            int nShape = named.Count(k => !Hidden(k.M) && !CondRung(k.M) && ShapeRung(k.M));
+            int nRider = named.Count(k => !Bad(k.M) && allRiders.Contains(k.M.FormKey));
+            int nPrim = named.Count(k => !Bad(k.M) && !allRiders.Contains(k.M.FormKey) && OtherPrim(k.M));
+            var tiers = named
+                .Where(k => !Bad(k.M) && !allRiders.Contains(k.M.FormKey) && !OtherPrim(k.M))
                 .OrderBy(k => k.MinMag).Select(k => k.M)
                 .DistinctBy(m => m.FormKey).ToList();
+            if (nHidden + nCond + nShape + nRider + nPrim > 0)
+                Console.WriteLine($"  {famKey}: ladder candidates dropped — {nHidden} hidden (HideInUI), " +
+                                  $"{nCond} conditioned, {nShape} foreign-shape, " +
+                                  $"{nRider} adopted rider(s), {nPrim} other family's primary");
             if (tiers.Count < 2 || tiers.Count > 5) continue;  // no plausible ladder
             var lvl = new List<object>();
             for (int l = 0; l < 5; l++)
@@ -929,13 +978,32 @@ static class Commands
         // included — instead of a baked constant. Families with no generic
         // enchant in the list keep the compiled default.
         int curvesDerived = 0;
-        foreach (var (fam, mags) in famMags)
+        foreach (var (fam, rawMags) in famMags)
         {
-            if (mags.Count == 0 || !data.CatalogCurve.TryGetValue(fam, out var shape) ||
-                shape.Length < 5 || shape[4] <= 0) continue;
+            if (rawMags.Count == 0 || !data.CatalogCurve.TryGetValue(fam, out var shape) ||
+                shape.Length == 0 || shape[^1] <= 0) continue;
+            // m52c (audit: units): the catalog curve is in catalog units; the list's MGEF may
+            // store fractions (0.2 = 20%: vanilla Fortify Shout) or percent (Requiem's Muffle).
+            // Majority vote over this list's own magnitudes; the curve stays in catalog units
+            // (the DLL applies the factor at emit).
+            var mags = rawMags;
+            var cmax = shape.Max();
+            var nLow = mags.Count(v => v <= 1f);
+            var nHigh = mags.Count(v => v > 1.5f);
+            var unit = 1f;
+            if (cmax > 1f && nLow * 2 > mags.Count) unit = 0.01f;
+            else if (cmax <= 1f && nHigh * 2 > mags.Count) unit = 100f;
+            if (unit != 1f)
+            {
+                mags = mags.Select(v => v / unit).ToList();
+                Console.WriteLine($"  {fam}: list stores {(unit < 1f ? "fractions" : "percent")} " +
+                                  $"({(unit < 1f ? nLow : nHigh)}/{mags.Count} enchants) -> unit factor x{unit}");
+            }
             var anchor = Pct(mags, 0.90);
-            var scale = anchor / shape[4];
-            var curve = shape.Take(5).Select(v => (float)Math.Round(v * scale, 1)).ToArray();
+            var scale = anchor / shape[^1];
+            var five = shape.Take(5).ToList();
+            while (five.Count < 5) five.Add(five[^1]);
+            var curve = five.Select(v => (float)Math.Round(v * scale, 1)).ToArray();
             if (!outFams.TryGetValue(fam, out var oobj))
                 outFams[fam] = oobj = new Dictionary<string, object> { ["from"] = $"{mags.Count} item(s)" };
             ((Dictionary<string, object>)oobj)["curve"] = curve.Select(x => (object)x).ToList();
