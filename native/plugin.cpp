@@ -196,6 +196,7 @@ struct ResolvedGem {
     const meo::GemDef*                  def = nullptr;
     RE::EffectSetting*                  mgef = nullptr;   // null = disabled (missing master)
     std::array<RE::EffectSetting*, 5>   mgefLv{};  // m28: rank ladder (defaults to mgef)
+    float                               unitFactor = 1.0f;  // m52c: catalog units -> this list's MGEF units
     std::vector<std::pair<int, std::string>> lvNotes;  // m29: "level N unlocks ..." lines
     std::string                         liveName;  // m27: winning MGEF renamed the effect
     std::array<RtRider, 4>              riders{};  // m25: Squire-style recipes carry 3
@@ -1125,6 +1126,8 @@ bool TreeContainsPerk(const RE::BGSSkillPerkTreeNode* a_root, const RE::BGSPerk*
     return false;
 }
 
+float GemBaseMag(const meo::GemDef* a_def, int a_lvIdx);  // m52c: defined below
+
 void ResolveCatalog() {
     auto* dh = RE::TESDataHandler::GetSingleton();
     if (!dh) {
@@ -1182,6 +1185,17 @@ void ResolveCatalog() {
             baseMgefs.emplace(bm, d2.gid);
         }
     }
+    // m52c (audit: units): every positive magnitude the list's own enchants use per
+    // MGEF, so a gem's curve units (percent vs fraction) can be matched to the list's.
+    std::unordered_map<const RE::EffectSetting*, std::vector<float>> enchMags;
+    for (auto* en : dh->GetFormArray<RE::EnchantmentItem>()) {
+        if (!en) continue;
+        for (auto* ef : en->effects) {
+            if (ef && ef->baseEffect && ef->effectItem.magnitude > 0.0f) {
+                enchMags[ef->baseEffect].push_back(ef->effectItem.magnitude);
+            }
+        }
+    }
     for (const auto& def : meo::kGems) {
         ResolvedGem rg;
         rg.def = &def;
@@ -1190,6 +1204,8 @@ void ResolveCatalog() {
         if (auto lvIt = g_calLevels.find(def.gid); lvIt != g_calLevels.end() && rg.mgef) {
             std::string ladder;
             int hiddenRungs = 0;
+            int condRungs = 0;   // m52c
+            int shapeRungs = 0;  // m52c
             std::string_view foreign;  // gid of another gem whose base effect a rung IS
             for (int l = 0; l < 5; ++l) {
                 if (auto* m = dh->LookupForm<RE::EffectSetting>(lvIt->second[l].fid,
@@ -1197,8 +1213,23 @@ void ResolveCatalog() {
                     // m52: older calibration carries Thaumaturgy's hidden
                     // Spell-Strike perk MGEFs on the top rungs — keep the
                     // previous level's effect instead.
-                    if (m->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kHideInUI)) {
-                        ++hiddenRungs;
+                    // m52c (audit: Chaos Frost/Shock parts won L4-5): a conditioned rung on
+                    // an unconditioned base, or a rung with another archetype/AV than the
+                    // base, is a different effect — same treatment as a hidden rung.
+                    const bool hiddenRung =
+                        m->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kHideInUI);
+                    const bool condRung = m != rg.mgef && m->conditions.head && !rg.mgef->conditions.head;
+                    const bool shapeRung = m != rg.mgef &&
+                                           (m->data.archetype != rg.mgef->data.archetype ||
+                                            m->data.primaryAV != rg.mgef->data.primaryAV);
+                    if (hiddenRung || condRung || shapeRung) {
+                        if (hiddenRung) {
+                            ++hiddenRungs;
+                        } else if (condRung) {
+                            ++condRungs;
+                        } else {
+                            ++shapeRungs;
+                        }
                         if (l > 0) rg.mgefLv[l] = rg.mgefLv[l - 1];
                     } else {
                         rg.mgefLv[l] = m;
@@ -1213,9 +1244,10 @@ void ResolveCatalog() {
             if (!foreign.empty()) {
                 spdlog::info("[catalog] '{}' ladder dropped: rung is '{}''s base effect", def.gid, foreign);
                 rg.mgefLv.fill(rg.mgef);
-                hiddenRungs = 0;
-            } else if (hiddenRungs) {
-                spdlog::info("[catalog] '{}' ladder: {} hidden rung(s) rejected", def.gid, hiddenRungs);
+                hiddenRungs = condRungs = shapeRungs = 0;
+            } else if (hiddenRungs || condRungs || shapeRungs) {
+                spdlog::info("[catalog] '{}' ladder: {} hidden, {} conditioned, {} foreign-shape rung(s) rejected",
+                             def.gid, hiddenRungs, condRungs, shapeRungs);
             }
             for (int l = 0; l < 5; ++l) {
                 ladder += std::format("{}{}", l ? "/" : "", rg.mgefLv[l] == rg.mgef ? "-" : "+");
@@ -1248,6 +1280,28 @@ void ResolveCatalog() {
             }
         }
         if (rg.mgef) {
+            // m52c (audit: units): the gem curve is in catalog units; the list's MGEF may
+            // store fractions (0.2 = 20%) or percent (20). Majority vote over the list's
+            // own enchant magnitudes on this base MGEF (same rule as the generator).
+            if (auto mit = enchMags.find(rg.mgef); mit != enchMags.end() && !mit->second.empty()) {
+                float cmax = 0.0f;
+                for (int l = 0; l < 5; ++l) cmax = std::max(cmax, GemBaseMag(&def, l));
+                std::size_t nLow = 0, nHigh = 0;
+                for (float v : mit->second) {
+                    nLow += v <= 1.0f;
+                    nHigh += v > 1.5f;
+                }
+                const std::size_t n = mit->second.size();
+                if (cmax > 1.0f && nLow * 2 > n) {
+                    rg.unitFactor = 0.01f;
+                    spdlog::info("[catalog] '{}' units: list stores fractions ({}/{} enchants <= 1) -> engine x0.01",
+                                 def.gid, nLow, n);
+                } else if (cmax <= 1.0f && nHigh * 2 > n) {
+                    rg.unitFactor = 100.0f;
+                    spdlog::info("[catalog] '{}' units: list stores percent ({}/{} enchants > 1.5) -> engine x100",
+                                 def.gid, nHigh, n);
+                }
+            }
             const char* live = rg.mgef->GetName();
             if (live && *live) {
                 std::string a(live), b(def.name);
@@ -1702,14 +1756,6 @@ float GemBaseMag(const meo::GemDef* a_def, int a_lvIdx) {
     return a_def->magnitude[li];
 }
 
-// m52b (user report: Fortify Shout lowers the cooldown by 10 points, not 10%): gem
-// curves are in PERCENT units, but ShoutRecoveryMult is a 0..1 multiplier (vanilla and
-// Requiem enchants use 0.1-0.2 for 10-20%). Applied only where a magnitude is written
-// into an engine Effect; the tooltip and the API keep the percent value.
-float EngineMagScale(const RE::EffectSetting* a_m) {
-    return (a_m && a_m->data.primaryAV == RE::ActorValue::kShoutRecoveryMult) ? 0.01f : 1.0f;
-}
-
 float GemPerkMult(const meo::GemDef* a_def) {
     if (!a_def) {
         return 1.0f;
@@ -2138,7 +2184,7 @@ void RebuildInstanceEnchant(RE::TESBoundObject* a_base, RE::ExtraDataList* a_xLi
         const float primaryMag = conduitTarget ? baseMag * conduitRatio : baseMag * supportMag;
         auto& eff = effects[e++];
         eff.baseEffect = eg->mgefLv[lvIdx];  // m28: rank ladder
-        eff.effectItem.magnitude = primaryMag * EngineMagScale(eff.baseEffect);  // m52b (riders keep unscaled primaryMag)
+        eff.effectItem.magnitude = primaryMag * eg->unitFactor;  // m52c: list units (riders keep unscaled primaryMag)
         eff.effectItem.area = echoArea;  // m36: Echo weapon AoE (0 otherwise)
         eff.effectItem.duration = static_cast<std::uint32_t>(eg->def->duration);
         eff.cost = 0.0f;
@@ -4813,8 +4859,12 @@ namespace menuhook {
             const auto& rg = g_gems[a_idx];
             const int   li = std::clamp(a_level, 1, 5) - 1;
             auto*       m = rg.mgefLv[li] ? rg.mgefLv[li] : rg.mgef;
+            // m52c: a factor < 1 means the list stores percent as fractions that the game
+            // presents x100, so the catalog value is right; a factor > 1 means the list's
+            // own description text is in its larger units (e.g. Requiem's "<mag>% quieter").
             const float mag = GemBaseMag(rg.def, li) * g_magnitudeMult *
-                              (1.0f + 0.05f * g_attuneRank) * GemPerkMult(rg.def);
+                              (1.0f + 0.05f * g_attuneRank) * GemPerkMult(rg.def) *
+                              (rg.unitFactor > 1.0f ? rg.unitFactor : 1.0f);
             const char* d = m ? m->magicItemDescription.c_str() : nullptr;
             if (d && *d) {
                 std::string s(d);
@@ -8078,7 +8128,7 @@ EchoPayload ComputeEchoPayload(RE::Actor* a_actor) {
                 // player's attunement & perks (followers carry none of their own).
                 out.mag = GemBaseMag(normal->def, lvIdx) * g_magnitudeMult *
                           (1.0f + 0.05f * g_attuneRank) * GemPerkMult(normal->def) * echoFrac *
-                          EngineMagScale(out.mgef);  // m52b: written into the engine Effect
+                          normal->unitFactor;  // m52c: written into the engine Effect
                 out.gid = normal->def->gid;
                 return out;  // first linked Echo-armor on this actor wins
             }

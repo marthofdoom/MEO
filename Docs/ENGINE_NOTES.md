@@ -792,6 +792,21 @@ and skip composite families (riders carrying another family's element). MEO
 enforces this in the Synthesis generator and again in the DLL catalog loader
 (old calibration files still carry the bad ladders).
 
-Units (m52b): ShoutRecoveryMult (AV 86) is a 0..1 multiplier; vanilla and Requiem
-enchants on the Fortify Shout MGEF (Skyrim.esm 0x08850D) use 0.1-0.2 for 10-20%. MEO
-keeps gem curves in percent (tooltip, API) and scales x0.01 at emit (`EngineMagScale`).
+m52c (record audit across LoreRim + Requiem). Ladder rungs are also rejected (DLL and
+generator) when the rung MGEF is conditioned while the family's base MGEF has none
+(DLC2 Chaos Frost/Shock parts, GetRandomPercent<=50, and Requiem's Dwemer-bonus shock
+won the top rungs; bases that legitimately carry conditions are exempt), or when its
+archetype or primary AV differs from the base's (Requiem's SilentMoons absorb is a
+ValueModifier on AV 85, not Absorb Health). A rejected rung keeps the previous level's
+MGEF. Units: a gem curve is in catalog units but a list's live MGEF may store fractions
+(vanilla Fortify Shout, ShoutRecoveryMult 0.1 = 10%) or percent (Requiem's Muffle,
+redefined as DualValueModifier at 15-100 against vanilla's 0..1 MovementNoiseMult).
+Rule, identical in generator and DLL: majority vote over the list's own enchant
+magnitudes (> 0) on the family's base MGEF. Catalog curve max > 1 and over half the
+observations <= 1 gives factor x0.01; curve max <= 1 and over half > 1.5 gives x100;
+else x1. The generator divides the observations by the factor before the 90th-percentile
+anchor, so calibration curves stay in catalog units (short shapes are padded to 5); the
+DLL applies `ResolvedGem::unitFactor` where the primary magnitude is written into an
+engine Effect (riders stay unscaled). The tooltip multiplies by the factor only when it
+is > 1 (the list's own description text is in the larger units); the MFO API value is
+the catalog value. This replaces the AV-keyed m52b scale.
